@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  /* CERP Brand Colors */
+  --color-brand-orange: #FE700B;
+  --color-brand-orange-light: #FF8B3D;
+  --color-brand-black: #1E1E1E;
+  --color-brand-white: #F5F5F5;
+  --color-brand-gray: #747474;
+
+  /* Semantic */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+
+  /* Primary alias */
+  --color-primary-500: #FE700B;
+  --color-primary-600: #e56400;
+}

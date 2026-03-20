@@ -1,0 +1,38 @@
+appId: com.cerp.ai-desktop
+productName: CERP AI
+copyright: Copyright (c) 2026 CERP Tech
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.*'
+  - '!{.env,.env.*,.gitignore}'
+  - '!{tsconfig.json,tsconfig.*.json}'
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.ico
+  artifactName: 'CERP-AI-Desktop-${version}-Setup.${ext}'
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CERP AI
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  include: build/installer.nsh
+
+publish:
+  provider: github
+  owner: cerptech
+  repo: cerp-ai-desktop
+  releaseType: release
