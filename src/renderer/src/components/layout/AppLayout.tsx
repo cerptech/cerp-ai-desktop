@@ -1,4 +1,5 @@
 import { ReactNode } from 'react'
+import cerpLogo from '@/assets/images/cerp-logo.png'
 
 interface AppLayoutProps {
   children: ReactNode
@@ -14,9 +15,7 @@ export function AppLayout({ children, userName, onLogout }: AppLayoutProps) {
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <div className="w-8 h-8 rounded-lg bg-brand-orange flex items-center justify-center">
-            <span className="text-white font-bold text-sm">C</span>
-          </div>
+          <img src={cerpLogo} alt="CERP" className="w-8 h-8 object-contain" />
           <span className="font-semibold text-slate-800 text-sm">CERP AI</span>
         </div>
 

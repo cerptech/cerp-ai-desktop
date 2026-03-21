@@ -1,4 +1,6 @@
-const API_BASE_URL = process.env.CERP_API_BASE_URL || 'http://localhost:8080/api'
+function getApiBaseUrl(): string {
+  return process.env.CERP_API_BASE_URL || 'http://localhost:8080/api'
+}
 
 export class HttpClient {
   private getToken: () => string | null
@@ -11,7 +13,7 @@ export class HttpClient {
     const token = this.getToken()
     if (!token) throw new Error('No auth token available')
 
-    const url = `${API_BASE_URL}${path}`
+    const url = `${getApiBaseUrl()}${path}`
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -32,7 +34,7 @@ export class HttpClient {
     const token = this.getToken()
     if (!token) throw new Error('No auth token available')
 
-    const url = `${API_BASE_URL}${path}`
+    const url = `${getApiBaseUrl()}${path}`
     const res = await fetch(url, {
       method: 'POST',
       headers: {

@@ -17,11 +17,13 @@ export function createCerpMcpServer(httpClient: HttpClient) {
           const url = buildUrl(def.endpoint, args)
           logger.info(`MCP tool ${name} → GET ${url}`)
           const data = await httpClient.get(url)
-          return JSON.stringify(data, null, 2)
+          const text = JSON.stringify(data, null, 2)
+          logger.info(`MCP tool ${name} OK: ${text.substring(0, 200)}`)
+          return { content: [{ type: 'text' as const, text }] }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
-          logger.error(`MCP tool ${name} error:`, message)
-          return JSON.stringify({ error: message })
+          logger.error(`MCP tool ${name} FAILED: ${message}`)
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }] }
         }
       }),
     ),

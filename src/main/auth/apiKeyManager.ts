@@ -12,25 +12,33 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
     return cachedConfig
   }
 
-  logger.info('Fetching API key from backend...')
+  const token = tokenStore.getAccessToken()
+  logger.info(`Fetching API key from backend... (has token: ${!!token})`)
 
-  const response = await httpClient.post<{
-    apiKey: string
-    maxBudgetPerQuery: number
-    model: string
-  }>('/desktop/api-key')
+  try {
+    const response = await httpClient.post<{
+      apiKey: string
+      maxBudgetPerQuery: number
+      model: string
+    }>('/desktop/api-key')
 
-  // Store encrypted
-  tokenStore.setApiKey(response.apiKey)
+    logger.info(`API key response: hasKey=${!!response.apiKey}, model=${response.model}`)
 
-  cachedConfig = {
-    apiKey: response.apiKey,
-    maxBudgetPerQuery: response.maxBudgetPerQuery,
-    model: response.model,
+    tokenStore.setApiKey(response.apiKey)
+
+    cachedConfig = {
+      apiKey: response.apiKey,
+      maxBudgetPerQuery: response.maxBudgetPerQuery,
+      model: response.model,
+    }
+
+    logger.info('API key fetched and stored successfully')
+    return cachedConfig
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.error(`fetchApiKey FAILED: ${msg}`)
+    throw err
   }
-
-  logger.info('API key fetched and stored successfully')
-  return cachedConfig
 }
 
 export function getApiKey(): string | null {

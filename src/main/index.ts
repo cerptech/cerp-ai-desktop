@@ -1,3 +1,9 @@
+import { config } from 'dotenv'
+import { resolve } from 'path'
+
+// Load .env before anything else
+config({ path: resolve(process.cwd(), '.env') })
+
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers, handleCallback } from './ipc/handlers'
