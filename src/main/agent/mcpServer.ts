@@ -4,25 +4,53 @@ import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 
 /**
- * Creates an in-process MCP server that exposes the 16 CERP tools.
- * Each tool calls the CERP backend REST API using the Auth0 token.
+ * Creates an in-process MCP server with all CERP tools.
+ * companyId is injected automatically into write operations.
  */
-export function createCerpMcpServer(httpClient: HttpClient) {
+export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null) {
   return createSdkMcpServer({
     name: 'cerp',
-    version: '1.0.0',
+    version: '2.0.0',
     tools: Object.entries(toolSchemas).map(([name, def]) =>
       tool(name, def.description, def.schema, async (args: Record<string, unknown>) => {
         try {
-          const url = buildUrl(def.endpoint, args)
-          logger.info(`MCP tool ${name} → GET ${url}`)
-          const data = await httpClient.get(url)
+          const { url, body } = buildRequest(def.endpoint, def.method, args)
+          logger.info(`MCP ${def.method} ${name} → ${url}`)
+
+          // Auto-inject companyId for write operations
+          let requestBody = body
+          if (def.method !== 'GET' && def.method !== 'DELETE') {
+            if (companyId) {
+              requestBody = { ...(requestBody || {}), companyId }
+            }
+          }
+
+          let data: unknown
+
+          switch (def.method) {
+            case 'GET':
+              data = await httpClient.get(url)
+              break
+            case 'POST':
+              data = await httpClient.post(url, requestBody)
+              break
+            case 'PUT':
+              data = await httpClient.request('PUT', url, requestBody)
+              break
+            case 'PATCH':
+              data = await httpClient.request('PATCH', url, requestBody)
+              break
+            case 'DELETE':
+              data = await httpClient.request('DELETE', url)
+              break
+          }
+
           const text = JSON.stringify(data, null, 2)
-          logger.info(`MCP tool ${name} OK: ${text.substring(0, 200)}`)
+          logger.info(`MCP ${name} OK: ${text.substring(0, 200)}`)
           return { content: [{ type: 'text' as const, text }] }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
-          logger.error(`MCP tool ${name} FAILED: ${message}`)
+          logger.error(`MCP ${name} FAILED: ${message}`)
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }] }
         }
       }),
@@ -30,13 +58,12 @@ export function createCerpMcpServer(httpClient: HttpClient) {
   })
 }
 
-/**
- * Builds API URL from endpoint template + args.
- * - Path params like :projectId are replaced from args
- * - Remaining args become query string params
- */
-function buildUrl(endpoint: string, args: Record<string, unknown>): string {
-  const queryParams: Record<string, string> = {}
+function buildRequest(
+  endpoint: string,
+  method: string,
+  args: Record<string, unknown>,
+): { url: string; body?: Record<string, unknown> } {
+  const remaining: Record<string, unknown> = {}
   let path = endpoint
 
   for (const [key, value] of Object.entries(args)) {
@@ -46,10 +73,21 @@ function buildUrl(endpoint: string, args: Record<string, unknown>): string {
     if (path.includes(placeholder)) {
       path = path.replace(placeholder, String(value))
     } else {
-      queryParams[key] = String(value)
+      remaining[key] = value
     }
   }
 
-  const qs = new URLSearchParams(queryParams).toString()
-  return qs ? `${path}?${qs}` : path
+  if (method === 'GET') {
+    const queryParams: Record<string, string> = {}
+    for (const [key, value] of Object.entries(remaining)) {
+      queryParams[key] = String(value)
+    }
+    const qs = new URLSearchParams(queryParams).toString()
+    return { url: qs ? `${path}?${qs}` : path }
+  }
+
+  return {
+    url: path,
+    body: Object.keys(remaining).length > 0 ? remaining : undefined,
+  }
 }

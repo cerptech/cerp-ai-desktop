@@ -18,16 +18,18 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
   try {
     const response = await httpClient.post<{
       apiKey: string
+      companyId: string
       maxBudgetPerQuery: number
       model: string
     }>('/desktop/api-key')
 
-    logger.info(`API key response: hasKey=${!!response.apiKey}, model=${response.model}`)
+    logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, model=${response.model}`)
 
     tokenStore.setApiKey(response.apiKey)
 
     cachedConfig = {
       apiKey: response.apiKey,
+      companyId: response.companyId,
       maxBudgetPerQuery: response.maxBudgetPerQuery,
       model: response.model,
     }
@@ -43,6 +45,10 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
 
 export function getApiKey(): string | null {
   return cachedConfig?.apiKey ?? tokenStore.getApiKey()
+}
+
+export function getCompanyId(): string | null {
+  return cachedConfig?.companyId ?? null
 }
 
 export function clearApiKey(): void {

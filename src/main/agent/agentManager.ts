@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
 import { createCerpMcpServer } from './mcpServer'
+import { getCompanyId } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { HttpClient } from '../utils/httpClient'
@@ -55,7 +56,10 @@ export async function runAgent(
   const abortController = new AbortController()
   activeQueries.set(queryId, abortController)
 
-  const cerpMcpServer = createCerpMcpServer(httpClient)
+  // Get companyId from cached API key response (resolved at login time)
+  const companyId = getCompanyId()
+  logger.info(`[${queryId}] CompanyId for MCP: ${companyId}`)
+  const cerpMcpServer = createCerpMcpServer(httpClient, companyId)
 
   const sendEvent = (event: AgentStreamEvent): void => {
     if (!mainWindow.isDestroyed()) {
