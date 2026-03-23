@@ -241,10 +241,16 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     }
   }
 
-  // Result (query complete)
+  // Result (query complete) — log full usage data
   if (type === 'result') {
-    const cost = (msg as any).cost_usd as number | undefined
+    const cost = (msg as any).total_cost_usd as number | undefined
     const turns = (msg as any).num_turns as number | undefined
+    const usage = (msg as any).usage || {}
+    const inputTokens = usage.input_tokens || 0
+    const outputTokens = usage.output_tokens || 0
+    const cacheCreation = usage.cache_creation_input_tokens || 0
+    const cacheRead = usage.cache_read_input_tokens || 0
+    logger.info(`[USAGE] cost=$${cost?.toFixed(4) || '?'} | turns=${turns} | input=${inputTokens} | output=${outputTokens} | cache_create=${cacheCreation} | cache_read=${cacheRead}`)
     return { type: 'done', cost, turns }
   }
 
