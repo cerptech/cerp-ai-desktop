@@ -7,7 +7,7 @@ import { logger } from '../utils/logger'
  * Creates an in-process MCP server with all CERP tools.
  * companyId is injected automatically into write operations.
  */
-export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null) {
+export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null, userId: string | null) {
   return createSdkMcpServer({
     name: 'cerp',
     version: '2.0.0',
@@ -17,11 +17,17 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
           const { url, body } = buildRequest(def.endpoint, def.method, args)
           logger.info(`MCP ${def.method} ${name} → ${url}`)
 
-          // Auto-inject companyId for write operations
+          // Auto-inject companyId into all operations
           let requestBody = body
-          if (def.method !== 'GET' && def.method !== 'DELETE') {
-            if (companyId) {
-              requestBody = { ...(requestBody || {}), companyId }
+          let requestUrl = url
+          if (companyId) {
+            if (def.method === 'GET') {
+              // For GET, add companyId as query param
+              const separator = requestUrl.includes('?') ? '&' : '?'
+              requestUrl = `${requestUrl}${separator}companyId=${companyId}`
+            } else if (def.method !== 'DELETE') {
+              // For POST/PUT/PATCH, add companyId + user (owner_id) to body
+              requestBody = { ...(requestBody || {}), companyId, user: userId ? { _id: userId } : undefined }
             }
           }
 
@@ -29,7 +35,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
 
           switch (def.method) {
             case 'GET':
-              data = await httpClient.get(url)
+              data = await httpClient.get(requestUrl)
               break
             case 'POST':
               data = await httpClient.post(url, requestBody)

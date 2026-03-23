@@ -36,15 +36,16 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/projects/:projectId',
   },
   create_project: {
-    description: 'Crea un nuevo proyecto de construccion.',
+    description: 'Crea un nuevo proyecto de construccion. Para presupuestos/licitaciones usar status "budget".',
     schema: z.object({
       name: z.string().describe('Nombre del proyecto'),
       description: z.string().optional(),
-      status: z.enum(['budget', 'planning', 'execution', 'monitoring', 'closed']).optional(),
+      status: z.enum(['budget', 'planning', 'execution', 'paused', 'completed', 'cancelled']).optional().describe('Default: budget para licitaciones'),
       start_date: z.string().optional().describe('Fecha inicio ISO 8601'),
       end_date: z.string().optional().describe('Fecha fin ISO 8601'),
       projected_cost: z.number().optional(),
       projected_income: z.number().optional(),
+      currency: z.string().optional().describe('ARS, EUR, USD'),
     }),
     method: 'POST',
     endpoint: '/projects',
@@ -55,7 +56,7 @@ export const toolSchemas: Record<string, ToolDef> = {
       projectId: z.string().describe('ID del proyecto'),
       name: z.string().optional(),
       description: z.string().optional(),
-      status: z.enum(['budget', 'planning', 'execution', 'monitoring', 'closed']).optional(),
+      status: z.enum(['budget', 'planning', 'execution', 'paused', 'completed', 'cancelled']).optional(),
       start_date: z.string().optional(),
       end_date: z.string().optional(),
       projected_cost: z.number().optional(),
@@ -254,14 +255,13 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/chapters',
   },
   add_budget_item: {
-    description: 'Agrega un item/partida al presupuesto con unidad, cantidad y precio.',
+    description: 'Agrega un item/partida al presupuesto. REQUIERE un productId del catalogo de materiales de la empresa. Primero busca el producto con search_materials, y si no existe, crealo con create_material.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
-      name: z.string().describe('Nombre del item'),
-      unit: z.string().optional().describe('Unidad de medida (m2, m3, kg, etc.)'),
-      quantity: z.number().optional(),
-      unitPrice: z.number().optional(),
-      chapterId: z.string().optional().describe('ID del capitulo padre'),
+      productId: z.string().describe('ID del producto/material del catalogo (OBLIGATORIO). Usar search_materials para encontrarlo o create_material para crearlo'),
+      quantity: z.number().describe('Cantidad'),
+      parentItemId: z.string().optional().describe('ID del capitulo padre donde insertar el item'),
+      overheadOverride: z.number().optional().describe('Override del porcentaje de gastos generales'),
     }),
     method: 'POST',
     endpoint: '/budgets/:budgetId/items',
@@ -605,5 +605,67 @@ export const toolSchemas: Record<string, ToolDef> = {
     schema: z.object({}),
     method: 'GET',
     endpoint: '/items/low-stock',
+  },
+
+  // ============================================================
+  // COMPANY & USER — Read & Write
+  // ============================================================
+  get_company_info: {
+    description: 'Obtiene informacion completa de la empresa: nombre, datos fiscales (CUIT/NIF), direccion, telefono, industria, suscripcion, y todas las configuraciones.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/companies/settings',
+  },
+  get_company_settings: {
+    description: 'Configuracion de la empresa: datos fiscales (legalName, taxId/CUIT/NIF), direccion, moneda, formato de numeros, modulos habilitados, permisos globales.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/companies/settings',
+  },
+  update_company_settings: {
+    description: 'Actualiza configuracion de la empresa: datos fiscales, direccion, moneda, formato regional.',
+    schema: z.object({
+      businessInfo: z.object({
+        legalName: z.string().optional(),
+        commercialName: z.string().optional(),
+        taxId: z.string().optional().describe('CUIT/NIF/Tax ID fiscal'),
+        industry: z.string().optional(),
+        website: z.string().optional(),
+        phone: z.string().optional(),
+      }).optional(),
+      address: z.object({
+        street: z.string().optional(),
+        city: z.string().optional(),
+        state: z.string().optional(),
+        postalCode: z.string().optional(),
+        country: z.string().optional().describe('ISO 3166-1 alpha-2: AR, ES, US'),
+      }).optional(),
+      regional: z.object({
+        currency: z.string().optional().describe('ISO 4217: ARS, EUR, USD'),
+        locale: z.string().optional().describe('es-AR, es-ES, en-US'),
+        timezone: z.string().optional(),
+        dateFormat: z.string().optional().describe('DD/MM/YYYY o MM/DD/YYYY'),
+      }).optional(),
+    }),
+    method: 'PUT',
+    endpoint: '/companies/settings',
+  },
+  get_currency_settings: {
+    description: 'Configuracion de moneda de la empresa: codigo, simbolo, formato.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/companies/settings/currency',
+  },
+  get_current_user: {
+    description: 'Obtiene datos del usuario actual: nombre, email, roles, permisos, empresa asociada.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/users/me',
+  },
+  get_company_users: {
+    description: 'Lista todos los usuarios de la empresa con sus roles y permisos.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/users/company',
   },
 }

@@ -1,7 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
 import { createCerpMcpServer } from './mcpServer'
-import { getCompanyId } from '../auth/apiKeyManager'
+import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { HttpClient } from '../utils/httpClient'
@@ -38,6 +38,7 @@ export function abortAgent(queryId?: string): void {
 export function resetSession(): void {
   abortAgent()
   currentSessionId = null
+  cachedContextPrompt = null
   logger.info('Session reset')
 }
 
@@ -56,10 +57,20 @@ export async function runAgent(
   const abortController = new AbortController()
   activeQueries.set(queryId, abortController)
 
-  // Get companyId from cached API key response (resolved at login time)
-  const companyId = getCompanyId()
-  logger.info(`[${queryId}] CompanyId for MCP: ${companyId}`)
-  const cerpMcpServer = createCerpMcpServer(httpClient, companyId)
+  // Get companyId + userId — re-fetch if not cached
+  let companyId = getCompanyId()
+  let userId = getUserId()
+  if (!companyId || !userId) {
+    try {
+      const config = await fetchApiKey(httpClient)
+      companyId = config.companyId || null
+      userId = config.userId || null
+    } catch (err) {
+      logger.warn(`[${queryId}] Could not fetch config: ${err}`)
+    }
+  }
+  logger.info(`[${queryId}] CompanyId: ${companyId}, UserId: ${userId}`)
+  const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
 
   const sendEvent = (event: AgentStreamEvent): void => {
     if (!mainWindow.isDestroyed()) {
@@ -92,6 +103,9 @@ export async function runAgent(
 
     const startTime = Date.now()
 
+    // Fetch company/user context for the system prompt (cached after first call)
+    const contextPrompt = await buildContextPrompt(httpClient)
+
     // Build subagent definitions
     const agents = CONSTRUCTION_AGENTS.map((a) => ({
       name: a.name,
@@ -101,7 +115,7 @@ export async function runAgent(
 
     const options: Record<string, unknown> = {
       model,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: SYSTEM_PROMPT + contextPrompt,
       cwd,
       env: {
         ...process.env,
@@ -188,6 +202,81 @@ export async function runAgent(
     sendDone()
     logger.info(`[${queryId}] Agent cleanup complete (${activeQueries.size} queries still active)`)
   }
+}
+
+// ============================================================
+// Company/User context injection
+// ============================================================
+let cachedContextPrompt: string | null = null
+
+async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
+  if (cachedContextPrompt) return cachedContextPrompt
+
+  let context = '\n\n## Contexto de la empresa y usuario actual\n'
+
+  try {
+    // Fetch company settings
+    const settings = await httpClient.get<any>('/companies/settings')
+    const s = settings?.data?.settings || settings?.settings || settings?.data || settings
+
+    if (s) {
+      const biz = s.businessInfo || {}
+      const addr = s.address || {}
+      const regional = s.regional || {}
+
+      context += `\n### Empresa\n`
+      if (biz.legalName) context += `- Razon social: ${biz.legalName}\n`
+      if (biz.commercialName) context += `- Nombre comercial: ${biz.commercialName}\n`
+      if (biz.taxId) context += `- CUIT/NIF: ${biz.taxId}\n`
+      if (biz.industry) context += `- Industria: ${biz.industry}\n`
+      if (biz.phone) context += `- Telefono: ${biz.phone}\n`
+      if (biz.website) context += `- Web: ${biz.website}\n`
+
+      if (addr.street || addr.city) {
+        context += `- Direccion: ${[addr.street, addr.city, addr.state, addr.postalCode, addr.country].filter(Boolean).join(', ')}\n`
+      }
+
+      context += `\n### Configuracion regional\n`
+      if (regional.currency) context += `- Moneda: ${regional.currency}\n`
+      if (regional.locale) context += `- Locale: ${regional.locale}\n`
+      if (regional.timezone) context += `- Zona horaria: ${regional.timezone}\n`
+      if (regional.dateFormat) context += `- Formato fecha: ${regional.dateFormat}\n`
+      if (regional.numberFormat) {
+        const nf = regional.numberFormat
+        context += `- Separador decimal: "${nf.decimalSeparator}" | Miles: "${nf.thousandsSeparator}" | Decimales: ${nf.decimalPlaces}\n`
+      }
+    }
+
+    logger.info('Company context loaded for system prompt')
+  } catch (err) {
+    logger.warn(`Could not load company settings: ${err}`)
+    context += '(No se pudieron cargar los datos de la empresa)\n'
+  }
+
+  try {
+    // Fetch current user
+    const userRes = await httpClient.get<any>('/users/me')
+    const user = userRes?.data || userRes
+
+    if (user) {
+      context += `\n### Usuario actual\n`
+      if (user.name) context += `- Nombre: ${user.name}\n`
+      if (user.email) context += `- Email: ${user.email}\n`
+      if (user.roles?.length) context += `- Roles: ${user.roles.join(', ')}\n`
+      if (user.phone) context += `- Telefono: ${user.phone}\n`
+    }
+  } catch (err) {
+    logger.warn(`Could not load user info: ${err}`)
+  }
+
+  context += `\nUsa estos datos cuando generes reportes, documentos o necesites informacion de la empresa. Formatea montos segun la moneda y formato regional configurado.\n`
+
+  cachedContextPrompt = context
+  return context
+}
+
+export function resetContextCache(): void {
+  cachedContextPrompt = null
 }
 
 function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStreamEvent[] | null {

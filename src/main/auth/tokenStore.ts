@@ -53,6 +53,28 @@ export const tokenStore = {
     writeStore(data)
   },
 
+  setCompanyId(companyId: string): void {
+    const data = readStore()
+    data.companyId = companyId
+    writeStore(data)
+  },
+
+  getCompanyId(): string | null {
+    const data = readStore()
+    return (data.companyId as string) || null
+  },
+
+  setUserId(userId: string): void {
+    const data = readStore()
+    data.userId = userId
+    writeStore(data)
+  },
+
+  getUserId(): string | null {
+    const data = readStore()
+    return (data.userId as string) || null
+  },
+
   getApiKey(): string | null {
     const data = readStore()
     const expiresAt = data.apiKeyExpiresAt as number | undefined

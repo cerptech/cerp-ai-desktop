@@ -30,6 +30,7 @@ export interface AuthState {
 export interface DesktopConfig {
   apiKey: string
   companyId: string
+  userId: string
   maxBudgetPerQuery: number
   model: string
 }
