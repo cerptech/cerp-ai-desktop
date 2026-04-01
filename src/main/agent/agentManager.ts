@@ -1,9 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
+import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
+import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
 import { IPC_CHANNELS } from '../ipc/channels'
 import { logger } from '../utils/logger'
@@ -12,6 +15,32 @@ import type { SendPromptPayload, AgentStreamEvent } from '../ipc/types'
 // Track running queries (support parallel)
 const activeQueries = new Map<string, AbortController>()
 let currentSessionId: string | null = null
+
+// ============================================================
+// Session ID disk persistence
+// ============================================================
+function getSessionFilePath(): string {
+  return join(app.getPath('userData'), 'session.json')
+}
+
+function writeSessionToDisk(sessionId: string): void {
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(getSessionFilePath(), JSON.stringify({ sessionId }, null, 2))
+  } catch {
+    // ignore write errors
+  }
+}
+
+function loadSessionFromDisk(): string | null {
+  try {
+    const raw = readFileSync(getSessionFilePath(), 'utf-8')
+    const parsed = JSON.parse(raw)
+    return (parsed.sessionId as string) || null
+  } catch {
+    return null
+  }
+}
 
 export function isAgentRunning(): boolean {
   return activeQueries.size > 0
@@ -39,10 +68,21 @@ export function resetSession(): void {
   abortAgent()
   currentSessionId = null
   cachedContextPrompt = null
+  try {
+    unlinkSync(getSessionFilePath())
+  } catch {
+    // file may not exist — ignore
+  }
   logger.info('Session reset')
 }
 
 export function getSessionId(): string | null {
+  if (currentSessionId) return currentSessionId
+  const fromDisk = loadSessionFromDisk()
+  if (fromDisk) {
+    currentSessionId = fromDisk
+    logger.info(`Session ID restored from disk: ${currentSessionId}`)
+  }
   return currentSessionId
 }
 
@@ -106,16 +146,40 @@ export async function runAgent(
     // Fetch company/user context for the system prompt (cached after first call)
     const contextPrompt = await buildContextPrompt(httpClient)
 
-    // Build subagent definitions
-    const agents = CONSTRUCTION_AGENTS.map((a) => ({
+    // Build subagent definitions (built-in + custom)
+    const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
       name: a.name,
       description: a.description,
       instructions: a.prompt,
     }))
+    const customAgentDefs = customAgentStore.getAgents()
+    const customSdkAgents = customAgentDefs.map((a) => ({
+      name: a.name,
+      description: a.description,
+      instructions: a.systemPrompt,
+    }))
+    const agents = [...builtInAgents, ...customSdkAgents]
+
+    // Build dynamic system prompt with custom agents list + context instructions
+    let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
+    if (customSdkAgents.length > 0) {
+      fullSystemPrompt += '\n\n## Agentes personalizados del usuario\n'
+      for (const a of customAgentDefs) {
+        fullSystemPrompt += `- **${a.name}**: ${a.description}\n`
+      }
+      fullSystemPrompt += '\nPuedes delegar tareas a estos agentes de la misma forma que a los especializados.\n'
+    }
+    if (payload.activeContextId) {
+      const ctx = customAgentStore.getContexts().find((c) => c.id === payload.activeContextId)
+      if (ctx) {
+        fullSystemPrompt += `\n\n## Contexto adicional activo: ${ctx.name}\n${ctx.instructions}\n`
+        logger.info(`[${queryId}] Active context: ${ctx.name} (${ctx.id})`)
+      }
+    }
 
     const options: Record<string, unknown> = {
       model,
-      systemPrompt: SYSTEM_PROMPT + contextPrompt,
+      systemPrompt: fullSystemPrompt,
       cwd,
       env: {
         ...process.env,
@@ -152,17 +216,27 @@ export async function runAgent(
       const msgType = (msg as any).type
       const msgSubtype = (msg as any).subtype
 
-      // Capture session ID — check multiple possible locations
+      logger.debug(`[${queryId}] Stream msg: type=${msgType} subtype=${msgSubtype || '-'} keys=${Object.keys(msg as object).join(',')}`)
+
+      // Capture session ID from any message that carries it
       if (!currentSessionId) {
         const sid = (msg as any).sessionId || (msg as any).session_id || (msg as any).id
-        if (sid && typeof sid === 'string' && sid.length > 5) {
+        if (sid && typeof sid === 'string') {
           currentSessionId = sid
+          writeSessionToDisk(currentSessionId)
           sendEvent({ type: 'session_id', sessionId: currentSessionId })
           logger.info(`[${queryId}] Session ID captured: ${currentSessionId}`)
         }
-        // Log system messages to find session ID format
-        if (msgType === 'system') {
-          logger.info(`[${queryId}] System msg: ${JSON.stringify(msg).substring(0, 300)}`)
+      }
+
+      // Capture session ID specifically from result messages (may be the only source)
+      if (msgType === 'result') {
+        const resultSid = (msg as any).session_id || (msg as any).sessionId
+        if (resultSid && typeof resultSid === 'string') {
+          currentSessionId = resultSid
+          writeSessionToDisk(currentSessionId)
+          sendEvent({ type: 'session_id', sessionId: currentSessionId })
+          logger.info(`[${queryId}] Session ID from result: ${currentSessionId}`)
         }
       }
 
@@ -304,6 +378,15 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
             else inputStr = JSON.stringify(input).substring(0, 200)
           }
           events.push({ type: 'tool_start', name: block.name, input: inputStr })
+
+          // Emit agent_delegation event when the Agent tool is used
+          if (block.name === 'Agent' && input) {
+            const agentName = String(input.agent_name || input.name || input.subagent_type || '').trim()
+            const task = String(input.prompt || input.description || '').substring(0, 150)
+            if (agentName) {
+              events.push({ type: 'agent_delegation', agentName, task })
+            }
+          }
         }
       }
       return events.length ? events : null

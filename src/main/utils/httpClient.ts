@@ -17,6 +17,10 @@ export class HttpClient {
     return this.request('POST', path, data) as Promise<T>
   }
 
+  async delete<T = unknown>(path: string): Promise<T> {
+    return this.request('DELETE', path) as Promise<T>
+  }
+
   async request<T = unknown>(method: string, path: string, data?: unknown): Promise<T> {
     const token = this.getToken()
     if (!token) throw new Error('No auth token available')

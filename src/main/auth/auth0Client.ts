@@ -13,7 +13,7 @@ function getAuth0Config() {
   }
 }
 
-const CALLBACK_PORT = 51973 // Fixed port for local callback server
+const CALLBACK_PORT = 18973 // Fixed port for local callback server
 const LOCAL_REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
 
 let codeVerifier: string | null = null
@@ -155,7 +155,7 @@ export async function login(): Promise<string> {
       }
     })
 
-    callbackServer.listen(CALLBACK_PORT, () => {
+    callbackServer.listen(CALLBACK_PORT, '127.0.0.1', () => {
       logger.info(`Callback server listening on port ${CALLBACK_PORT}`)
 
       const params = new URLSearchParams({

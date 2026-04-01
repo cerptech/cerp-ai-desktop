@@ -1,9 +1,12 @@
+import type { CustomAgent } from '../../../../preload/index'
+
 export interface AgentInfo {
   name: string
   label: string
   description: string
   icon: string
   shortDescription: string
+  isCustom?: boolean
 }
 
 export const AGENTS: AgentInfo[] = [
@@ -64,3 +67,15 @@ export const AGENTS: AgentInfo[] = [
     shortDescription: 'Generar reportes',
   },
 ]
+
+export function mergeAgentConfigs(customAgents: CustomAgent[]): AgentInfo[] {
+  const custom: AgentInfo[] = customAgents.map((a) => ({
+    name: a.name,
+    label: a.label,
+    description: a.description,
+    icon: a.icon,
+    shortDescription: a.description.substring(0, 40),
+    isCustom: true,
+  }))
+  return [...AGENTS, ...custom]
+}

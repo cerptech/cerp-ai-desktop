@@ -2,6 +2,8 @@ import { useAuth } from '@/hooks/useAuth'
 import { LoginPage } from '@/pages/LoginPage'
 import { ChatPage } from '@/pages/ChatPage'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ToastProvider } from '@/hooks/useToast'
+import { ToastContainer } from '@/components/ui/ToastContainer'
 
 export default function App() {
   const { isAuthenticated, user, loading, login, logout } = useAuth()
@@ -19,5 +21,10 @@ export default function App() {
     return <LoginPage onLogin={login} loading={loading} />
   }
 
-  return <ChatPage userName={user?.name} onLogout={logout} />
+  return (
+    <ToastProvider>
+      <ChatPage userName={user?.name} onLogout={logout} />
+      <ToastContainer />
+    </ToastProvider>
+  )
 }

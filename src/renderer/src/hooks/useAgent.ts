@@ -7,6 +7,9 @@ export interface ToolExecution {
   output?: string
   status: 'running' | 'done'
   timestamp: number
+  startTime: number
+  endTime?: number
+  agentName?: string
 }
 
 export interface ChatMessage {
@@ -14,6 +17,12 @@ export interface ChatMessage {
   content: string
   tools?: ToolExecution[]
   timestamp: number
+  agentContext?: string
+}
+
+export interface AgentDelegation {
+  agentName: string
+  task: string
 }
 
 export function useAgent() {
@@ -21,7 +30,13 @@ export function useAgent() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [activeTool, setActiveTool] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [activeAgentDelegation, setActiveAgentDelegation] = useState<AgentDelegation | null>(null)
   const toolsRef = useRef<ToolExecution[]>([])
+  const lastEventRef = useRef<number>(Date.now())
+  const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const currentDelegationRef = useRef<string | null>(null)
+  // Gate to ignore stream events after a conversation switch
+  const acceptingRef = useRef(true)
 
   const updateLastAssistant = useCallback((updater: (msg: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
@@ -29,28 +44,84 @@ export function useAgent() {
       if (last?.role === 'assistant') {
         return [...prev.slice(0, -1), updater(last)]
       }
-      const newMsg: ChatMessage = { role: 'assistant', content: '', tools: [], timestamp: Date.now() }
+      const newMsg: ChatMessage = {
+        role: 'assistant',
+        content: '',
+        tools: [],
+        timestamp: Date.now(),
+        agentContext: currentDelegationRef.current || undefined,
+      }
       return [...prev, updater(newMsg)]
     })
   }, [])
 
+  // Phase 1: Fallback timer to force-reset isStreaming after 30s of inactivity
+  useEffect(() => {
+    if (!isStreaming) {
+      if (fallbackTimerRef.current) {
+        clearInterval(fallbackTimerRef.current)
+        fallbackTimerRef.current = null
+      }
+      return
+    }
+    fallbackTimerRef.current = setInterval(() => {
+      if (!acceptingRef.current) return
+      if (Date.now() - lastEventRef.current > 30_000) {
+        setIsStreaming(false)
+        setActiveTool(null)
+        setActiveAgentDelegation(null)
+        currentDelegationRef.current = null
+        toolsRef.current = toolsRef.current.map((t) =>
+          t.status === 'running' ? { ...t, status: 'done' as const, endTime: Date.now() } : t,
+        )
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          if (last?.role === 'assistant' && toolsRef.current.length > 0) {
+            return [...prev.slice(0, -1), { ...last, tools: [...toolsRef.current] }]
+          }
+          return prev
+        })
+      }
+    }, 5_000)
+    return () => {
+      if (fallbackTimerRef.current) {
+        clearInterval(fallbackTimerRef.current)
+        fallbackTimerRef.current = null
+      }
+    }
+  }, [isStreaming])
+
   useEffect(() => {
     const unsubMessage = window.cerpAPI.onAgentMessage((event: AgentStreamEvent) => {
+      if (!acceptingRef.current) return // Ignore stale events after conversation switch
+      lastEventRef.current = Date.now()
+
       switch (event.type) {
         case 'text': {
           updateLastAssistant((msg) => ({
             ...msg,
             content: event.text,
             tools: [...toolsRef.current],
+            agentContext: currentDelegationRef.current || msg.agentContext,
           }))
           break
         }
         case 'tool_start': {
+          const now = Date.now()
+          // Detect agent delegation from Agent tool input
+          let agentName: string | undefined
+          if (event.name === 'Agent' && event.input) {
+            // Try to extract agent name from input text
+            const match = event.input.match(/(?:agent_name|name)["']?\s*[:=]\s*["']?([a-z-]+)/i)
+            if (match) agentName = match[1]
+          }
           const tool: ToolExecution = {
             name: event.name,
             input: event.input,
             status: 'running',
-            timestamp: Date.now(),
+            timestamp: now,
+            startTime: now,
+            agentName,
           }
           toolsRef.current = [...toolsRef.current, tool]
           setActiveTool(event.name)
@@ -58,41 +129,58 @@ export function useAgent() {
           break
         }
         case 'tool_done': {
-          // Mark the LAST running tool with this name as done
+          const now = Date.now()
           let found = false
           toolsRef.current = toolsRef.current.map((t) => {
             if (!found && t.name === event.name && t.status === 'running') {
               found = true
-              return { ...t, status: 'done' as const, output: event.output }
+              return { ...t, status: 'done' as const, output: event.output, endTime: now }
             }
             return t
           })
-          // Check if any tools still running
+          // If an Agent tool just finished, clear delegation tracking
+          if (event.name === 'Agent') {
+            currentDelegationRef.current = null
+            setActiveAgentDelegation(null)
+          }
           const stillRunning = toolsRef.current.find((t) => t.status === 'running')
           setActiveTool(stillRunning?.name || null)
           updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
           break
         }
+        case 'agent_delegation': {
+          const delegation = event as { type: 'agent_delegation'; agentName: string; task: string }
+          currentDelegationRef.current = delegation.agentName
+          setActiveAgentDelegation({ agentName: delegation.agentName, task: delegation.task })
+          break
+        }
         case 'done':
-          // Final done from mapMessage — stop streaming
           setIsStreaming(false)
           setActiveTool(null)
+          setActiveAgentDelegation(null)
+          currentDelegationRef.current = null
           break
         case 'error':
-          setError(event.message)
+          setError((event as { type: 'error'; message: string }).message)
           setIsStreaming(false)
           setActiveTool(null)
+          setActiveAgentDelegation(null)
+          currentDelegationRef.current = null
           break
       }
     })
 
     const unsubDone = window.cerpAPI.onAgentDone(() => {
+      if (!acceptingRef.current) return // Ignore stale events after conversation switch
       // Force stop everything
       setIsStreaming(false)
       setActiveTool(null)
+      setActiveAgentDelegation(null)
+      currentDelegationRef.current = null
       // Mark any remaining running tools as done
+      const now = Date.now()
       toolsRef.current = toolsRef.current.map((t) =>
-        t.status === 'running' ? { ...t, status: 'done' as const } : t,
+        t.status === 'running' ? { ...t, status: 'done' as const, endTime: now } : t,
       )
       // Force update last message with final tool states
       setMessages((prev) => {
@@ -102,12 +190,17 @@ export function useAgent() {
         }
         return prev
       })
+      // Belt-and-suspenders: ensure isStreaming resets even with React batching
+      setTimeout(() => setIsStreaming(false), 100)
     })
 
     const unsubError = window.cerpAPI.onAgentError((err) => {
+      if (!acceptingRef.current) return // Ignore stale events after conversation switch
       setError(err.message)
       setIsStreaming(false)
       setActiveTool(null)
+      setActiveAgentDelegation(null)
+      currentDelegationRef.current = null
     })
 
     return () => {
@@ -117,15 +210,22 @@ export function useAgent() {
     }
   }, [updateLastAssistant])
 
-  const sendPrompt = useCallback(async (prompt: string, cwd?: string) => {
+  const sendPrompt = useCallback(async (prompt: string, cwd?: string, activeContextId?: string) => {
+    acceptingRef.current = true // Accept events for this new prompt
     setError(null)
     setIsStreaming(true)
     setActiveTool(null)
+    setActiveAgentDelegation(null)
+    currentDelegationRef.current = null
     toolsRef.current = []
 
-    setMessages((prev) => [...prev, { role: 'user', content: prompt, timestamp: Date.now() }])
+    setMessages((prev) => [...prev, {
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now(),
+    }])
 
-    const result = await window.cerpAPI.sendPrompt({ prompt, cwd })
+    const result = await window.cerpAPI.sendPrompt({ prompt, cwd, activeContextId })
     if (!result.started) {
       setError(result.error || 'No se pudo iniciar la consulta')
       setIsStreaming(false)
@@ -136,13 +236,42 @@ export function useAgent() {
     await window.cerpAPI.abortAgent()
     setIsStreaming(false)
     setActiveTool(null)
+    setActiveAgentDelegation(null)
+    currentDelegationRef.current = null
   }, [])
 
   const clearMessages = useCallback(() => {
+    acceptingRef.current = false // Block stale stream events from previous conversation
     setMessages([])
+    setIsStreaming(false)
+    setActiveTool(null)
     setError(null)
+    setActiveAgentDelegation(null)
+    currentDelegationRef.current = null
     toolsRef.current = []
   }, [])
 
-  return { messages, isStreaming, activeTool, error, sendPrompt, abort, clearMessages }
+  // Restore messages from a loaded conversation
+  const restoreMessages = useCallback((loadedMessages: ChatMessage[]) => {
+    acceptingRef.current = false // Block stale stream events from previous conversation
+    setMessages(loadedMessages)
+    setIsStreaming(false)
+    setActiveTool(null)
+    setError(null)
+    setActiveAgentDelegation(null)
+    currentDelegationRef.current = null
+    toolsRef.current = []
+  }, [])
+
+  return {
+    messages,
+    isStreaming,
+    activeTool,
+    error,
+    activeAgentDelegation,
+    sendPrompt,
+    abort,
+    clearMessages,
+    restoreMessages,
+  }
 }

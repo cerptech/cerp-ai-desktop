@@ -1,23 +1,37 @@
 import { AgentCard } from './AgentCard'
+import { ContextCard } from './ContextCard'
 import { AGENTS } from './agentConfig'
 import cerpLogo from '@/assets/images/cerp-logo.png'
+import type { CustomAgent, CustomContext } from '../../../../preload/index'
 
 interface AgentPanelProps {
   selectedAgent: string
   activeAgents: string[]
   doneAgents: string[]
+  agentTasks: Record<string, string>
   onSelectAgent: (name: string) => void
   collapsed: boolean
   onToggleCollapse: () => void
+  customAgents?: CustomAgent[]
+  customContexts?: CustomContext[]
+  activeContextId?: string | null
+  onSelectContext?: (id: string | null) => void
+  onAddCustom?: () => void
 }
 
 export function AgentPanel({
   selectedAgent,
   activeAgents,
   doneAgents,
+  agentTasks,
   onSelectAgent,
   collapsed,
   onToggleCollapse,
+  customAgents = [],
+  customContexts = [],
+  activeContextId,
+  onSelectContext,
+  onAddCustom,
 }: AgentPanelProps) {
   if (collapsed) {
     return (
@@ -36,17 +50,47 @@ export function AgentPanel({
             <button
               key={agent.name}
               onClick={() => onSelectAgent(agent.name)}
-              className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-all ${
+              className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-all relative ${
                 isSelected ? 'bg-orange-50 ring-1 ring-brand-orange/30' : 'hover:bg-slate-100'
               } ${isActive ? 'animate-pulse' : ''}`}
               title={agent.label}
             >
               {agent.icon}
-              {isActive && <span className="absolute w-1.5 h-1.5 bg-brand-orange rounded-full -top-0.5 -right-0.5" />}
+              {isActive && <span className="absolute w-2 h-2 bg-brand-orange rounded-full -top-0.5 -right-0.5 shadow-[0_0_6px_rgba(254,112,11,0.4)]" />}
               {isDone && <span className="absolute text-[8px] text-emerald-500 -top-0.5 -right-0.5">&#10003;</span>}
             </button>
           )
         })}
+        {/* Custom agents collapsed icons */}
+        {(customAgents.length > 0 || customContexts.length > 0) && (
+          <>
+            <div className="w-6 h-px bg-slate-200 my-1" />
+            {customAgents.map((agent) => (
+              <button
+                key={agent.id}
+                onClick={() => onSelectAgent(agent.name)}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-all ${
+                  selectedAgent === agent.name ? 'bg-orange-50 ring-1 ring-brand-orange/30' : 'hover:bg-slate-100'
+                }`}
+                title={agent.label}
+              >
+                {agent.icon}
+              </button>
+            ))}
+            {customContexts.map((ctx) => (
+              <button
+                key={ctx.id}
+                onClick={() => onSelectContext?.(activeContextId === ctx.id ? null : ctx.id)}
+                className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-all ${
+                  activeContextId === ctx.id ? 'bg-purple-50 ring-1 ring-purple-300' : 'hover:bg-slate-100'
+                }`}
+                title={ctx.name}
+              >
+                {ctx.icon}
+              </button>
+            ))}
+          </>
+        )}
       </div>
     )
   }
@@ -80,9 +124,64 @@ export function AgentPanel({
               status={status}
               isSelected={selectedAgent === agent.name}
               onSelect={() => onSelectAgent(agent.name)}
+              currentTask={agentTasks[agent.name]}
             />
           )
         })}
+
+        {/* Custom section */}
+        {(customAgents.length > 0 || customContexts.length > 0 || onAddCustom) && (
+          <div className="mt-3 pt-3 border-t border-slate-100">
+            <div className="flex items-center justify-between px-1 mb-1.5">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Personalizados</span>
+              {onAddCustom && (
+                <button
+                  onClick={onAddCustom}
+                  className="text-slate-400 hover:text-brand-orange transition-colors p-0.5 rounded hover:bg-orange-50"
+                  title="Agregar agente o contexto"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            {/* Custom agents */}
+            {customAgents.map((agent) => {
+              const status = activeAgents.includes(agent.name) ? 'active' : doneAgents.includes(agent.name) ? 'done' : 'idle'
+              return (
+                <AgentCard
+                  key={agent.id}
+                  name={agent.name}
+                  label={agent.label}
+                  description={agent.description}
+                  icon={agent.icon}
+                  status={status}
+                  isSelected={selectedAgent === agent.name}
+                  onSelect={() => onSelectAgent(agent.name)}
+                  currentTask={agentTasks[agent.name]}
+                />
+              )
+            })}
+
+            {/* Custom contexts */}
+            {customContexts.map((ctx) => (
+              <ContextCard
+                key={ctx.id}
+                context={ctx}
+                isActive={activeContextId === ctx.id}
+                onToggle={() => onSelectContext?.(activeContextId === ctx.id ? null : ctx.id)}
+              />
+            ))}
+
+            {customAgents.length === 0 && customContexts.length === 0 && (
+              <p className="text-[10px] text-slate-300 text-center py-2">
+                Sin personalizados
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Footer */}

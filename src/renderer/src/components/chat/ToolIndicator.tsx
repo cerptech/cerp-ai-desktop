@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { AGENTS } from '@/components/agents/agentConfig'
 import type { ToolExecution } from '@/hooks/useAgent'
 
 const TOOL_ICONS: Record<string, string> = {
@@ -25,7 +26,12 @@ const TOOL_ICONS: Record<string, string> = {
   search_contacts: 'database',
 }
 
-function getToolIcon(name: string): string {
+function getToolIcon(name: string, agentName?: string): string {
+  // For Agent delegation tools, show the agent's icon
+  if (name === 'Agent' && agentName) {
+    const agent = AGENTS.find((a) => a.name === agentName)
+    if (agent) return agent.icon
+  }
   const key = name.replace('mcp__cerp__', '')
   const iconType = TOOL_ICONS[key] || TOOL_ICONS[name] || 'gear'
   const icons: Record<string, string> = {
@@ -40,7 +46,11 @@ function getToolIcon(name: string): string {
   return icons[iconType] || icons.gear
 }
 
-function getToolLabel(name: string): string {
+function getToolLabel(name: string, agentName?: string): string {
+  if (name === 'Agent' && agentName) {
+    const agent = AGENTS.find((a) => a.name === agentName)
+    if (agent) return `Delegando a ${agent.label}`
+  }
   const clean = name.replace('mcp__cerp__', '')
   const labels: Record<string, string> = {
     Bash: 'Ejecutando comando',
@@ -66,6 +76,24 @@ function getToolLabel(name: string): string {
   return labels[clean] || labels[name] || clean.replace(/_/g, ' ')
 }
 
+function formatDuration(ms: number): string {
+  const secs = ms / 1000
+  if (secs < 1) return '<1s'
+  if (secs < 60) return `${secs.toFixed(1)}s`
+  const mins = Math.floor(secs / 60)
+  const remainSecs = Math.floor(secs % 60)
+  return `${mins}m ${remainSecs}s`
+}
+
+function ElapsedTime({ startTime }: { startTime: number }) {
+  const [elapsed, setElapsed] = useState(Date.now() - startTime)
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Date.now() - startTime), 1000)
+    return () => clearInterval(id)
+  }, [startTime])
+  return <span className="text-[10px] text-slate-400 ml-2">{formatDuration(elapsed)}</span>
+}
+
 interface ToolExecutionsProps {
   tools: ToolExecution[]
 }
@@ -84,8 +112,11 @@ export function ToolExecutions({ tools }: ToolExecutionsProps) {
       {running.map((tool, i) => (
         <div key={`r-${i}`} className="flex items-start gap-2 py-1.5 text-brand-orange">
           <LoadingSpinner size="sm" />
-          <div className="min-w-0">
-            <span className="font-medium">{getToolLabel(tool.name)}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1">
+              <span className="font-medium">{getToolLabel(tool.name, tool.agentName)}</span>
+              <ElapsedTime startTime={tool.startTime} />
+            </div>
             {tool.input && (
               <div className="mt-0.5 font-mono text-[11px] text-slate-500 bg-slate-50 rounded px-2 py-1 truncate max-w-[400px]">
                 {tool.input}
@@ -122,6 +153,7 @@ export function ToolExecutions({ tools }: ToolExecutionsProps) {
 
 function ToolStep({ tool }: { tool: ToolExecution }) {
   const [showOutput, setShowOutput] = useState(false)
+  const duration = tool.endTime && tool.startTime ? tool.endTime - tool.startTime : null
 
   return (
     <div>
@@ -129,9 +161,12 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
         onClick={() => tool.output && setShowOutput(!showOutput)}
         className={`flex items-start gap-2 text-left ${tool.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} text-slate-500 transition-colors`}
       >
-        <span className="shrink-0 mt-0.5">{getToolIcon(tool.name)}</span>
-        <div className="min-w-0">
-          <span className="font-medium text-slate-600">{getToolLabel(tool.name)}</span>
+        <span className="shrink-0 mt-0.5">{getToolIcon(tool.name, tool.agentName)}</span>
+        <div className="min-w-0 flex-1">
+          <span className="font-medium text-slate-600">{getToolLabel(tool.name, tool.agentName)}</span>
+          {duration !== null && (
+            <span className="text-[10px] text-slate-400 ml-1.5">{formatDuration(duration)}</span>
+          )}
           {tool.input && (
             <span className="ml-1.5 font-mono text-slate-400 truncate">{tool.input.substring(0, 80)}</span>
           )}

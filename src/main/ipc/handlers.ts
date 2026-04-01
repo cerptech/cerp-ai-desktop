@@ -4,9 +4,11 @@ import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Cli
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
 import { runAgent, abortAgent, isAgentRunning, resetSession } from '../agent/agentManager'
+import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AuthState } from './types'
+import type { CustomContext, CustomAgent } from '../store/types'
 
 const httpClient = new HttpClient(() => tokenStore.getAccessToken())
 
@@ -95,6 +97,91 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
     if (result.canceled || !result.filePaths.length) return null
     return result.filePaths[0]
+  })
+
+  // ── Custom Contexts CRUD ──
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_CONTEXTS_LIST, async () => {
+    return customAgentStore.getContexts()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_CONTEXT_CREATE, async (_event, ctx: Omit<CustomContext, 'id' | 'createdAt' | 'updatedAt'>) => {
+    return customAgentStore.createContext(ctx)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_CONTEXT_UPDATE, async (_event, { id, updates }: { id: string; updates: Partial<CustomContext> }) => {
+    return customAgentStore.updateContext(id, updates)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_CONTEXT_DELETE, async (_event, id: string) => {
+    return customAgentStore.deleteContext(id)
+  })
+
+  // ── Custom Agents CRUD ──
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_AGENTS_LIST, async () => {
+    return customAgentStore.getAgents()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_AGENT_CREATE, async (_event, agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>) => {
+    return customAgentStore.createAgent(agent)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_AGENT_UPDATE, async (_event, { id, updates }: { id: string; updates: Partial<CustomAgent> }) => {
+    return customAgentStore.updateAgent(id, updates)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_AGENT_DELETE, async (_event, id: string) => {
+    return customAgentStore.deleteAgent(id)
+  })
+
+  // ── Conversations ──
+
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_LIST, async (_event, { page, limit }: { page?: number; limit?: number } = {}) => {
+    try {
+      return await httpClient.get(`/desktop/conversations?page=${page || 1}&limit=${limit || 20}`)
+    } catch (err) {
+      logger.error('Failed to list conversations:', err)
+      return { data: [], pagination: { currentPage: 1, totalPages: 0, totalItems: 0 } }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_GET, async (_event, id: string) => {
+    try {
+      return await httpClient.get(`/desktop/conversations/${id}`)
+    } catch (err) {
+      logger.error(`Failed to get conversation ${id}:`, err)
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_CREATE, async (_event, data: { title: string; agentName: string; sessionId?: string; activeContextId?: string; metadata?: Record<string, unknown> }) => {
+    try {
+      return await httpClient.post('/desktop/conversations', data)
+    } catch (err) {
+      logger.error('Failed to create conversation:', err)
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_APPEND_MESSAGE, async (_event, { conversationId, message, metadata }: { conversationId: string; message: Record<string, unknown>; metadata?: Record<string, unknown> }) => {
+    try {
+      await httpClient.post(`/desktop/conversations/${conversationId}/messages`, { message, metadata })
+      return true
+    } catch (err) {
+      logger.error(`Failed to append message to ${conversationId}:`, err)
+      return false
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_DELETE, async (_event, id: string) => {
+    try {
+      await httpClient.delete(`/desktop/conversations/${id}`)
+      return true
+    } catch (err) {
+      logger.error(`Failed to delete conversation ${id}:`, err)
+      return false
+    }
   })
 
   // App: Get version

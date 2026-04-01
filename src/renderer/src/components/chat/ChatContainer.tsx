@@ -1,65 +1,131 @@
-import { useState, useRef, useEffect, DragEvent } from 'react'
-import { useAgent } from '@/hooks/useAgent'
+import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
+import { useAgent, type ChatMessage } from '@/hooks/useAgent'
 import { MessageBubble } from './MessageBubble'
 import { QuickActions } from './QuickActions'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
-import { AGENTS } from '@/components/agents/agentConfig'
+import { ThinkingLoader } from './ThinkingLoader'
+import { useToast } from '@/hooks/useToast'
+
+export interface ChatStateSnapshot {
+  isStreaming: boolean
+  messages: ChatMessage[]
+  abort: () => Promise<void>
+}
 
 interface ChatContainerProps {
   userName?: string
-  selectedAgent: string
+  activeContextId?: string | null
   onAgentActivity: (agentName: string, status: 'active' | 'done' | 'idle') => void
   onNewConversation: () => void
+  onMessageComplete?: (message: ChatMessage) => void
+  restoreMessagesRef?: MutableRefObject<((msgs: ChatMessage[]) => void) | null>
+  clearMessagesRef?: MutableRefObject<(() => void) | null>
+  chatStateRef?: MutableRefObject<ChatStateSnapshot | null>
 }
 
-export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewConversation }: ChatContainerProps) {
-  const { messages, isStreaming, activeTool, error, sendPrompt, abort, clearMessages } = useAgent()
+export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
+  const { messages, isStreaming, activeTool, activeAgentDelegation, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+  const { addToast } = useToast()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [showThoughts, setShowThoughts] = useState(() => localStorage.getItem('cerp-show-thoughts') === 'true')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const toggleShowThoughts = useCallback(() => {
+    setShowThoughts((prev) => {
+      const next = !prev
+      localStorage.setItem('cerp-show-thoughts', String(next))
+      return next
+    })
+  }, [])
+
+  // Show toast on agent error
+  useEffect(() => {
+    if (error) addToast('error', error)
+  }, [error, addToast])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, activeTool])
 
-  // Track agent activity from tool events
+  // Expose restoreMessages and clearMessages to parent via refs
+  // Wrap to also reset persistence-tracking refs on conversation switch
   useEffect(() => {
-    if (activeTool) {
-      // Detect agent delegation
-      if (activeTool === 'Agent') {
-        const lastMsg = messages[messages.length - 1]
-        const lastTool = lastMsg?.tools?.find((t) => t.name === 'Agent' && t.status === 'running')
-        if (lastTool?.input) {
-          const agentName = AGENTS.find((a) => lastTool.input?.includes(a.name))?.name
-          if (agentName) onAgentActivity(agentName, 'active')
+    if (restoreMessagesRef) {
+      restoreMessagesRef.current = (msgs: ChatMessage[]) => {
+        restoreMessages(msgs)
+        prevMessageCountRef.current = msgs.length
+        wasStreamingRef.current = false
+      }
+    }
+    if (clearMessagesRef) {
+      clearMessagesRef.current = () => {
+        clearMessages()
+        prevMessageCountRef.current = 0
+        wasStreamingRef.current = false
+      }
+    }
+  }, [restoreMessages, clearMessages, restoreMessagesRef, clearMessagesRef])
+
+  // Expose current chat state for parent to read before conversation switch
+  useEffect(() => {
+    if (chatStateRef) {
+      chatStateRef.current = { isStreaming, messages, abort }
+    }
+  })
+
+  // Sync completed messages to backend (fire-and-forget)
+  const prevMessageCountRef = useRef(0)
+  useEffect(() => {
+    if (!onMessageComplete) return
+    const count = messages.length
+    if (count > prevMessageCountRef.current) {
+      const newMessages = messages.slice(prevMessageCountRef.current)
+      for (const msg of newMessages) {
+        if (msg.role === 'user') {
+          onMessageComplete(msg)
+        } else if (msg.role === 'assistant' && !isStreaming) {
+          onMessageComplete(msg)
         }
       }
+    }
+    prevMessageCountRef.current = count
+  }, [messages, isStreaming, onMessageComplete])
+
+  // When streaming stops, sync the last assistant message
+  const wasStreamingRef = useRef(false)
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming && onMessageComplete) {
+      const lastMsg = messages[messages.length - 1]
+      if (lastMsg?.role === 'assistant') {
+        onMessageComplete(lastMsg)
+      }
+    }
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming, messages, onMessageComplete])
+
+  // Track agent activity from delegation events
+  useEffect(() => {
+    if (activeAgentDelegation) {
+      onAgentActivity(activeAgentDelegation.agentName, 'active')
+    }
+    if (isStreaming) {
       onAgentActivity('orchestrator', 'active')
     }
     if (!isStreaming && !activeTool) {
       onAgentActivity('orchestrator', messages.length > 0 ? 'done' : 'idle')
     }
-  }, [activeTool, isStreaming, messages, onAgentActivity])
+  }, [activeAgentDelegation, isStreaming, activeTool, messages.length, onAgentActivity])
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
     const trimmed = input.trim()
     if (!trimmed || isStreaming) return
     setInput('')
-
-    // If a specific agent is selected, prepend instruction
-    let prompt = trimmed
-    if (selectedAgent !== 'orchestrator') {
-      const agent = AGENTS.find((a) => a.name === selectedAgent)
-      if (agent) {
-        prompt = `[Usa el agente ${agent.name}] ${trimmed}`
-      }
-    }
-
-    sendPrompt(prompt, cwd || undefined)
+    sendPrompt(trimmed, cwd || undefined, activeContextId || undefined)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -70,7 +136,7 @@ export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewC
   }
 
   const handleQuickAction = (prompt: string) => {
-    sendPrompt(prompt, cwd || undefined)
+    sendPrompt(prompt, cwd || undefined, activeContextId || undefined)
   }
 
   const handleSelectFolder = async () => {
@@ -112,7 +178,6 @@ export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewC
   }
 
   const isEmpty = messages.length === 0
-  const currentAgent = AGENTS.find((a) => a.name === selectedAgent)
 
   return (
     <div
@@ -121,24 +186,13 @@ export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewC
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Folder + agent indicator */}
-      {(cwd || selectedAgent !== 'orchestrator') && (
+      {/* Folder indicator */}
+      {cwd && (
         <div className="flex items-center gap-3 px-6 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
-          {selectedAgent !== 'orchestrator' && currentAgent && (
-            <div className="flex items-center gap-1.5">
-              <span>{currentAgent.icon}</span>
-              <span className="font-medium text-brand-orange">{currentAgent.label}</span>
-            </div>
-          )}
-          {cwd && (
-            <>
-              {selectedAgent !== 'orchestrator' && <span className="text-slate-300">|</span>}
-              <span className="font-mono text-slate-600 truncate">{cwd}</span>
-              <button onClick={() => setCwd(null)} className="text-slate-400 hover:text-slate-600">
-                &#x2715;
-              </button>
-            </>
-          )}
+          <span className="font-mono text-slate-600 truncate">{cwd}</span>
+          <button onClick={() => setCwd(null)} className="text-slate-400 hover:text-slate-600">
+            &#x2715;
+          </button>
         </div>
       )}
 
@@ -155,14 +209,10 @@ export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewC
           <div className="flex flex-col items-center justify-center h-full gap-8">
             <div className="text-center">
               <h2 className="text-2xl font-semibold text-slate-800 mb-2">
-                {selectedAgent !== 'orchestrator' && currentAgent
-                  ? `${currentAgent.icon} ${currentAgent.label}`
-                  : `Hola${userName ? ` ${userName.split(' ')[0]}` : ''}, soy CERP AI`}
+                Hola{userName ? ` ${userName.split(' ')[0]}` : ''}, soy CERP AI
               </h2>
               <p className="text-slate-500 text-sm max-w-md">
-                {selectedAgent !== 'orchestrator' && currentAgent
-                  ? currentAgent.description
-                  : 'Tu asistente inteligente con acceso completo a tu ordenador y datos de CERP'}
+                Tu asistente inteligente con acceso completo a tu ordenador y datos de CERP
               </p>
             </div>
             <QuickActions onSelect={handleQuickAction} disabled={isStreaming} />
@@ -172,14 +222,32 @@ export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewC
           </div>
         ) : (
           <>
-            {messages.map((msg, i) => (
-              <MessageBubble key={i} message={msg} />
-            ))}
-            {isStreaming && !activeTool && messages[messages.length - 1]?.content === '' && (
-              <div className="flex items-center gap-2 px-4 py-2 mb-2">
-                <LoadingSpinner size="sm" />
-                <span className="text-xs text-slate-400 animate-pulse">Pensando...</span>
-              </div>
+            {messages.map((msg, i) => {
+              const isLastAssistant = isStreaming && i === messages.length - 1 && msg.role === 'assistant'
+              return (
+                <MessageBubble
+                  key={i}
+                  message={msg}
+                  isStreaming={isLastAssistant || undefined}
+                  showThoughts={isLastAssistant ? showThoughts : undefined}
+                  onToggleThoughts={isLastAssistant ? toggleShowThoughts : undefined}
+                />
+              )
+            })}
+            {/* Immediate thinking indicator before first assistant message arrives */}
+            {isStreaming && (messages.length === 0 || messages[messages.length - 1]?.role !== 'assistant') && (
+              showThoughts ? (
+                <div className="flex items-center gap-2 px-4 py-2 mb-2">
+                  <LoadingSpinner size="sm" />
+                  <span className="text-xs text-slate-400 animate-pulse">Pensando...</span>
+                </div>
+              ) : (
+                <div className="flex justify-start mb-4">
+                  <div className="max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-3 shadow-sm">
+                    <ThinkingLoader onToggleDetails={toggleShowThoughts} />
+                  </div>
+                </div>
+              )
             )}
             <div ref={messagesEndRef} />
           </>
@@ -203,11 +271,9 @@ export function ChatContainer({ userName, selectedAgent, onAgentActivity, onNewC
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                selectedAgent !== 'orchestrator' && currentAgent
-                  ? `Pregunta al ${currentAgent.label}...`
-                  : cwd
-                    ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}...`
-                    : 'Pregunta lo que necesites...'
+                cwd
+                  ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}...`
+                  : 'Pregunta lo que necesites...'
               }
               rows={input.split('\n').length > 3 ? 4 : input.includes('\n') ? 2 : 1}
               className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50"
