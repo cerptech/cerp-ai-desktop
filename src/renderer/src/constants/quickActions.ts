@@ -6,19 +6,19 @@ export interface QuickAction {
 
 export const QUICK_ACTIONS: QuickAction[] = [
   {
+    label: 'Crear cotizacion de obra',
+    prompt: 'Quiero crear un presupuesto/cotizacion de obra. Analiza los archivos de mi carpeta de trabajo y genera el presupuesto en CERP.',
+    icon: 'document',
+  },
+  {
+    label: 'Analizar archivos de licitacion',
+    prompt: 'Analiza los archivos de mi carpeta de trabajo. Identifica capitulos, partidas, cantidades y precios. Muestra un resumen estructurado.',
+    icon: 'search',
+  },
+  {
     label: 'Estado de mis proyectos',
     prompt: 'Dame un resumen del estado de todos mis proyectos activos',
     icon: 'clipboard',
-  },
-  {
-    label: 'Materiales con stock bajo',
-    prompt: 'Que materiales tengo con stock por debajo del minimo?',
-    icon: 'alert',
-  },
-  {
-    label: 'Pedidos pendientes',
-    prompt: 'Muestrame las ordenes de compra pendientes de aprobacion',
-    icon: 'cart',
   },
   {
     label: 'Cashflow de proyecto',
@@ -26,13 +26,13 @@ export const QUICK_ACTIONS: QuickAction[] = [
     icon: 'chart',
   },
   {
-    label: 'Recursos disponibles',
-    prompt: 'Que recursos (mano de obra y maquinaria) tengo disponibles ahora?',
-    icon: 'users',
+    label: 'Pedidos pendientes',
+    prompt: 'Muestrame las ordenes de compra pendientes de aprobacion',
+    icon: 'cart',
   },
   {
-    label: 'Buscar proveedor',
-    prompt: 'Muestrame la lista de proveedores activos de la empresa',
-    icon: 'search',
+    label: 'Materiales con stock bajo',
+    prompt: 'Que materiales tengo con stock por debajo del minimo?',
+    icon: 'alert',
   },
 ]

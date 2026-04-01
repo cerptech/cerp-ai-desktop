@@ -212,7 +212,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                 Hola{userName ? ` ${userName.split(' ')[0]}` : ''}, soy CERP AI
               </h2>
               <p className="text-slate-500 text-sm max-w-md">
-                Tu asistente inteligente con acceso completo a tu ordenador y datos de CERP
+                Tu asistente para cotizaciones y licitaciones de obra. Arrastra tus archivos o selecciona una carpeta para empezar.
               </p>
             </div>
             <QuickActions onSelect={handleQuickAction} disabled={isStreaming} />

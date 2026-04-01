@@ -267,12 +267,45 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/items',
   },
   approve_budget: {
-    description: 'Aprueba un presupuesto (cambia estado a approved).',
+    description: 'Aprueba un presupuesto (cambia estado a approved). Crea obra, almacen, tareas y ordenes automaticamente.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
     }),
     method: 'POST',
     endpoint: '/budgets/:budgetId/approve',
+  },
+  update_cost_items: {
+    description: 'Configura los costos indirectos del presupuesto: Gastos Generales (GG), Beneficio Industrial (BI), IVA y otros. Cada item tiene un grupo: 1=pre-financiero, 2=financiero, 3=impuestos. Los porcentajes se aplican sobre el subtotal del grupo anterior.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      costItems: z.array(z.object({
+        order: z.number().describe('Orden de aplicacion'),
+        name: z.string().describe('Nombre del costo (ej: "Gastos Generales", "Beneficio Industrial", "IVA")'),
+        costType: z.enum(['calculated', 'variable', 'fixed']).describe('"calculated" aplica % automaticamente'),
+        percentage: z.number().optional().describe('Porcentaje a aplicar (ej: 13 para GG, 6 para BI, 21 para IVA)'),
+        fixedAmount: z.number().optional().describe('Monto fijo (solo para costType "fixed")'),
+        group: z.number().min(1).max(3).describe('Grupo: 1=gastos generales, 2=financieros, 3=impuestos'),
+      })).describe('Array de costos indirectos a configurar'),
+    }),
+    method: 'PUT',
+    endpoint: '/budgets/:budgetId/cost-items',
+  },
+  recalculate_budget: {
+    description: 'Recalcula TODOS los costos del presupuesto: items, capitulos, totales y costos finales. Llamar despues de agregar o modificar items.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+    }),
+    method: 'POST',
+    endpoint: '/budgets/:budgetId/recalculate',
+  },
+  get_products: {
+    description: 'Lista los productos/materiales del catalogo de la empresa con su desglose de costos (materiales, mano de obra, equipos, subcontratado). Util para buscar productos existentes antes de agregar items al presupuesto.',
+    schema: z.object({
+      search: z.string().optional().describe('Texto de busqueda por nombre o codigo'),
+      limit: z.number().min(1).max(100).optional().describe('Limite de resultados (default 50)'),
+    }),
+    method: 'GET',
+    endpoint: '/budgets/products',
   },
 
   // ============================================================

@@ -6,12 +6,13 @@ interface QuickActionsProps {
 }
 
 const ICONS: Record<string, string> = {
-  clipboard: '\u{1F4CB}',
-  alert: '\u{26A0}',
-  cart: '\u{1F6D2}',
-  chart: '\u{1F4CA}',
-  users: '\u{1F477}',
+  document: '\u{1F4D0}',
   search: '\u{1F50D}',
+  clipboard: '\u{1F4CB}',
+  chart: '\u{1F4CA}',
+  cart: '\u{1F6D2}',
+  alert: '\u{26A0}',
+  users: '\u{1F477}',
 }
 
 export function QuickActions({ onSelect, disabled }: QuickActionsProps) {

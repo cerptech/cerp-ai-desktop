@@ -135,6 +135,47 @@ export async function runAgent(
     }
   }, 15 * 60 * 1000)
 
+  // Helper to process stream messages (used by main flow and retry)
+  const processStream = async (stream: AsyncIterable<unknown>, tag: string): Promise<boolean> => {
+    let gotResult = false
+    for await (const msg of stream) {
+      if (abortController.signal.aborted) break
+      const msgType = (msg as any).type
+      const msgSubtype = (msg as any).subtype
+      logger.debug(`[${queryId}] Stream msg${tag}: type=${msgType} subtype=${msgSubtype || '-'} keys=${Object.keys(msg as object).join(',')}`)
+
+      // Capture session ID
+      if (!currentSessionId) {
+        const sid = (msg as any).sessionId || (msg as any).session_id || (msg as any).id
+        if (sid && typeof sid === 'string') {
+          currentSessionId = sid
+          writeSessionToDisk(currentSessionId)
+          sendEvent({ type: 'session_id', sessionId: currentSessionId })
+          logger.info(`[${queryId}] Session ID captured${tag}: ${currentSessionId}`)
+        }
+      }
+      if (msgType === 'result') {
+        const resultSid = (msg as any).session_id || (msg as any).sessionId
+        if (resultSid && typeof resultSid === 'string') {
+          currentSessionId = resultSid
+          writeSessionToDisk(currentSessionId)
+          sendEvent({ type: 'session_id', sessionId: currentSessionId })
+          logger.info(`[${queryId}] Session ID from result${tag}: ${currentSessionId}`)
+        }
+      }
+
+      const events = mapMessage(msg as Record<string, unknown>)
+      if (events) {
+        const arr = Array.isArray(events) ? events : [events]
+        for (const event of arr) {
+          if (event.type === 'done') gotResult = true
+          sendEvent(event)
+        }
+      }
+    }
+    return gotResult
+  }
+
   try {
     const sessionId = payload.sessionId || currentSessionId
     const cwd = payload.cwd || app.getPath('home')
@@ -202,57 +243,28 @@ export async function runAgent(
       (options as any).resume = sessionId
     }
 
-    const q = query({
-      prompt: payload.prompt,
-      options: options as any,
-    })
-
     let receivedResult = false
 
-    for await (const msg of q) {
-      // Check if aborted
-      if (abortController.signal.aborted) break
+    try {
+      const q = query({ prompt: payload.prompt, options: options as any })
+      receivedResult = await processStream(q, '')
+    } catch (queryErr) {
+      const qMsg = queryErr instanceof Error ? queryErr.message : String(queryErr)
 
-      const msgType = (msg as any).type
-      const msgSubtype = (msg as any).subtype
-
-      logger.debug(`[${queryId}] Stream msg: type=${msgType} subtype=${msgSubtype || '-'} keys=${Object.keys(msg as object).join(',')}`)
-
-      // Capture session ID from any message that carries it
-      if (!currentSessionId) {
-        const sid = (msg as any).sessionId || (msg as any).session_id || (msg as any).id
-        if (sid && typeof sid === 'string') {
-          currentSessionId = sid
-          writeSessionToDisk(currentSessionId)
-          sendEvent({ type: 'session_id', sessionId: currentSessionId })
-          logger.info(`[${queryId}] Session ID captured: ${currentSessionId}`)
-        }
-      }
-
-      // Capture session ID specifically from result messages (may be the only source)
-      if (msgType === 'result') {
-        const resultSid = (msg as any).session_id || (msg as any).sessionId
-        if (resultSid && typeof resultSid === 'string') {
-          currentSessionId = resultSid
-          writeSessionToDisk(currentSessionId)
-          sendEvent({ type: 'session_id', sessionId: currentSessionId })
-          logger.info(`[${queryId}] Session ID from result: ${currentSessionId}`)
-        }
-      }
-
-      const events = mapMessage(msg)
-      if (events) {
-        const arr = Array.isArray(events) ? events : [events]
-        for (const event of arr) {
-          if (event.type === 'done') receivedResult = true
-          sendEvent(event)
-        }
+      // If session resume failed, clear session and retry with a fresh one
+      if (qMsg.includes('No conversation found with session ID')) {
+        logger.warn(`[${queryId}] Session expired, retrying with fresh session`)
+        currentSessionId = null
+        try { unlinkSync(getSessionFilePath()) } catch { /* ignore */ }
+        delete (options as any).resume
+        const retryQ = query({ prompt: payload.prompt, options: options as any })
+        receivedResult = await processStream(retryQ, ' (retry)')
+      } else {
+        throw queryErr // Re-throw for outer catch
       }
     }
 
     const duration = Date.now() - startTime
-
-    // Always send done even if we didn't get a result message
     if (!receivedResult) {
       sendEvent({ type: 'done', duration })
     }
