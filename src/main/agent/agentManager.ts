@@ -228,7 +228,9 @@ async function startSession(
         else logger.warn('git-bash not found in standard locations')
       }
       const spawnEnv = {
-        ...(spawnOpts?.options?.env || process.env),
+        ...process.env,
+        ...(spawnOpts?.options?.env || {}),
+        ANTHROPIC_API_KEY: apiKey,
         ELECTRON_RUN_AS_NODE: '1',
         ...(gitBashPath ? { CLAUDE_CODE_GIT_BASH_PATH: gitBashPath } : {}),
       }
