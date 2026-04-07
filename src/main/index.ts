@@ -1,8 +1,15 @@
 import { config } from 'dotenv'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
 
-// Load .env before anything else
+// Load .env — try multiple locations (dev: cwd, prod: next to executable, prod: app resources)
 config({ path: resolve(process.cwd(), '.env') })
+config({ path: resolve(dirname(process.execPath), '.env') })
+config({ path: resolve(__dirname, '..', '.env') })
+
+// Auth0 defaults — these are public client IDs, not secrets
+if (!process.env.AUTH0_DOMAIN) process.env.AUTH0_DOMAIN = 'dev-dg6vz8aqjb8sy36a.us.auth0.com'
+if (!process.env.AUTH0_CLIENT_ID) process.env.AUTH0_CLIENT_ID = 'VWC79LAXocZa4YgLXB9cLabqj1kHJWVb'
+if (!process.env.AUTH0_AUDIENCE) process.env.AUTH0_AUDIENCE = 'https://dev-dg6vz8aqjb8sy36a.us.auth0.com/api/v2/'
 
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
