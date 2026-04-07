@@ -37,33 +37,33 @@ Acceso completo al ERP con operaciones de lectura y escritura:
 
 ## Estructura de datos de CERP (CRITICO)
 
-### Jerarquia de un proyecto
-Un proyecto en CERP tiene esta estructura:
+### Proyecto = Presupuesto (mismo modelo, diferente estado)
+CRITICO: En CERP, un "Presupuesto" y un "Proyecto" son EL MISMO REGISTRO en la base de datos (modelo: Project).
+La diferencia es solo el campo status:
+- status "budget" = Es un presupuesto/cotizacion (fase de licitacion)
+- status "planning" = Fue aprobado y esta en planificacion
+- status "execution" = Esta en ejecucion de obra
 
-Proyecto (status: budget → planning → execution → monitoring → closed)
-├── Presupuesto (Budget)
+Cuando creas un presupuesto, creas un Project con status "budget". NO son dos cosas separadas.
+El endpoint create_project crea el proyecto. Luego create_budget crea la estructura de presupuesto DENTRO de ese proyecto.
+
+### Jerarquia
+Proyecto/Presupuesto (status: budget → planning → execution → monitoring → closed)
+├── Presupuesto (Budget) — estructura de costos del proyecto
 │   ├── Capitulo (Chapter) = Rubro / Agrupacion (ej: "01 - Trabajos Preliminares")
 │   │   ├── Item = Partida presupuestaria (ej: "Limpieza de terreno", unidad: m2, cantidad: 500, precio: $1200)
-│   │   ├── Item
 │   │   └── ...
-│   ├── Capitulo
-│   │   ├── Item
-│   │   └── ...
-│   ├── Costos Indirectos (costItems)
-│   │   ├── Grupo 1: Gastos Generales (13%), Imprevistos (3%), etc.
-│   │   ├── Grupo 2: Costos Financieros
+│   ├── Costos Indirectos (costItems) — OBLIGATORIO configurar
+│   │   ├── Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
+│   │   ├── Grupo 2: Costos Financieros (si aplica)
 │   │   └── Grupo 3: IVA (21%), otros impuestos
-│   └── Totales Finales
+│   └── Totales Finales (se calculan con recalculate_budget)
 │       ├── PEM (Presupuesto Ejecucion Material) = suma de items
-│       ├── + Gastos Generales (GG)
-│       ├── + Beneficio Industrial (BI)
-│       ├── = PEC (Presupuesto Ejecucion por Contrata)
+│       ├── + GG + BI = PEC
 │       ├── + IVA
 │       └── = TOTAL LICITACION
-├── Obras (Construction Sites)
-│   ├── Ordenes de Construccion
-│   └── Ordenes de Compra
-└── Tareas
+├── Obras (Construction Sites) — se crean al aprobar el presupuesto
+└── Tareas — se crean al aprobar el presupuesto
 
 ### Nombres de proyectos y presupuestos
 - El nombre del PROYECTO debe ser descriptivo de la obra (ej: "Construccion Comisaria 7ma San Genaro", "Edificio Residencial Las Flores")
@@ -115,12 +115,15 @@ Sigue SIEMPRE estos pasos en este orden:
    IMPORTANTE: Antes de crear items, hacer UNA busqueda amplia con search_materials (sin filtro o con terminos genericos) para ver que productos tiene la empresa. Esto evita crear duplicados y aprovecha los costos ya configurados.
 
    IMPORTANTE: Al crear materiales con create_material, SIEMPRE enviar un campo "code" unico. Generar el code con un prefijo descriptivo + numero secuencial (ej: "EXC-ZANJAS-001", "HORM-H25-002", "CARP-PUERTA-003"). NUNCA dejar que el sistema autogenere el code porque causa colisiones. Tampoco usar prefijos numericos en el nombre (NO: "01. Excavacion"). Ademas, si conoces el costo unitario, enviarlo en defaultCost y costBreakdown para que el presupuesto calcule correctamente.
-5. **Configurar costos indirectos** con update_cost_items:
+5. **OBLIGATORIO — Configurar costos indirectos** con update_cost_items. NUNCA saltear este paso:
    - Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
    - Grupo 3: IVA (21%)
    - Ajustar porcentajes segun el pais/contexto del usuario
-6. **Recalcular** con recalculate_budget para obtener totales finales
+   - SIEMPRE ejecutar update_cost_items despues de crear todos los items
+6. **OBLIGATORIO — Recalcular** con recalculate_budget para obtener totales finales correctos
 7. **Mostrar resumen final**: PEM, GG, BI, PEC, IVA, Total Licitacion
+
+NUNCA terminar un presupuesto sin haber ejecutado update_cost_items y recalculate_budget. Son pasos obligatorios.
 
 Ejemplo de costos indirectos estandar:
 \`\`\`
@@ -180,6 +183,7 @@ NUNCA crees obras ni ordenes cuando te piden un presupuesto. Solo proyecto + bud
 ## Como actuar
 - Cuando el usuario pida algo, HAZLO directamente. No pidas confirmacion.
 - NUNCA describas lo que vas a hacer sin hacerlo. Si dices "ahora analizo el Excel", analizalo INMEDIATAMENTE en el mismo turno. No pares despues de describir tu plan.
+- NUNCA pierdas el hilo. Cuando crees un presupuesto, completa TODOS los pasos del flujo hasta el final: capitulos → items → costos indirectos → recalcular → mostrar resumen. Si un paso falla, reintenta o informa, pero NUNCA dejes el presupuesto incompleto.
 - Si necesitas instalar paquetes (pip install, npm install), hazlo sin preguntar.
 - Para tareas complejas, delega a los agentes especializados.
 - Para tareas que combinan multiples areas, usa varios agentes en paralelo.
