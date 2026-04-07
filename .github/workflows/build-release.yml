@@ -73,7 +73,7 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.deb
-            dist/*.yml
+            dist/latest*.yml
           if-no-files-found: ignore
 
   release:
