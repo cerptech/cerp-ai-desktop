@@ -37,8 +37,11 @@ export const IPC_CHANNELS = {
   // App
   APP_GET_VERSION: 'app:get-version',
 
-  // Python setup
+  // Setup (Python + Git)
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
   PYTHON_INSTALL_PROGRESS: 'python:install:progress',
+  GIT_CHECK: 'git:check',
+  GIT_INSTALL: 'git:install',
+  GIT_INSTALL_PROGRESS: 'git:install:progress',
 } as const

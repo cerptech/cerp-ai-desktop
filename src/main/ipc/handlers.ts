@@ -214,6 +214,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       }
     })
   })
+
+  // Git: Check
+  ipcMain.handle(IPC_CHANNELS.GIT_CHECK, async () => {
+    const { checkGit } = await import('../utils/pythonSetup')
+    return checkGit()
+  })
+
+  // Git: Install
+  ipcMain.handle(IPC_CHANNELS.GIT_INSTALL, async () => {
+    const mainWindow = getMainWindow()
+    if (!mainWindow) return false
+    const { installGit } = await import('../utils/pythonSetup')
+    return installGit((message, percent) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.GIT_INSTALL_PROGRESS, { message, percent })
+      }
+    })
+  })
 }
 
 export { handleCallback }

@@ -28,6 +28,9 @@ const IPC = {
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
   PYTHON_INSTALL_PROGRESS: 'python:install:progress',
+  GIT_CHECK: 'git:check',
+  GIT_INSTALL: 'git:install',
+  GIT_INSTALL_PROGRESS: 'git:install:progress',
 } as const
 
 export type AgentStreamEvent =
@@ -137,7 +140,7 @@ const api = {
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
 
-  // Python setup
+  // Setup (Python + Git)
   checkPython: (): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }> =>
     ipcRenderer.invoke(IPC.PYTHON_CHECK),
   installPython: (): Promise<boolean> => ipcRenderer.invoke(IPC.PYTHON_INSTALL),
@@ -145,6 +148,14 @@ const api = {
     const handler = (_: Electron.IpcRendererEvent, data: { message: string; percent: number }): void => callback(data)
     ipcRenderer.on(IPC.PYTHON_INSTALL_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC.PYTHON_INSTALL_PROGRESS, handler)
+  },
+  checkGit: (): Promise<{ installed: boolean; version?: string }> =>
+    ipcRenderer.invoke(IPC.GIT_CHECK),
+  installGit: (): Promise<boolean> => ipcRenderer.invoke(IPC.GIT_INSTALL),
+  onGitProgress: (callback: (data: { message: string; percent: number }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { message: string; percent: number }): void => callback(data)
+    ipcRenderer.on(IPC.GIT_INSTALL_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC.GIT_INSTALL_PROGRESS, handler)
   },
 }
 

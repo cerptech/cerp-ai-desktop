@@ -103,6 +103,9 @@ interface CerpAPI {
   checkPython(): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }>
   installPython(): Promise<boolean>
   onPythonProgress(callback: (data: { message: string; percent: number }) => void): () => void
+  checkGit(): Promise<{ installed: boolean; version?: string }>
+  installGit(): Promise<boolean>
+  onGitProgress(callback: (data: { message: string; percent: number }) => void): () => void
 }
 
 declare global {
