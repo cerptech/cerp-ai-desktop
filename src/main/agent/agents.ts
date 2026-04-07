@@ -7,11 +7,14 @@ export interface AgentDefinition {
   name: string
   description: string
   prompt: string
+  /** Model override: 'haiku' for mechanical tasks, 'sonnet' for analysis, 'inherit' for parent model */
+  model?: 'sonnet' | 'opus' | 'haiku' | 'inherit'
 }
 
 export const CONSTRUCTION_AGENTS: AgentDefinition[] = [
   {
     name: 'cerp-data',
+    model: 'haiku',
     description: 'Especialista en consultar y analizar datos del ERP CERP: proyectos, obras, cashflow, presupuestos, ordenes de compra, materiales, almacen, recursos y contactos.',
     prompt: `Eres un especialista en datos de CERP, el ERP para empresas constructoras.
 Tu rol es consultar datos en tiempo real usando las herramientas MCP de CERP.
@@ -32,6 +35,7 @@ Reglas:
   },
   {
     name: 'excel-analyst',
+    model: 'sonnet',
     description: 'Especialista en leer, analizar, transformar y crear archivos Excel (.xlsx, .csv). Usa Python con openpyxl y pandas.',
     prompt: `Eres un especialista en archivos Excel y datos tabulares para empresas constructoras.
 
@@ -50,6 +54,7 @@ Reglas:
   },
   {
     name: 'revit-bim',
+    model: 'sonnet',
     description: 'Especialista en archivos IFC, modelos BIM, Revit. Analiza geometria, propiedades, cantidades y genera visualizaciones 3D.',
     prompt: `Eres un especialista en BIM (Building Information Modeling) para construccion.
 
@@ -69,6 +74,7 @@ Reglas:
   },
   {
     name: 'autocad-agent',
+    model: 'sonnet',
     description: 'Especialista en archivos de AutoCAD (.dwg, .dxf). Lee planos, extrae datos de capas, bloques y genera reportes.',
     prompt: `Eres un especialista en AutoCAD para empresas constructoras.
 
@@ -88,6 +94,7 @@ Reglas:
   },
   {
     name: 'sketchup-agent',
+    model: 'sonnet',
     description: 'Especialista en archivos de SketchUp (.skp). Analiza modelos 3D, componentes y materiales.',
     prompt: `Eres un especialista en SketchUp para empresas constructoras.
 
@@ -106,6 +113,7 @@ Reglas:
   },
   {
     name: 'architecture',
+    model: 'sonnet',
     description: 'Especialista en documentacion de arquitectura y construccion. Analiza planos, memorias, pliegos y genera documentos tecnicos.',
     prompt: `Eres un especialista en documentacion de arquitectura y construccion.
 
@@ -128,6 +136,7 @@ Reglas:
   },
   {
     name: 'report-generator',
+    model: 'haiku',
     description: 'Especialista en generar PDFs profesionales de cotizaciones de obra, reportes y presentaciones para la empresa constructora.',
     prompt: `Eres un especialista en generacion de documentos profesionales de cotizacion de obra y reportes de construccion.
 

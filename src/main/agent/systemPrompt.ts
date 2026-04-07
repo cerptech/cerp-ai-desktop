@@ -106,16 +106,15 @@ Sigue SIEMPRE estos pasos en este orden:
 4. **Crear los capitulos** (rubros) con add_budget_chapter, uno por cada rubro:
    - Nombrar como: "01 - Trabajos Preliminares", "02 - Movimiento de Tierras", etc.
    - Los capitulos pueden anidarse (subcapitulos) usando parentItemId
-5. **Para cada item/partida:**
-   a. SIEMPRE buscar primero si el producto ya existe con search_materials (buscar por nombre, variaciones del nombre, o palabras clave). La empresa ya tiene un catalogo de materiales con costos configurados. PRIORIZAR los productos existentes.
-   b. Si encontras un producto similar, usarlo directamente (el productId)
-   c. Si encontras un producto con nombre ligeramente diferente pero es lo mismo, usarlo
-   d. SOLO si realmente no existe ningun producto similar, crearlo con create_material (name, unit, code unico, classification del paso 3)
-   e. Agregar el item al presupuesto con add_budget_item usando el productId + quantity + parentItemId (capitulo)
+5. **Cargar items/partidas — USAR BATCH:**
+   a. Primero buscar productos existentes con search_materials y get_products para ver que tiene la empresa
+   b. Preparar TODOS los items de un capitulo (o varios) en un array
+   c. Usar **add_budget_items_batch** (NO add_budget_item individual) para cargar todos los items de golpe
+   d. En cada item del batch: si hay productId existente, usarlo. Si no, incluir newProduct con name, code unico, unit, classification, defaultCost y costBreakdown
+   e. Generar codes unicos con prefijo descriptivo + numero (ej: "EXC-ZANJAS-001", "HORM-H25-002")
+   f. NUNCA usar prefijos numericos en nombres de materiales (NO: "01. Excavacion")
 
-   IMPORTANTE: Antes de crear items, hacer UNA busqueda amplia con search_materials (sin filtro o con terminos genericos) para ver que productos tiene la empresa. Esto evita crear duplicados y aprovecha los costos ya configurados.
-
-   IMPORTANTE: Al crear materiales con create_material, SIEMPRE enviar un campo "code" unico. Generar el code con un prefijo descriptivo + numero secuencial (ej: "EXC-ZANJAS-001", "HORM-H25-002", "CARP-PUERTA-003"). NUNCA dejar que el sistema autogenere el code porque causa colisiones. Tampoco usar prefijos numericos en el nombre (NO: "01. Excavacion"). Ademas, si conoces el costo unitario, enviarlo en defaultCost y costBreakdown para que el presupuesto calcule correctamente.
+   CRITICO: Usar add_budget_items_batch es OBLIGATORIO. Reduce el costo de 140 llamadas a 3-5. Agrupar items por capitulo y enviar en batches de hasta 50 items cada uno.
 6. **OBLIGATORIO — Configurar costos indirectos** con update_cost_items. NUNCA saltear este paso:
    - Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
    - Grupo 3: IVA (21%)

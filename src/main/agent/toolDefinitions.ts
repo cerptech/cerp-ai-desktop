@@ -266,6 +266,34 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'POST',
     endpoint: '/budgets/:budgetId/items',
   },
+  add_budget_items_batch: {
+    description: 'Agrega MULTIPLES items/partidas al presupuesto en UNA sola llamada. MUCHO mas eficiente que add_budget_item individual. Puede crear productos nuevos y agregarlos al presupuesto en un solo paso. USAR SIEMPRE en vez de add_budget_item cuando hay mas de 3 items.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      items: z.array(z.object({
+        productId: z.string().optional().describe('ID del producto existente (si ya existe en catalogo)'),
+        quantity: z.number().describe('Cantidad'),
+        parentItemId: z.string().describe('ID del capitulo padre'),
+        overheadOverride: z.number().optional().describe('Override % gastos generales'),
+        newProduct: z.object({
+          name: z.string().describe('Nombre del material'),
+          code: z.string().describe('Codigo unico (ej: "EXC-ZANJAS-001")'),
+          unit: z.string().optional().describe('Unidad (m2, m3, kg, u, gl)'),
+          description: z.string().optional(),
+          classification: z.string().optional().describe('ID classification product_type'),
+          defaultCost: z.number().optional().describe('Costo unitario'),
+          costBreakdown: z.object({
+            materials: z.number().optional(),
+            labor: z.number().optional(),
+            equipment: z.number().optional(),
+            subcontracted: z.number().optional(),
+          }).optional(),
+        }).optional().describe('Producto nuevo a crear. Usar SOLO si no existe productId.'),
+      })).describe('Array de items a crear (max 200 por batch)'),
+    }),
+    method: 'POST',
+    endpoint: '/budgets/:budgetId/items/batch',
+  },
   approve_budget: {
     description: 'Aprueba un presupuesto (cambia estado a approved). Crea obra, almacen, tareas y ordenes automaticamente.',
     schema: z.object({

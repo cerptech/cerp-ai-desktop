@@ -180,11 +180,12 @@ async function startSession(
   const contextPrompt = await buildContextPrompt(httpClient)
   const fullSystemPrompt = buildFullSystemPrompt(contextPrompt, contextId, payload.activeContextId)
 
-  // Build subagent definitions
+  // Build subagent definitions (with model overrides for cost optimization)
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
     name: a.name,
     description: a.description,
     instructions: a.prompt,
+    ...(a.model && a.model !== 'inherit' ? { model: a.model } : {}),
   }))
   const customAgentDefs = customAgentStore.getAgents()
   const customSdkAgents = customAgentDefs.map((a) => ({
