@@ -13,6 +13,10 @@ files:
   - '!{.env,.env.*,.gitignore}'
   - '!{tsconfig.json,tsconfig.*.json}'
 
+# Claude Agent SDK needs to spawn cli.js as a child process — must be outside asar
+asarUnpack:
+  - 'node_modules/@anthropic-ai/claude-agent-sdk/**'
+
 # Auto-updater via GitHub Releases
 publish:
   provider: github
