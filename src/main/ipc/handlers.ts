@@ -10,7 +10,14 @@ import { logger } from '../utils/logger'
 import type { SendPromptPayload, AuthState } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
-const httpClient = new HttpClient(() => tokenStore.getAccessToken())
+const httpClient = new HttpClient(
+  () => tokenStore.getAccessToken(),
+  async () => {
+    // On 401, try to refresh the API key (which re-validates the token)
+    logger.info('Token expired during session, refreshing...')
+    await fetchApiKey(httpClient)
+  },
+)
 
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
   // Auth: Login

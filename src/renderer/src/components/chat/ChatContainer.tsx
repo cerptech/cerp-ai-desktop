@@ -329,9 +329,16 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
           </button>
 
           {isStreaming ? (
-            <Button variant="secondary" onClick={abort} type="button">
-              Cancelar
-            </Button>
+            <button
+              onClick={abort}
+              type="button"
+              className="p-2.5 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors"
+              title="Detener ejecucion (Esc)"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
           ) : (
             <Button type="submit" disabled={!input.trim()}>
               Enviar

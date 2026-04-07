@@ -303,10 +303,17 @@ async function processStreamLoop(): Promise<void> {
         const arr = Array.isArray(events) ? events : [events]
         for (const event of arr) {
           if (event.type === 'done') {
-            // In Streaming Input Mode, 'result' means a turn ended, not the session.
-            // Don't send done to UI — the agent may continue with more turns.
-            // UI done is only sent when the stream loop ends (in finally block).
             logger.info(`Turn complete (cost=$${(event as any).cost?.toFixed(4) || '?'}, tasks=${activeTaskCount})`)
+            if (activeTaskCount > 0) {
+              // Background tasks still running — don't signal done to UI yet
+              logger.info(`Holding done: ${activeTaskCount} tasks still active`)
+              continue
+            }
+            // Turn complete and no background tasks — unlock UI for next input
+            // Session stays alive (MessageQueue keeps the query running)
+            sendEvent(event)
+            sendDone()
+            processingTurn = false
             continue
           }
           sendEvent(event)

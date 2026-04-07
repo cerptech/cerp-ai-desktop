@@ -4,9 +4,11 @@ function getApiBaseUrl(): string {
 
 export class HttpClient {
   private getToken: () => string | null
+  private onTokenExpired?: () => Promise<void>
 
-  constructor(getToken: () => string | null) {
+  constructor(getToken: () => string | null, onTokenExpired?: () => Promise<void>) {
     this.getToken = getToken
+    this.onTokenExpired = onTokenExpired
   }
 
   async get<T = unknown>(path: string): Promise<T> {
@@ -21,7 +23,7 @@ export class HttpClient {
     return this.request('DELETE', path) as Promise<T>
   }
 
-  async request<T = unknown>(method: string, path: string, data?: unknown): Promise<T> {
+  async request<T = unknown>(method: string, path: string, data?: unknown, retried = false): Promise<T> {
     const token = this.getToken()
     if (!token) throw new Error('No auth token available')
 
@@ -35,6 +37,16 @@ export class HttpClient {
       },
       body: data ? JSON.stringify(data) : undefined,
     })
+
+    // Retry once on 401 — token may have expired during a long session
+    if (res.status === 401 && !retried && this.onTokenExpired) {
+      try {
+        await this.onTokenExpired()
+        return this.request(method, path, data, true)
+      } catch {
+        // Refresh failed — throw original error
+      }
+    }
 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
