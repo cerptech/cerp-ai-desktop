@@ -343,14 +343,25 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
           <span className="text-[10px] text-slate-300">
             Arrastra archivos al chat para adjuntar su ruta
           </span>
-          {messages.length > 0 && (
-            <button
-              onClick={handleNewConversation}
-              className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-            >
-              + Nueva conversacion
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {messages.length > 0 && (
+              <button
+                onClick={toggleShowThoughts}
+                className={`text-xs transition-colors ${showThoughts ? 'text-brand-orange' : 'text-slate-400 hover:text-slate-600'}`}
+                title={showThoughts ? 'Ocultar ejecuciones' : 'Mostrar ejecuciones'}
+              >
+                {showThoughts ? 'Ocultar ejecuciones' : 'Ver ejecuciones'}
+              </button>
+            )}
+            {messages.length > 0 && (
+              <button
+                onClick={handleNewConversation}
+                className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                + Nueva conversacion
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
