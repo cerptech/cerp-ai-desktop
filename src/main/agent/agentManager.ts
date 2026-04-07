@@ -157,8 +157,8 @@ async function startSession(
     agents: [...builtInAgents, ...customSdkAgents],
     allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*'],
     permissionMode: 'bypassPermissions',
-    maxTurns: payload.maxTurns ?? 50,
-    maxBudgetUsd: payload.maxBudgetUsd ?? 2.0,
+    maxTurns: payload.maxTurns ?? 100,
+    maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
     includePartialMessages: true,
     promptSuggestions: true,
     effort: 'high',
@@ -273,6 +273,9 @@ async function processStreamLoop(): Promise<void> {
   } finally {
     processingTurn = false
     activeQuery = null
+    // Always ensure UI resets — covers budget exceeded, errors, etc.
+    sendEvent({ type: 'done' })
+    sendDone()
     logger.info('Stream loop ended')
   }
 }

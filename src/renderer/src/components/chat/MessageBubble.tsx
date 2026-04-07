@@ -31,7 +31,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
 
   const hasTools = message.tools && message.tools.length > 0
   const showThinkingLoader = isStreaming && !showThoughts && (hasTools || !message.content)
-  const showToolDetails = hasTools && (!isStreaming || showThoughts)
+  const showToolDetails = hasTools && showThoughts
 
   // Find active agent delegation for context in ThinkingLoader
   const activeAgent = message.tools?.find((t) => t.status === 'running' && t.name === 'Agent')
@@ -69,6 +69,17 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
             <LoadingSpinner size="sm" />
             <span className="text-xs text-slate-400 animate-pulse">Pensando...</span>
           </div>
+        )}
+
+        {/* Collapsed tool summary when hidden */}
+        {hasTools && !showThinkingLoader && !showToolDetails && !isStreaming && (
+          <button
+            onClick={onToggleThoughts}
+            className="text-[10px] text-slate-400 hover:text-slate-500 transition-colors mb-2 flex items-center gap-1"
+          >
+            <span className="text-emerald-500">&#10003;</span>
+            {message.tools!.length} paso{message.tools!.length > 1 ? 's' : ''}
+          </button>
         )}
 
         {/* Message content with markdown */}

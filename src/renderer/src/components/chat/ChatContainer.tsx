@@ -247,8 +247,8 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                   key={i}
                   message={msg}
                   isStreaming={isLastAssistant || undefined}
-                  showThoughts={isLastAssistant ? showThoughts : undefined}
-                  onToggleThoughts={isLastAssistant ? toggleShowThoughts : undefined}
+                  showThoughts={showThoughts}
+                  onToggleThoughts={msg.role === 'assistant' && msg.tools?.length ? toggleShowThoughts : undefined}
                   onStop={isLastAssistant ? abort : undefined}
                 />
               )
