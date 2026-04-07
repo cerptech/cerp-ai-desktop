@@ -10,7 +10,8 @@ import { ToastContainer } from '@/components/ui/ToastContainer'
 export default function App() {
   const { isAuthenticated, user, loading, login, logout } = useAuth()
   const [setupDone, setSetupDone] = useState<boolean>(() => {
-    return localStorage.getItem('cerp-setup-done') === 'true'
+    // v1.0.6+: require setup version 2 (includes git check)
+    return localStorage.getItem('cerp-setup-version') === '2'
   })
 
   // Initial loading check
@@ -27,7 +28,7 @@ export default function App() {
     return (
       <SetupPage
         onComplete={() => {
-          localStorage.setItem('cerp-setup-done', 'true')
+          localStorage.setItem('cerp-setup-version', '2')
           setSetupDone(true)
         }}
       />
