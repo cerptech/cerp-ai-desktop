@@ -150,7 +150,11 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   }, [isStreaming, abort])
 
   const handleQuickAction = (prompt: string) => {
-    sendPrompt(prompt, cwd || undefined, activeContextId || undefined)
+    // If a working folder is selected, inject it into the prompt so the AI knows where to look
+    const fullPrompt = cwd
+      ? `${prompt}\n\nMi carpeta de trabajo es: ${cwd}`
+      : prompt
+    sendPrompt(fullPrompt, cwd || undefined, activeContextId || undefined)
   }
 
   const handleSelectFolder = async () => {

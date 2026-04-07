@@ -58,16 +58,31 @@ const THINKING_VERBS = [
   'Generando opciones',
 ]
 
+const AGENT_LABELS: Record<string, string> = {
+  'cerp-data': 'Consultando datos de CERP',
+  'excel-analyst': 'Analizando archivos Excel',
+  'revit-bim': 'Procesando modelo BIM',
+  'autocad-agent': 'Leyendo planos AutoCAD',
+  'sketchup-agent': 'Analizando modelo SketchUp',
+  'architecture': 'Revisando documentacion tecnica',
+  'report-generator': 'Generando documento',
+}
+
 interface ThinkingLoaderProps {
   onToggleDetails?: () => void
   onStop?: () => void
+  /** Name of the active delegated agent, if any */
+  activeAgentName?: string
 }
 
-export function ThinkingLoader({ onToggleDetails, onStop }: ThinkingLoaderProps) {
+export function ThinkingLoader({ onToggleDetails, onStop, activeAgentName }: ThinkingLoaderProps) {
   const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_VERBS.length))
   const [visible, setVisible] = useState(true)
 
   useEffect(() => {
+    // Don't rotate verbs when showing a specific agent label
+    if (activeAgentName) return
+
     const interval = setInterval(() => {
       setVisible(false)
       setTimeout(() => {
@@ -76,7 +91,11 @@ export function ThinkingLoader({ onToggleDetails, onStop }: ThinkingLoaderProps)
       }, 200)
     }, 3000)
     return () => clearInterval(interval)
-  }, [])
+  }, [activeAgentName])
+
+  const displayText = activeAgentName
+    ? AGENT_LABELS[activeAgentName] || `Trabajando con ${activeAgentName}`
+    : `${THINKING_VERBS[index]}...`
 
   return (
     <div className="py-1.5">
@@ -96,9 +115,11 @@ export function ThinkingLoader({ onToggleDetails, onStop }: ThinkingLoaderProps)
           />
         </div>
         <span
-          className={`text-xs text-slate-500 transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
+          className={`text-xs transition-opacity duration-200 ${
+            activeAgentName ? 'text-brand-orange font-medium opacity-100' : `text-slate-500 ${visible ? 'opacity-100' : 'opacity-0'}`
+          }`}
         >
-          {THINKING_VERBS[index]}...
+          {displayText}
         </span>
       </div>
       <div className="flex items-center gap-3 mt-1.5">

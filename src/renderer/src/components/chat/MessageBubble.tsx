@@ -33,12 +33,19 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
   const showThinkingLoader = isStreaming && !showThoughts && (hasTools || !message.content)
   const showToolDetails = hasTools && (!isStreaming || showThoughts)
 
+  // Find active agent delegation for context in ThinkingLoader
+  const activeAgent = message.tools?.find((t) => t.status === 'running' && t.name === 'Agent')
+
   return (
     <div className="flex justify-start mb-4">
       <div className="max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 text-slate-800 px-4 py-3 shadow-sm">
         {/* Thinking loader (default during streaming) */}
         {showThinkingLoader && (
-          <ThinkingLoader onToggleDetails={onToggleThoughts} onStop={onStop} />
+          <ThinkingLoader
+            onToggleDetails={onToggleThoughts}
+            onStop={onStop}
+            activeAgentName={activeAgent?.agentName}
+          />
         )}
 
         {/* Detailed tool executions (opt-in during streaming, always after) */}

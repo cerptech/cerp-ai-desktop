@@ -209,6 +209,8 @@ async function processStreamLoop(): Promise<void> {
     }
   }
 
+  let activeTaskCount = 0
+
   try {
     for await (const msg of activeQuery) {
       if (!mainWindowRef || mainWindowRef.isDestroyed()) break
@@ -217,7 +219,22 @@ async function processStreamLoop(): Promise<void> {
       const msgType = msgObj.type as string
       const msgSubtype = msgObj.subtype as string | undefined
 
-      logger.debug(`Stream: type=${msgType} subtype=${msgSubtype || '-'}`)
+      logger.debug(`Stream: type=${msgType} subtype=${msgSubtype || '-'} tasks=${activeTaskCount}`)
+
+      // Track background tasks (subagent delegation)
+      if (msgType === 'system') {
+        if (msgSubtype === 'task_started') {
+          activeTaskCount++
+          processingTurn = true
+          logger.info(`Background task started (${activeTaskCount} active)`)
+        } else if (msgSubtype === 'task_notification') {
+          activeTaskCount = Math.max(0, activeTaskCount - 1)
+          logger.info(`Background task completed (${activeTaskCount} remaining)`)
+          if (activeTaskCount === 0) {
+            // All background tasks done — the agent will continue with a final response
+          }
+        }
+      }
 
       // Track turn state
       if (msgType === 'assistant' || msgType === 'stream_event') {
@@ -231,8 +248,13 @@ async function processStreamLoop(): Promise<void> {
         for (const event of arr) {
           sendEvent(event)
           if (event.type === 'done') {
-            processingTurn = false
-            sendDone()
+            if (activeTaskCount > 0) {
+              // Background tasks still running — don't signal done to UI
+              logger.info(`Result received but ${activeTaskCount} tasks still active, holding done`)
+            } else {
+              processingTurn = false
+              sendDone()
+            }
           }
         }
       }
@@ -429,10 +451,18 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     }
   }
 
-  // System status
+  // System status and task events
   if (type === 'system') {
     if (subtype === 'status') {
       return { type: 'status', message: (msg.message as string) || '' }
+    }
+    if (subtype === 'task_started') {
+      const taskName = (msg as any).task_name || (msg as any).name || ''
+      return { type: 'status', message: `Iniciando tarea: ${taskName}` }
+    }
+    if (subtype === 'task_progress') {
+      // Keep the UI aware that work is happening
+      return { type: 'status', message: '' }
     }
   }
 
