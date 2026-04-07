@@ -270,7 +270,7 @@ async function processStreamLoop(): Promise<void> {
 
       logger.debug(`Stream: type=${msgType} subtype=${msgSubtype || '-'} tasks=${activeTaskCount}`)
 
-      // Track background tasks (subagent delegation)
+      // Track background tasks and system events
       if (msgType === 'system') {
         if (msgSubtype === 'task_started') {
           activeTaskCount++
@@ -279,9 +279,10 @@ async function processStreamLoop(): Promise<void> {
         } else if (msgSubtype === 'task_notification') {
           activeTaskCount = Math.max(0, activeTaskCount - 1)
           logger.info(`Background task completed (${activeTaskCount} remaining)`)
-          if (activeTaskCount === 0) {
-            // All background tasks done — the agent will continue with a final response
-          }
+        } else if (msgSubtype === 'api_retry') {
+          // SDK is retrying an API call — show feedback so UI doesn't look stuck
+          sendEvent({ type: 'status', message: 'Reconectando con el servidor...' })
+          logger.warn('API retry in progress')
         }
       }
 

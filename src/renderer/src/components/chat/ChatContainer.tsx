@@ -25,7 +25,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
-  const { messages, isStreaming, activeTool, activeAgentDelegation, promptSuggestions, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+  const { messages, isStreaming, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
