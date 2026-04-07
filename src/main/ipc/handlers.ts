@@ -189,6 +189,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const { app } = await import('electron')
     return app.getVersion()
   })
+
+  // Python: Check
+  ipcMain.handle(IPC_CHANNELS.PYTHON_CHECK, async () => {
+    const { checkPython } = await import('../utils/pythonSetup')
+    return checkPython()
+  })
+
+  // Python: Install
+  ipcMain.handle(IPC_CHANNELS.PYTHON_INSTALL, async () => {
+    const mainWindow = getMainWindow()
+    if (!mainWindow) return false
+    const { installPython } = await import('../utils/pythonSetup')
+    return installPython(mainWindow, (message, percent) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.PYTHON_INSTALL_PROGRESS, { message, percent })
+      }
+    })
+  })
 }
 
 export { handleCallback }

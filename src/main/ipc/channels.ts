@@ -36,4 +36,9 @@ export const IPC_CHANNELS = {
 
   // App
   APP_GET_VERSION: 'app:get-version',
+
+  // Python setup
+  PYTHON_CHECK: 'python:check',
+  PYTHON_INSTALL: 'python:install',
+  PYTHON_INSTALL_PROGRESS: 'python:install:progress',
 } as const

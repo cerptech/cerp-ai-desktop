@@ -1,0 +1,23 @@
+CERP AI Desktop - Acuerdo de Licencia de Usuario Final
+
+Copyright (c) 2026 CERP Tech. Todos los derechos reservados.
+
+Este software es propiedad de CERP Tech y esta protegido por las leyes de propiedad intelectual.
+
+Al instalar y usar CERP AI Desktop, usted acepta los siguientes terminos:
+
+1. LICENCIA: CERP Tech le otorga una licencia limitada, no exclusiva e intransferible para usar este software en conexion con su cuenta activa de CERP.
+
+2. RESTRICCIONES: No puede copiar, modificar, distribuir, vender o sublicenciar este software ni ningun componente del mismo.
+
+3. DATOS: Este software se conecta a los servidores de CERP Tech para funcionar. Sus datos de obra y presupuestos se almacenan de forma segura en la nube.
+
+4. IA: Este software utiliza inteligencia artificial (Claude, de Anthropic) para asistirle. Los costos de uso de la IA estan incluidos en su suscripcion a CERP.
+
+5. PYTHON: Durante la primera ejecucion, el software puede instalar Python automaticamente en su equipo para habilitar la generacion de documentos PDF y Excel. Python es software de codigo abierto bajo la PSF License.
+
+6. SIN GARANTIA: Este software se proporciona "tal cual", sin garantias de ningun tipo.
+
+7. LIMITACION DE RESPONSABILIDAD: CERP Tech no sera responsable por danos indirectos derivados del uso de este software.
+
+Para mas informacion, visite https://cerp.es/terminos

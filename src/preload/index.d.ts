@@ -99,6 +99,9 @@ interface CerpAPI {
   appendConversationMessage(conversationId: string, message: Record<string, unknown>, metadata?: Record<string, unknown>): Promise<boolean>
   deleteConversation(id: string): Promise<boolean>
   getVersion(): Promise<string>
+  checkPython(): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }>
+  installPython(): Promise<boolean>
+  onPythonProgress(callback: (data: { message: string; percent: number }) => void): () => void
 }
 
 declare global {

@@ -25,6 +25,9 @@ const IPC = {
   CONVERSATION_APPEND_MESSAGE: 'conversation:append-message',
   CONVERSATION_DELETE: 'conversation:delete',
   APP_GET_VERSION: 'app:get-version',
+  PYTHON_CHECK: 'python:check',
+  PYTHON_INSTALL: 'python:install',
+  PYTHON_INSTALL_PROGRESS: 'python:install:progress',
 } as const
 
 export type AgentStreamEvent =
@@ -132,6 +135,16 @@ const api = {
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
+
+  // Python setup
+  checkPython: (): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }> =>
+    ipcRenderer.invoke(IPC.PYTHON_CHECK),
+  installPython: (): Promise<boolean> => ipcRenderer.invoke(IPC.PYTHON_INSTALL),
+  onPythonProgress: (callback: (data: { message: string; percent: number }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { message: string; percent: number }): void => callback(data)
+    ipcRenderer.on(IPC.PYTHON_INSTALL_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC.PYTHON_INSTALL_PROGRESS, handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('cerpAPI', api)
