@@ -113,6 +113,8 @@ Sigue SIEMPRE estos pasos en este orden:
    e. Agregar el item al presupuesto con add_budget_item usando el productId + quantity + parentItemId (capitulo)
 
    IMPORTANTE: Antes de crear items, hacer UNA busqueda amplia con search_materials (sin filtro o con terminos genericos) para ver que productos tiene la empresa. Esto evita crear duplicados y aprovecha los costos ya configurados.
+
+   IMPORTANTE: Al crear materiales con create_material, SIEMPRE enviar un campo "code" unico. Generar el code con un prefijo descriptivo + numero secuencial (ej: "EXC-ZANJAS-001", "HORM-H25-002", "CARP-PUERTA-003"). NUNCA dejar que el sistema autogenere el code porque causa colisiones. Tampoco usar prefijos numericos en el nombre (NO: "01. Excavacion"). Ademas, si conoces el costo unitario, enviarlo en defaultCost y costBreakdown para que el presupuesto calcule correctamente.
 5. **Configurar costos indirectos** con update_cost_items:
    - Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
    - Grupo 3: IVA (21%)

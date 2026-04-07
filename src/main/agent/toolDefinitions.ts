@@ -427,10 +427,19 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/items',
   },
   create_material: {
-    description: 'Crea un nuevo material/item en el inventario.',
+    description: 'Crea un nuevo material/item en el inventario. IMPORTANTE: siempre enviar un code unico para evitar colisiones (ej: "EXC-ZANJAS-001", "HORM-H25-002").',
     schema: z.object({
       name: z.string().describe('Nombre del material'),
-      unit: z.string().optional().describe('Unidad (kg, m, m2, m3, unidad, etc.)'),
+      code: z.string().optional().describe('Codigo unico del material (ej: "EXC-ZANJAS-001"). Si no se envia, se autogenera del nombre y puede colisionar. SIEMPRE enviarlo.'),
+      unit: z.string().optional().describe('Unidad (kg, m, m2, m3, u, gl, etc.)'),
+      description: z.string().optional().describe('Descripcion detallada del material'),
+      defaultCost: z.number().optional().describe('Costo unitario por defecto'),
+      costBreakdown: z.object({
+        materials: z.number().optional().describe('Costo de materiales por unidad'),
+        labor: z.number().optional().describe('Costo de mano de obra por unidad'),
+        equipment: z.number().optional().describe('Costo de equipos por unidad'),
+        subcontracted: z.number().optional().describe('Costo subcontratado por unidad'),
+      }).optional().describe('Desglose de costos unitarios'),
       category: z.string().optional(),
       minimumStock: z.number().optional(),
     }),
