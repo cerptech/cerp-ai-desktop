@@ -31,8 +31,13 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   const [cwd, setCwd] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [showThoughts, setShowThoughts] = useState(false)
+  const [appVersion, setAppVersion] = useState('...')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    window.cerpAPI.getVersion().then(setAppVersion).catch(() => setAppVersion('1.0.0'))
+  }, [])
 
   const toggleShowThoughts = useCallback(() => {
     setShowThoughts((prev) => !prev)
@@ -348,7 +353,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
 
         <div className="mt-2 flex items-center justify-between">
           <span className="text-[10px] text-slate-300">
-            Arrastra archivos al chat para adjuntar su ruta
+            v{appVersion}
           </span>
           <div className="flex items-center gap-3">
             {messages.length > 0 && (
