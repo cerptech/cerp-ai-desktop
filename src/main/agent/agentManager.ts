@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
+import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
@@ -194,10 +195,16 @@ async function startSession(
     instructions: a.systemPrompt,
   }))
 
+  // In production builds, the SDK is unpacked from asar to app.asar.unpacked
+  const sdkCliPath = join(
+    __dirname, '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js',
+  ).replace('app.asar', 'app.asar.unpacked')
+
   const options: Record<string, unknown> = {
     model,
     systemPrompt: fullSystemPrompt,
     cwd,
+    pathToClaudeCodeExecutable: sdkCliPath,
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: apiKey,
