@@ -212,7 +212,26 @@ async function startSession(
     // Use Electron's built-in Node.js to spawn cli.js — no external Node required
     spawnClaudeCodeProcess: (spawnOpts: any) => {
       const { spawn } = require('child_process')
-      const spawnEnv = { ...(spawnOpts?.options?.env || process.env), ELECTRON_RUN_AS_NODE: '1' }
+      // Find git-bash — required by Claude Code SDK on Windows
+      let gitBashPath = process.env.CLAUDE_CODE_GIT_BASH_PATH || ''
+      if (!gitBashPath && process.platform === 'win32') {
+        const { existsSync } = require('fs')
+        const candidates = [
+          'C:\\Program Files\\Git\\bin\\bash.exe',
+          'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+          join(app.getPath('home'), 'AppData', 'Local', 'Programs', 'Git', 'bin', 'bash.exe'),
+        ]
+        for (const p of candidates) {
+          if (existsSync(p)) { gitBashPath = p; break }
+        }
+        if (gitBashPath) logger.info(`Found git-bash at: ${gitBashPath}`)
+        else logger.warn('git-bash not found in standard locations')
+      }
+      const spawnEnv = {
+        ...(spawnOpts?.options?.env || process.env),
+        ELECTRON_RUN_AS_NODE: '1',
+        ...(gitBashPath ? { CLAUDE_CODE_GIT_BASH_PATH: gitBashPath } : {}),
+      }
       const spawnArgs = spawnOpts?.args || []
       const spawnCwd = spawnOpts?.options?.cwd || cwd
       logger.info(`Spawning CLI: ${process.execPath} [ELECTRON_RUN_AS_NODE=1] ${sdkCliPath} ${spawnArgs.join(' ').slice(0, 100)}`)
