@@ -1,5 +1,5 @@
 function getApiBaseUrl(): string {
-  return process.env.CERP_API_BASE_URL || 'http://localhost:8080/api'
+  return process.env.CERP_API_BASE_URL || 'https://production-cerp-server-1060273677691.europe-west1.run.app/api'
 }
 
 export class HttpClient {
