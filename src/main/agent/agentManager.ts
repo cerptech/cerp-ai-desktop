@@ -202,16 +202,29 @@ async function startSession(
   ).replace('app.asar', 'app.asar.unpacked')
 
   logger.info(`SDK CLI path: ${sdkCliPath} (exists: ${require('fs').existsSync(sdkCliPath)})`)
+  logger.info(`Electron execPath: ${process.execPath}`)
 
   const options: Record<string, unknown> = {
     model,
     systemPrompt: fullSystemPrompt,
     cwd,
     pathToClaudeCodeExecutable: sdkCliPath,
-    executable: 'node',
+    // Use Electron's built-in Node.js to spawn cli.js — no external Node required
+    executableArgs: ['--no-warnings'],
+    spawnClaudeCodeProcess: (spawnOptions: { command: string; args: string[]; options: Record<string, unknown> }) => {
+      const { spawn } = require('child_process')
+      // Use process.execPath (Electron binary) with --no-sandbox to run as Node
+      const child = spawn(
+        process.execPath,
+        ['--no-sandbox', sdkCliPath, ...spawnOptions.args],
+        { ...spawnOptions.options, env: { ...spawnOptions.options.env, ELECTRON_RUN_AS_NODE: '1' } },
+      )
+      return child
+    },
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: apiKey,
+      ELECTRON_RUN_AS_NODE: '1',
     },
     mcpServers: {
       cerp: cerpMcpServer,
