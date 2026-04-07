@@ -201,11 +201,14 @@ async function startSession(
     __dirname, '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js',
   ).replace('app.asar', 'app.asar.unpacked')
 
+  logger.info(`SDK CLI path: ${sdkCliPath} (exists: ${require('fs').existsSync(sdkCliPath)})`)
+
   const options: Record<string, unknown> = {
     model,
     systemPrompt: fullSystemPrompt,
     cwd,
     pathToClaudeCodeExecutable: sdkCliPath,
+    executable: 'node',
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: apiKey,
