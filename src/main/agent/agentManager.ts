@@ -196,8 +196,9 @@ async function startSession(
   }))
 
   // In production builds, the SDK is unpacked from asar to app.asar.unpacked
+  // __dirname is out/main/ so we go up 2 levels to reach the app root
   const sdkCliPath = join(
-    __dirname, '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js',
+    __dirname, '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js',
   ).replace('app.asar', 'app.asar.unpacked')
 
   const options: Record<string, unknown> = {
