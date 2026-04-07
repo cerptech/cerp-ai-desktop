@@ -30,16 +30,12 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [showThoughts, setShowThoughts] = useState(() => localStorage.getItem('cerp-show-thoughts') === 'true')
+  const [showThoughts, setShowThoughts] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const toggleShowThoughts = useCallback(() => {
-    setShowThoughts((prev) => {
-      const next = !prev
-      localStorage.setItem('cerp-show-thoughts', String(next))
-      return next
-    })
+    setShowThoughts((prev) => !prev)
   }, [])
 
   // Show toast on agent error
@@ -253,21 +249,24 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                 />
               )
             })}
-            {/* Immediate thinking indicator before first assistant message arrives */}
-            {isStreaming && (messages.length === 0 || messages[messages.length - 1]?.role !== 'assistant') && (
-              showThoughts ? (
-                <div className="flex items-center gap-2 px-4 py-2 mb-2">
-                  <LoadingSpinner size="sm" />
-                  <span className="text-xs text-slate-400 animate-pulse">Pensando...</span>
-                </div>
-              ) : (
-                <div className="flex justify-start mb-4">
-                  <div className="max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-3 shadow-sm">
-                    <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} />
+            {/* Thinking indicator — shown whenever streaming and not already visible inside a message bubble */}
+            {isStreaming && (() => {
+              const lastMsg = messages[messages.length - 1]
+              const noAssistantYet = !lastMsg || lastMsg.role !== 'assistant'
+              const assistantHasContent = lastMsg?.role === 'assistant' && lastMsg.content
+              // Show standalone loader when: no assistant message yet, OR assistant already
+              // wrote text but is still working (background tasks, tool calls, etc.)
+              if (noAssistantYet || assistantHasContent) {
+                return (
+                  <div className="flex justify-start mb-4">
+                    <div className="rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-2 shadow-sm">
+                      <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} />
+                    </div>
                   </div>
-                </div>
-              )
-            )}
+                )
+              }
+              return null
+            })()}
             <div ref={messagesEndRef} />
           </>
         )}

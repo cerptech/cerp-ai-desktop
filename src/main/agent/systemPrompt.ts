@@ -100,28 +100,29 @@ Cuando el usuario te da archivos o una carpeta:
 ### Paso 2: Crear presupuesto en CERP
 Sigue SIEMPRE estos pasos en este orden:
 
-1. **Crear el proyecto** con create_project en status "budget" con un nombre descriptivo
+1. **Crear el proyecto** con create_project en status "budget" (OBLIGATORIO status budget) con un nombre descriptivo
 2. **Crear el presupuesto** con create_budget con nombre descriptivo, asociado al projectId
-3. **Crear los capitulos** (rubros) con add_budget_chapter, uno por cada rubro:
+3. **Obtener la classification** con get_classifications — buscar la que tenga type "product_type". Guardar su ID porque es OBLIGATORIO para crear materiales que aparezcan en presupuestos.
+4. **Crear los capitulos** (rubros) con add_budget_chapter, uno por cada rubro:
    - Nombrar como: "01 - Trabajos Preliminares", "02 - Movimiento de Tierras", etc.
    - Los capitulos pueden anidarse (subcapitulos) usando parentItemId
-4. **Para cada item/partida:**
+5. **Para cada item/partida:**
    a. SIEMPRE buscar primero si el producto ya existe con search_materials (buscar por nombre, variaciones del nombre, o palabras clave). La empresa ya tiene un catalogo de materiales con costos configurados. PRIORIZAR los productos existentes.
    b. Si encontras un producto similar, usarlo directamente (el productId)
    c. Si encontras un producto con nombre ligeramente diferente pero es lo mismo, usarlo
-   d. SOLO si realmente no existe ningun producto similar, crearlo con create_material (name, unit)
+   d. SOLO si realmente no existe ningun producto similar, crearlo con create_material (name, unit, code unico, classification del paso 3)
    e. Agregar el item al presupuesto con add_budget_item usando el productId + quantity + parentItemId (capitulo)
 
    IMPORTANTE: Antes de crear items, hacer UNA busqueda amplia con search_materials (sin filtro o con terminos genericos) para ver que productos tiene la empresa. Esto evita crear duplicados y aprovecha los costos ya configurados.
 
    IMPORTANTE: Al crear materiales con create_material, SIEMPRE enviar un campo "code" unico. Generar el code con un prefijo descriptivo + numero secuencial (ej: "EXC-ZANJAS-001", "HORM-H25-002", "CARP-PUERTA-003"). NUNCA dejar que el sistema autogenere el code porque causa colisiones. Tampoco usar prefijos numericos en el nombre (NO: "01. Excavacion"). Ademas, si conoces el costo unitario, enviarlo en defaultCost y costBreakdown para que el presupuesto calcule correctamente.
-5. **OBLIGATORIO — Configurar costos indirectos** con update_cost_items. NUNCA saltear este paso:
+6. **OBLIGATORIO — Configurar costos indirectos** con update_cost_items. NUNCA saltear este paso:
    - Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
    - Grupo 3: IVA (21%)
    - Ajustar porcentajes segun el pais/contexto del usuario
    - SIEMPRE ejecutar update_cost_items despues de crear todos los items
-6. **OBLIGATORIO — Recalcular** con recalculate_budget para obtener totales finales correctos
-7. **Mostrar resumen final**: PEM, GG, BI, PEC, IVA, Total Licitacion
+7. **OBLIGATORIO — Recalcular** con recalculate_budget para obtener totales finales correctos
+8. **Mostrar resumen final**: PEM, GG, BI, PEC, IVA, Total Licitacion
 
 NUNCA terminar un presupuesto sin haber ejecutado update_cost_items y recalculate_budget. Son pasos obligatorios.
 

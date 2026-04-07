@@ -36,11 +36,11 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/projects/:projectId',
   },
   create_project: {
-    description: 'Crea un nuevo proyecto de construccion. Para presupuestos/licitaciones usar status "budget".',
+    description: 'Crea un nuevo proyecto de construccion. SIEMPRE usar status "budget" para presupuestos/licitaciones. Un proyecto en status "budget" ES el presupuesto.',
     schema: z.object({
       name: z.string().describe('Nombre del proyecto'),
       description: z.string().optional(),
-      status: z.enum(['budget', 'planning', 'execution', 'paused', 'completed', 'cancelled']).optional().describe('Default: budget para licitaciones'),
+      status: z.enum(['budget', 'planning', 'execution', 'paused', 'completed', 'cancelled']).optional().describe('SIEMPRE usar "budget" para presupuestos/cotizaciones'),
       start_date: z.string().optional().describe('Fecha inicio ISO 8601'),
       end_date: z.string().optional().describe('Fecha fin ISO 8601'),
       projected_cost: z.number().optional(),
@@ -427,12 +427,13 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/items',
   },
   create_material: {
-    description: 'Crea un nuevo material/item en el inventario. IMPORTANTE: siempre enviar un code unico para evitar colisiones (ej: "EXC-ZANJAS-001", "HORM-H25-002").',
+    description: 'Crea un nuevo material/item en el inventario. IMPORTANTE: siempre enviar code unico Y classification (usar get_classifications para obtener el ID de tipo product_type).',
     schema: z.object({
       name: z.string().describe('Nombre del material'),
-      code: z.string().optional().describe('Codigo unico del material (ej: "EXC-ZANJAS-001"). Si no se envia, se autogenera del nombre y puede colisionar. SIEMPRE enviarlo.'),
+      code: z.string().optional().describe('Codigo unico (ej: "EXC-ZANJAS-001"). SIEMPRE enviarlo para evitar colisiones.'),
       unit: z.string().optional().describe('Unidad (kg, m, m2, m3, u, gl, etc.)'),
       description: z.string().optional().describe('Descripcion detallada del material'),
+      classification: z.string().optional().describe('ID de la clasificacion (OBLIGATORIO para que aparezca en presupuestos). Usar get_classifications para obtener el ID de tipo product_type.'),
       defaultCost: z.number().optional().describe('Costo unitario por defecto'),
       costBreakdown: z.object({
         materials: z.number().optional().describe('Costo de materiales por unidad'),
@@ -445,6 +446,14 @@ export const toolSchemas: Record<string, ToolDef> = {
     }),
     method: 'POST',
     endpoint: '/items',
+  },
+  get_classifications: {
+    description: 'Obtiene las clasificaciones de productos de la empresa. Buscar la que tenga type "product_type" — su ID es OBLIGATORIO al crear materiales para que aparezcan en presupuestos.',
+    schema: z.object({
+      type: z.string().optional().describe('Filtrar por tipo (ej: "product_type")'),
+    }),
+    method: 'GET',
+    endpoint: '/classifications',
   },
   get_warehouse_stock: {
     description: 'Inventario por almacen: materiales, stock actual, reservado y minimo.',

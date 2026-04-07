@@ -11,9 +11,55 @@ import { logger } from '../utils/logger'
 import type { SendPromptPayload, AgentStreamEvent } from '../ipc/types'
 
 // ============================================================
+// MessageQueue — AsyncIterable that keeps the session alive
+// ============================================================
+class MessageQueue {
+  private buffer: Array<{ type: 'user'; message: { role: 'user'; content: string } }> = []
+  private waiting: ((result: IteratorResult<{ type: 'user'; message: { role: 'user'; content: string } }>) => void) | null = null
+  private closed = false
+
+  push(content: string): void {
+    const msg = { type: 'user' as const, message: { role: 'user' as const, content } }
+    if (this.waiting) {
+      const resolve = this.waiting
+      this.waiting = null
+      resolve({ value: msg, done: false })
+    } else {
+      this.buffer.push(msg)
+    }
+  }
+
+  close(): void {
+    this.closed = true
+    if (this.waiting) {
+      const resolve = this.waiting
+      this.waiting = null
+      resolve({ value: undefined as any, done: true })
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<{ type: 'user'; message: { role: 'user'; content: string } }> {
+    return {
+      next: (): Promise<IteratorResult<{ type: 'user'; message: { role: 'user'; content: string } }>> => {
+        if (this.buffer.length > 0) {
+          return Promise.resolve({ value: this.buffer.shift()!, done: false })
+        }
+        if (this.closed) {
+          return Promise.resolve({ value: undefined as any, done: true })
+        }
+        return new Promise((resolve) => {
+          this.waiting = resolve
+        })
+      },
+    }
+  }
+}
+
+// ============================================================
 // Persistent Streaming Session
 // ============================================================
 let activeQuery: any = null
+let messageQueue: MessageQueue | null = null
 let sessionCwd: string | null = null
 let sessionContextId: string | null = null
 let mainWindowRef: BrowserWindow | null = null
@@ -46,6 +92,10 @@ export async function interruptAgent(): Promise<void> {
  * Close the session entirely and clean up
  */
 export function closeSession(): void {
+  if (messageQueue) {
+    messageQueue.close()
+    messageQueue = null
+  }
   if (activeQuery) {
     try {
       activeQuery.close()
@@ -166,8 +216,12 @@ async function startSession(
 
   logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd})`)
 
+  // Create persistent message queue — keeps the session alive between turns
+  messageQueue = new MessageQueue()
+  messageQueue.push(payload.prompt)
+
   activeQuery = query({
-    prompt: payload.prompt,
+    prompt: messageQueue as any,
     options: options as any,
   })
 
@@ -176,18 +230,12 @@ async function startSession(
 }
 
 function sendFollowUp(prompt: string): void {
-  if (!activeQuery) return
-
-  async function* userMessage(): AsyncGenerator<{ type: 'user'; message: { role: 'user'; content: string } }> {
-    yield { type: 'user' as const, message: { role: 'user' as const, content: prompt } }
+  if (!messageQueue) {
+    logger.error('No active message queue — cannot send follow-up')
+    return
   }
-
   logger.info(`Sending follow-up: "${prompt.slice(0, 80)}..."`)
-  activeQuery.streamInput(userMessage()).catch((err: unknown) => {
-    logger.error(`streamInput failed: ${err}`)
-    // If streamInput fails, session is broken — close and let next message start fresh
-    closeSession()
-  })
+  messageQueue.push(prompt)
 }
 
 // ============================================================
