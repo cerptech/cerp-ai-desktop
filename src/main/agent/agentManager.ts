@@ -241,21 +241,26 @@ async function processStreamLoop(): Promise<void> {
         processingTurn = true
       }
 
+      // Skip subagent messages from rendering in the main chat
+      // Messages from background tasks have parent_tool_use_id set
+      const parentToolId = (msgObj as any).parent_tool_use_id
+      if (parentToolId && (msgType === 'assistant' || msgType === 'tool_result' || msgType === 'user')) {
+        continue // Don't forward subagent internals to UI
+      }
+
       // Map and forward events
       const events = mapMessage(msgObj)
       if (events) {
         const arr = Array.isArray(events) ? events : [events]
         for (const event of arr) {
-          sendEvent(event)
           if (event.type === 'done') {
-            if (activeTaskCount > 0) {
-              // Background tasks still running — don't signal done to UI
-              logger.info(`Result received but ${activeTaskCount} tasks still active, holding done`)
-            } else {
-              processingTurn = false
-              sendDone()
-            }
+            // In Streaming Input Mode, 'result' means a turn ended, not the session.
+            // Don't send done to UI — the agent may continue with more turns.
+            // UI done is only sent when the stream loop ends (in finally block).
+            logger.info(`Turn complete (cost=$${(event as any).cost?.toFixed(4) || '?'}, tasks=${activeTaskCount})`)
+            continue
           }
+          sendEvent(event)
         }
       }
     }
