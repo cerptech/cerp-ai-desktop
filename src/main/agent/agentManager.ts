@@ -210,14 +210,16 @@ async function startSession(
     cwd,
     pathToClaudeCodeExecutable: sdkCliPath,
     // Use Electron's built-in Node.js to spawn cli.js — no external Node required
-    executableArgs: ['--no-warnings'],
-    spawnClaudeCodeProcess: (spawnOptions: { command: string; args: string[]; options: Record<string, unknown> }) => {
+    spawnClaudeCodeProcess: (spawnOpts: any) => {
       const { spawn } = require('child_process')
-      // Use process.execPath (Electron binary) with --no-sandbox to run as Node
+      const spawnEnv = { ...(spawnOpts?.options?.env || process.env), ELECTRON_RUN_AS_NODE: '1' }
+      const spawnArgs = spawnOpts?.args || []
+      const spawnCwd = spawnOpts?.options?.cwd || cwd
+      logger.info(`Spawning CLI: ${process.execPath} [ELECTRON_RUN_AS_NODE=1] ${sdkCliPath} ${spawnArgs.join(' ').slice(0, 100)}`)
       const child = spawn(
         process.execPath,
-        ['--no-sandbox', sdkCliPath, ...spawnOptions.args],
-        { ...spawnOptions.options, env: { ...spawnOptions.options.env, ELECTRON_RUN_AS_NODE: '1' } },
+        [sdkCliPath, ...spawnArgs],
+        { ...spawnOpts?.options, cwd: spawnCwd, env: spawnEnv },
       )
       return child
     },
