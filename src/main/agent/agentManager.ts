@@ -221,6 +221,13 @@ async function startSession(
         [sdkCliPath, ...spawnArgs],
         { ...spawnOpts?.options, cwd: spawnCwd, env: spawnEnv },
       )
+      // Capture stderr to diagnose exit code 1
+      child.stderr?.on('data', (data: Buffer) => {
+        logger.error(`CLI stderr: ${data.toString().trim()}`)
+      })
+      child.on('exit', (code: number | null) => {
+        if (code && code !== 0) logger.error(`CLI process exited with code ${code}`)
+      })
       return child
     },
     env: {
