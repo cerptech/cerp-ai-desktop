@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "description": "CERP AI Desktop - Asistente inteligente para empresas constructoras",
   "main": "./out/main/index.js",
-  "author": "CERP Tech",
+  "author": {
+    "name": "CERP Tech",
+    "email": "info@cerp.es",
+    "url": "https://cerp.es"
+  },
   "homepage": "https://cerp.es",
   "license": "UNLICENSED",
   "private": true,
