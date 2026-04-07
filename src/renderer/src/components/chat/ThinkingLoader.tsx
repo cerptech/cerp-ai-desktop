@@ -60,9 +60,10 @@ const THINKING_VERBS = [
 
 interface ThinkingLoaderProps {
   onToggleDetails?: () => void
+  onStop?: () => void
 }
 
-export function ThinkingLoader({ onToggleDetails }: ThinkingLoaderProps) {
+export function ThinkingLoader({ onToggleDetails, onStop }: ThinkingLoaderProps) {
   const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_VERBS.length))
   const [visible, setVisible] = useState(true)
 
@@ -100,14 +101,27 @@ export function ThinkingLoader({ onToggleDetails }: ThinkingLoaderProps) {
           {THINKING_VERBS[index]}...
         </span>
       </div>
-      {onToggleDetails && (
-        <button
-          onClick={onToggleDetails}
-          className="mt-1.5 text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
-        >
-          Ver paso a paso
-        </button>
-      )}
+      <div className="flex items-center gap-3 mt-1.5">
+        {onStop && (
+          <button
+            onClick={onStop}
+            className="text-[10px] text-red-400 hover:text-red-600 transition-colors flex items-center gap-1"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+            </svg>
+            Detener
+          </button>
+        )}
+        {onToggleDetails && (
+          <button
+            onClick={onToggleDetails}
+            className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+          >
+            Ver paso a paso
+          </button>
+        )}
+      </div>
     </div>
   )
 }

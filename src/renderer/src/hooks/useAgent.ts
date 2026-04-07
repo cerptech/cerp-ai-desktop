@@ -31,6 +31,7 @@ export function useAgent() {
   const [activeTool, setActiveTool] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeAgentDelegation, setActiveAgentDelegation] = useState<AgentDelegation | null>(null)
+  const [promptSuggestions, setPromptSuggestions] = useState<string[]>([])
   const toolsRef = useRef<ToolExecution[]>([])
   const lastEventRef = useRef<number>(Date.now())
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -154,6 +155,11 @@ export function useAgent() {
           setActiveAgentDelegation({ agentName: delegation.agentName, task: delegation.task })
           break
         }
+        case 'prompt_suggestions': {
+          const suggestions = (event as { type: 'prompt_suggestions'; suggestions: string[] }).suggestions
+          setPromptSuggestions(suggestions)
+          break
+        }
         case 'done':
           setIsStreaming(false)
           setActiveTool(null)
@@ -216,6 +222,7 @@ export function useAgent() {
     setIsStreaming(true)
     setActiveTool(null)
     setActiveAgentDelegation(null)
+    setPromptSuggestions([])
     currentDelegationRef.current = null
     toolsRef.current = []
 
@@ -269,6 +276,7 @@ export function useAgent() {
     activeTool,
     error,
     activeAgentDelegation,
+    promptSuggestions,
     sendPrompt,
     abort,
     clearMessages,

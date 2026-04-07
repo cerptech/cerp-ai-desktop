@@ -15,6 +15,7 @@ export type AgentStreamEvent =
   | { type: 'status'; message: string }
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; agentName: string; task: string }
+  | { type: 'prompt_suggestions'; suggestions: string[] }
   | { type: 'done'; cost?: number; turns?: number; duration?: number }
   | { type: 'error'; message: string }
 

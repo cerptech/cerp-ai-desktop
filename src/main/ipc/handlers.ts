@@ -3,7 +3,7 @@ import { IPC_CHANNELS } from './channels'
 import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
-import { runAgent, abortAgent, isAgentRunning, resetSession } from '../agent/agentManager'
+import { runAgent, interruptAgent, resetSession } from '../agent/agentManager'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
@@ -75,9 +75,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     },
   )
 
-  // Agent: Abort
+  // Agent: Interrupt (graceful stop)
   ipcMain.handle(IPC_CHANNELS.AGENT_ABORT, async (): Promise<void> => {
-    abortAgent()
+    await interruptAgent()
   })
 
   // Agent: Reset session (new conversation)

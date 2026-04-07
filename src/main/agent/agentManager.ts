@@ -1,7 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
-import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
@@ -12,80 +10,67 @@ import { IPC_CHANNELS } from '../ipc/channels'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AgentStreamEvent } from '../ipc/types'
 
-// Track running queries (support parallel)
-const activeQueries = new Map<string, AbortController>()
-let currentSessionId: string | null = null
-
 // ============================================================
-// Session ID disk persistence
+// Persistent Streaming Session
 // ============================================================
-function getSessionFilePath(): string {
-  return join(app.getPath('userData'), 'session.json')
-}
-
-function writeSessionToDisk(sessionId: string): void {
-  try {
-    mkdirSync(app.getPath('userData'), { recursive: true })
-    writeFileSync(getSessionFilePath(), JSON.stringify({ sessionId }, null, 2))
-  } catch {
-    // ignore write errors
-  }
-}
-
-function loadSessionFromDisk(): string | null {
-  try {
-    const raw = readFileSync(getSessionFilePath(), 'utf-8')
-    const parsed = JSON.parse(raw)
-    return (parsed.sessionId as string) || null
-  } catch {
-    return null
-  }
-}
+let activeQuery: any = null
+let sessionCwd: string | null = null
+let sessionContextId: string | null = null
+let mainWindowRef: BrowserWindow | null = null
+let processingTurn = false
 
 export function isAgentRunning(): boolean {
-  return activeQueries.size > 0
+  return processingTurn
 }
 
-export function abortAgent(queryId?: string): void {
-  if (queryId) {
-    const controller = activeQueries.get(queryId)
-    if (controller) {
-      controller.abort()
-      activeQueries.delete(queryId)
-      logger.info(`Agent ${queryId} aborted`)
+export function hasActiveSession(): boolean {
+  return activeQuery !== null
+}
+
+/**
+ * Interrupt current turn gracefully (agent can finish current thought)
+ */
+export async function interruptAgent(): Promise<void> {
+  if (activeQuery) {
+    try {
+      await activeQuery.interrupt()
+      logger.info('Agent interrupted')
+    } catch (err) {
+      logger.warn(`Interrupt failed, closing session: ${err}`)
+      closeSession()
     }
-  } else {
-    // Abort all
-    for (const [id, controller] of activeQueries) {
-      controller.abort()
-      logger.info(`Agent ${id} aborted`)
-    }
-    activeQueries.clear()
   }
 }
 
-export function resetSession(): void {
-  abortAgent()
-  currentSessionId = null
+/**
+ * Close the session entirely and clean up
+ */
+export function closeSession(): void {
+  if (activeQuery) {
+    try {
+      activeQuery.close()
+    } catch { /* ignore */ }
+    activeQuery = null
+  }
+  sessionCwd = null
+  sessionContextId = null
+  processingTurn = false
   cachedContextPrompt = null
-  try {
-    unlinkSync(getSessionFilePath())
-  } catch {
-    // file may not exist — ignore
-  }
-  logger.info('Session reset')
+  logger.info('Session closed')
 }
 
-export function getSessionId(): string | null {
-  if (currentSessionId) return currentSessionId
-  const fromDisk = loadSessionFromDisk()
-  if (fromDisk) {
-    currentSessionId = fromDisk
-    logger.info(`Session ID restored from disk: ${currentSessionId}`)
-  }
-  return currentSessionId
+// Alias for IPC compatibility
+export function resetSession(): void {
+  closeSession()
 }
 
+export function abortAgent(): void {
+  interruptAgent()
+}
+
+/**
+ * Send a message to the agent. Starts a new session if needed.
+ */
 export async function runAgent(
   payload: SendPromptPayload,
   apiKey: string,
@@ -93,11 +78,41 @@ export async function runAgent(
   httpClient: HttpClient,
   mainWindow: BrowserWindow,
 ): Promise<void> {
-  const queryId = `q-${Date.now()}`
-  const abortController = new AbortController()
-  activeQueries.set(queryId, abortController)
+  mainWindowRef = mainWindow
+  const cwd = payload.cwd || app.getPath('home')
+  const contextId = payload.activeContextId || null
 
-  // Get companyId + userId — re-fetch if not cached
+  // If session exists but cwd or context changed, close and restart
+  if (activeQuery && (cwd !== sessionCwd || contextId !== sessionContextId)) {
+    logger.info('Session options changed, closing current session')
+    closeSession()
+  }
+
+  if (!activeQuery) {
+    await startSession(payload, apiKey, model, httpClient, mainWindow, cwd, contextId)
+  } else {
+    // Send follow-up message to existing session
+    sendFollowUp(payload.prompt)
+  }
+}
+
+// ============================================================
+// Session lifecycle
+// ============================================================
+
+async function startSession(
+  payload: SendPromptPayload,
+  apiKey: string,
+  model: string,
+  httpClient: HttpClient,
+  mainWindow: BrowserWindow,
+  cwd: string,
+  contextId: string | null,
+): Promise<void> {
+  sessionCwd = cwd
+  sessionContextId = contextId
+
+  // Get companyId + userId
   let companyId = getCompanyId()
   let userId = getUserId()
   if (!companyId || !userId) {
@@ -106,193 +121,178 @@ export async function runAgent(
       companyId = config.companyId || null
       userId = config.userId || null
     } catch (err) {
-      logger.warn(`[${queryId}] Could not fetch config: ${err}`)
+      logger.warn(`Could not fetch config: ${err}`)
     }
   }
-  logger.info(`[${queryId}] CompanyId: ${companyId}, UserId: ${userId}`)
+  logger.info(`CompanyId: ${companyId}, UserId: ${userId}`)
+
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
+  const contextPrompt = await buildContextPrompt(httpClient)
+  const fullSystemPrompt = buildFullSystemPrompt(contextPrompt, contextId, payload.activeContextId)
+
+  // Build subagent definitions
+  const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
+    name: a.name,
+    description: a.description,
+    instructions: a.prompt,
+  }))
+  const customAgentDefs = customAgentStore.getAgents()
+  const customSdkAgents = customAgentDefs.map((a) => ({
+    name: a.name,
+    description: a.description,
+    instructions: a.systemPrompt,
+  }))
+
+  const options: Record<string, unknown> = {
+    model,
+    systemPrompt: fullSystemPrompt,
+    cwd,
+    env: {
+      ...process.env,
+      ANTHROPIC_API_KEY: apiKey,
+    },
+    mcpServers: {
+      cerp: cerpMcpServer,
+    },
+    agents: [...builtInAgents, ...customSdkAgents],
+    allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*'],
+    permissionMode: 'bypassPermissions',
+    maxTurns: payload.maxTurns ?? 50,
+    maxBudgetUsd: payload.maxBudgetUsd ?? 2.0,
+    includePartialMessages: true,
+    promptSuggestions: true,
+    effort: 'high',
+  }
+
+  logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd})`)
+
+  activeQuery = query({
+    prompt: payload.prompt,
+    options: options as any,
+  })
+
+  // Process stream in background
+  processStreamLoop()
+}
+
+function sendFollowUp(prompt: string): void {
+  if (!activeQuery) return
+
+  async function* userMessage(): AsyncGenerator<{ type: 'user'; message: { role: 'user'; content: string } }> {
+    yield { type: 'user' as const, message: { role: 'user' as const, content: prompt } }
+  }
+
+  logger.info(`Sending follow-up: "${prompt.slice(0, 80)}..."`)
+  activeQuery.streamInput(userMessage()).catch((err: unknown) => {
+    logger.error(`streamInput failed: ${err}`)
+    // If streamInput fails, session is broken — close and let next message start fresh
+    closeSession()
+  })
+}
+
+// ============================================================
+// Stream processing (runs in background)
+// ============================================================
+
+async function processStreamLoop(): Promise<void> {
+  if (!activeQuery || !mainWindowRef) return
 
   const sendEvent = (event: AgentStreamEvent): void => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, event)
+    if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, event)
     }
   }
 
   const sendDone = (): void => {
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, {})
+    if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, {})
     }
-  }
-
-  // Safety timeout — if the agent runs longer than 15 minutes, force stop
-  const safetyTimeout = setTimeout(() => {
-    if (activeQueries.has(queryId)) {
-      logger.warn(`Agent ${queryId} hit safety timeout (15 min), aborting`)
-      abortController.abort()
-      activeQueries.delete(queryId)
-      sendEvent({ type: 'error', message: 'La consulta excedio el tiempo maximo (15 min). Intenta dividir la tarea en pasos mas pequenos.' })
-      sendDone()
-    }
-  }, 15 * 60 * 1000)
-
-  // Helper to process stream messages (used by main flow and retry)
-  const processStream = async (stream: AsyncIterable<unknown>, tag: string): Promise<boolean> => {
-    let gotResult = false
-    for await (const msg of stream) {
-      if (abortController.signal.aborted) break
-      const msgType = (msg as any).type
-      const msgSubtype = (msg as any).subtype
-      logger.debug(`[${queryId}] Stream msg${tag}: type=${msgType} subtype=${msgSubtype || '-'} keys=${Object.keys(msg as object).join(',')}`)
-
-      // Capture session ID
-      if (!currentSessionId) {
-        const sid = (msg as any).sessionId || (msg as any).session_id || (msg as any).id
-        if (sid && typeof sid === 'string') {
-          currentSessionId = sid
-          writeSessionToDisk(currentSessionId)
-          sendEvent({ type: 'session_id', sessionId: currentSessionId })
-          logger.info(`[${queryId}] Session ID captured${tag}: ${currentSessionId}`)
-        }
-      }
-      if (msgType === 'result') {
-        const resultSid = (msg as any).session_id || (msg as any).sessionId
-        if (resultSid && typeof resultSid === 'string') {
-          currentSessionId = resultSid
-          writeSessionToDisk(currentSessionId)
-          sendEvent({ type: 'session_id', sessionId: currentSessionId })
-          logger.info(`[${queryId}] Session ID from result${tag}: ${currentSessionId}`)
-        }
-      }
-
-      const events = mapMessage(msg as Record<string, unknown>)
-      if (events) {
-        const arr = Array.isArray(events) ? events : [events]
-        for (const event of arr) {
-          if (event.type === 'done') gotResult = true
-          sendEvent(event)
-        }
-      }
-    }
-    return gotResult
   }
 
   try {
-    const sessionId = payload.sessionId || currentSessionId
-    const cwd = payload.cwd || app.getPath('home')
+    for await (const msg of activeQuery) {
+      if (!mainWindowRef || mainWindowRef.isDestroyed()) break
 
-    logger.info(`[${queryId}] Running agent query: "${payload.prompt.slice(0, 80)}..." (session: ${sessionId || 'new'}, cwd: ${cwd})`)
+      const msgObj = msg as Record<string, unknown>
+      const msgType = msgObj.type as string
+      const msgSubtype = msgObj.subtype as string | undefined
 
-    const startTime = Date.now()
+      logger.debug(`Stream: type=${msgType} subtype=${msgSubtype || '-'}`)
 
-    // Fetch company/user context for the system prompt (cached after first call)
-    const contextPrompt = await buildContextPrompt(httpClient)
-
-    // Build subagent definitions (built-in + custom)
-    const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
-      name: a.name,
-      description: a.description,
-      instructions: a.prompt,
-    }))
-    const customAgentDefs = customAgentStore.getAgents()
-    const customSdkAgents = customAgentDefs.map((a) => ({
-      name: a.name,
-      description: a.description,
-      instructions: a.systemPrompt,
-    }))
-    const agents = [...builtInAgents, ...customSdkAgents]
-
-    // Build dynamic system prompt with custom agents list + context instructions
-    let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
-    if (customSdkAgents.length > 0) {
-      fullSystemPrompt += '\n\n## Agentes personalizados del usuario\n'
-      for (const a of customAgentDefs) {
-        fullSystemPrompt += `- **${a.name}**: ${a.description}\n`
+      // Track turn state
+      if (msgType === 'assistant' || msgType === 'stream_event') {
+        processingTurn = true
       }
-      fullSystemPrompt += '\nPuedes delegar tareas a estos agentes de la misma forma que a los especializados.\n'
-    }
-    if (payload.activeContextId) {
-      const ctx = customAgentStore.getContexts().find((c) => c.id === payload.activeContextId)
-      if (ctx) {
-        fullSystemPrompt += `\n\n## Contexto adicional activo: ${ctx.name}\n${ctx.instructions}\n`
-        logger.info(`[${queryId}] Active context: ${ctx.name} (${ctx.id})`)
+
+      // Map and forward events
+      const events = mapMessage(msgObj)
+      if (events) {
+        const arr = Array.isArray(events) ? events : [events]
+        for (const event of arr) {
+          sendEvent(event)
+          if (event.type === 'done') {
+            processingTurn = false
+            sendDone()
+          }
+        }
       }
     }
-
-    const options: Record<string, unknown> = {
-      model,
-      systemPrompt: fullSystemPrompt,
-      cwd,
-      env: {
-        ...process.env,
-        ANTHROPIC_API_KEY: apiKey,
-      },
-      mcpServers: {
-        cerp: cerpMcpServer,
-      },
-      agents,
-      allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*'],
-      permissionMode: 'bypassPermissions',
-      maxTurns: payload.maxTurns ?? 50,
-      maxBudgetUsd: payload.maxBudgetUsd ?? 2.0,
-      includePartialMessages: true,
-      abortController,
-    }
-
-    // Resume existing session for conversation continuity
-    if (sessionId) {
-      (options as any).resume = sessionId
-    }
-
-    let receivedResult = false
-
-    try {
-      const q = query({ prompt: payload.prompt, options: options as any })
-      receivedResult = await processStream(q, '')
-    } catch (queryErr) {
-      const qMsg = queryErr instanceof Error ? queryErr.message : String(queryErr)
-
-      // If session resume failed, clear session and retry with a fresh one
-      if (qMsg.includes('No conversation found with session ID')) {
-        logger.warn(`[${queryId}] Session expired, retrying with fresh session`)
-        currentSessionId = null
-        try { unlinkSync(getSessionFilePath()) } catch { /* ignore */ }
-        delete (options as any).resume
-        const retryQ = query({ prompt: payload.prompt, options: options as any })
-        receivedResult = await processStream(retryQ, ' (retry)')
-      } else {
-        throw queryErr // Re-throw for outer catch
-      }
-    }
-
-    const duration = Date.now() - startTime
-    if (!receivedResult) {
-      sendEvent({ type: 'done', duration })
-    }
-
-    logger.info(`[${queryId}] Agent query completed in ${duration}ms`)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
 
-    if (message.includes('aborted') || abortController.signal.aborted) {
+    if (message.includes('aborted') || message.includes('interrupt')) {
+      logger.info('Session interrupted/aborted')
       sendEvent({ type: 'done' })
-      logger.info(`[${queryId}] Agent aborted`)
     } else {
-      logger.error(`[${queryId}] Agent error: ${message}`)
+      logger.error(`Stream error: ${message}`)
       sendEvent({ type: 'error', message })
     }
-  } finally {
-    clearTimeout(safetyTimeout)
-    activeQueries.delete(queryId)
-
-    // Always send AGENT_STREAM_DONE to ensure UI resets
     sendDone()
-    logger.info(`[${queryId}] Agent cleanup complete (${activeQueries.size} queries still active)`)
+  } finally {
+    processingTurn = false
+    activeQuery = null
+    logger.info('Stream loop ended')
   }
 }
 
 // ============================================================
-// Company/User context injection
+// System prompt building
 // ============================================================
+
+function buildFullSystemPrompt(contextPrompt: string, contextId: string | null, activeContextId?: string): string {
+  let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
+
+  const customAgentDefs = customAgentStore.getAgents()
+  if (customAgentDefs.length > 0) {
+    fullSystemPrompt += '\n\n## Agentes personalizados del usuario\n'
+    for (const a of customAgentDefs) {
+      fullSystemPrompt += `- **${a.name}**: ${a.description}\n`
+    }
+    fullSystemPrompt += '\nPuedes delegar tareas a estos agentes de la misma forma que a los especializados.\n'
+  }
+
+  const allContexts = customAgentStore.getContexts()
+  if (allContexts.length > 0) {
+    fullSystemPrompt += '\n\n## Contextos personalizados del usuario\n'
+    fullSystemPrompt += 'El usuario ha creado estos contextos (instrucciones adicionales que se activan desde la interfaz):\n'
+    for (const c of allContexts) {
+      const isActive = c.id === (activeContextId || contextId)
+      fullSystemPrompt += `- **${c.name}** ${isActive ? '(ACTIVO)' : '(inactivo)'}\n`
+    }
+    fullSystemPrompt += '\nSi el usuario pregunta por sus contextos, listale los que tiene.\n'
+  }
+
+  const ctxId = activeContextId || contextId
+  if (ctxId) {
+    const ctx = allContexts.find((c) => c.id === ctxId)
+    if (ctx) {
+      fullSystemPrompt += `\n\n## Contexto activo: ${ctx.name}\n${ctx.instructions}\n`
+    }
+  }
+
+  return fullSystemPrompt
+}
+
 let cachedContextPrompt: string | null = null
 
 async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
@@ -301,7 +301,6 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   let context = '\n\n## Contexto de la empresa y usuario actual\n'
 
   try {
-    // Fetch company settings
     const settings = await httpClient.get<any>('/companies/settings')
     const s = settings?.data?.settings || settings?.settings || settings?.data || settings
 
@@ -340,7 +339,6 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   }
 
   try {
-    // Fetch current user
     const userRes = await httpClient.get<any>('/users/me')
     const user = userRes?.data || userRes
 
@@ -364,6 +362,10 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
 export function resetContextCache(): void {
   cachedContextPrompt = null
 }
+
+// ============================================================
+// Message mapping
+// ============================================================
 
 function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStreamEvent[] | null {
   const type = msg.type as string
@@ -391,7 +393,6 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
           }
           events.push({ type: 'tool_start', name: block.name, input: inputStr })
 
-          // Emit agent_delegation event when the Agent tool is used
           if (block.name === 'Agent' && input) {
             const agentName = String(input.agent_name || input.name || input.subagent_type || '').trim()
             const task = String(input.prompt || input.description || '').substring(0, 150)
@@ -418,6 +419,16 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     return { type: 'tool_done', name, output }
   }
 
+  // Prompt suggestions
+  if (type === 'prompt_suggestion') {
+    const suggestions = (msg as any).suggestions as string[] | undefined
+    const suggestion = (msg as any).suggestion as string | undefined
+    const list = suggestions || (suggestion ? [suggestion] : [])
+    if (list.length > 0) {
+      return { type: 'prompt_suggestions', suggestions: list }
+    }
+  }
+
   // System status
   if (type === 'system') {
     if (subtype === 'status') {
@@ -425,7 +436,7 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     }
   }
 
-  // Result (query complete) — log full usage data
+  // Result (turn complete)
   if (type === 'result') {
     const cost = (msg as any).total_cost_usd as number | undefined
     const turns = (msg as any).num_turns as number | undefined

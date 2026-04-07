@@ -25,7 +25,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
-  const { messages, isStreaming, activeTool, activeAgentDelegation, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+  const { messages, isStreaming, activeTool, activeAgentDelegation, promptSuggestions, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
@@ -133,7 +133,21 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       e.preventDefault()
       handleSubmit()
     }
+    if (e.key === 'Escape' && isStreaming) {
+      abort()
+    }
   }
+
+  // Global Escape key to abort
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && isStreaming) {
+        abort()
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [isStreaming, abort])
 
   const handleQuickAction = (prompt: string) => {
     sendPrompt(prompt, cwd || undefined, activeContextId || undefined)
@@ -231,6 +245,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                   isStreaming={isLastAssistant || undefined}
                   showThoughts={isLastAssistant ? showThoughts : undefined}
                   onToggleThoughts={isLastAssistant ? toggleShowThoughts : undefined}
+                  onStop={isLastAssistant ? abort : undefined}
                 />
               )
             })}
@@ -244,7 +259,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
               ) : (
                 <div className="flex justify-start mb-4">
                   <div className="max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-3 shadow-sm">
-                    <ThinkingLoader onToggleDetails={toggleShowThoughts} />
+                    <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} />
                   </div>
                 </div>
               )
@@ -258,6 +273,24 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       {error && (
         <div className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {/* Prompt suggestions */}
+      {!isStreaming && promptSuggestions.length > 0 && (
+        <div className="px-6 pb-2 flex flex-wrap gap-2">
+          {promptSuggestions.map((suggestion, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                setInput('')
+                sendPrompt(suggestion, cwd || undefined, activeContextId || undefined)
+              }}
+              className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-full text-slate-600 hover:border-brand-orange/40 hover:text-brand-orange transition-colors truncate max-w-[250px]"
+            >
+              {suggestion}
+            </button>
+          ))}
         </div>
       )}
 

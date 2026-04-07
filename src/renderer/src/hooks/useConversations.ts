@@ -116,10 +116,10 @@ export function useConversations() {
             name: t.name,
             input: t.input,
             output: t.output,
-            status: t.status || 'done',
+            status: 'done' as const, // Force done — restored conversations have no running tools
             timestamp: t.startTime || m.timestamp,
             startTime: t.startTime || m.timestamp,
-            endTime: t.endTime,
+            endTime: t.endTime || t.startTime || m.timestamp,
             agentName: t.agentName,
           })),
           timestamp: m.timestamp,

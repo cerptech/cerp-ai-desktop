@@ -57,9 +57,11 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           logger.error(`MCP ${name} FAILED: ${message}`)
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }] }
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true }
         }
-      }),
+      },
+      // Auto-annotate: GET tools are read-only → enables parallel execution
+      { annotations: { readOnlyHint: def.method === 'GET', destructiveHint: def.method === 'DELETE' } }),
     ),
   })
 }

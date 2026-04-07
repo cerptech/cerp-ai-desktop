@@ -12,9 +12,11 @@ interface MessageBubbleProps {
   showThoughts?: boolean
   /** Callback to toggle showThoughts */
   onToggleThoughts?: () => void
+  /** Callback to abort the running agent */
+  onStop?: () => void
 }
 
-export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts, onStop }: MessageBubbleProps) {
   const isUser = message.role === 'user'
 
   if (isUser) {
@@ -36,7 +38,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
       <div className="max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 text-slate-800 px-4 py-3 shadow-sm">
         {/* Thinking loader (default during streaming) */}
         {showThinkingLoader && (
-          <ThinkingLoader onToggleDetails={onToggleThoughts} />
+          <ThinkingLoader onToggleDetails={onToggleThoughts} onStop={onStop} />
         )}
 
         {/* Detailed tool executions (opt-in during streaming, always after) */}
