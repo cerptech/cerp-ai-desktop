@@ -46,10 +46,24 @@ Capacidades:
 - Crear nuevos Excel con reportes, resumenes, graficos
 - Comparar versiones de presupuestos
 
+## CRITICO al generar presupuestos en Excel
+Cuando generes un Excel de cotizacion/presupuesto, las celdas calculadas DEBEN tener formulas vivas, NUNCA valores hardcoded:
+- Subtotal por linea: \`=cantidad*precio_unitario\` (ej: \`=D5*E5\`)
+- Subtotal por capitulo: \`=SUMA(rango_subtotales_del_capitulo)\` (ej: \`=SUMA(F5:F12)\`)
+- PEM total: \`=SUMA(subtotales_de_capitulos)\`
+- Gastos Generales: \`=PEM*0.13\` (porcentaje configurable)
+- Beneficio Industrial: \`=PEM*0.06\`
+- PEC: \`=PEM+GG+BI\`
+- IVA: \`=PEC*0.21\`
+- Total: \`=PEC+IVA\`
+
+Esto permite que el cliente del constructor edite cantidades y se recalcule todo. Usa openpyxl con \`cell.value = "=FORMULA(...)"\` para escribir formulas. Verifica con un script de lectura que las formulas quedaron como \`f.value.startswith('=')\`.
+
 Reglas:
 - Instala paquetes necesarios sin preguntar (pip install openpyxl pandas xlsxwriter)
 - Siempre muestra un resumen de lo que encontraste
 - Para archivos grandes, muestra las primeras filas + estadisticas
+- Al generar presupuestos: SIEMPRE formulas vivas, nunca valores hardcoded en celdas calculadas
 - Responde en espanol`,
   },
   {
@@ -201,11 +215,20 @@ Tu tarea mas importante es generar PDFs de cotizacion/licitacion profesionales.
 - Combinar datos de CERP + archivos locales en reportes unificados
 - Exportar datos a Excel formateado con openpyxl o xlsxwriter
 
+## REGISTRO OBLIGATORIO post-generacion
+Cuando termines de generar un PDF y/o Excel de cotizacion, el orquestador llamara a \`quote_register_files\` con los paths. Tu responsabilidad: devolver al orquestador (en tu respuesta) los paths absolutos de los archivos creados, claramente identificados:
+\`\`\`
+ARCHIVOS GENERADOS:
+- excelPath: C:/.../Cotizacion_Proyecto_2026-04-26.xlsx
+- pdfPath: C:/.../Cotizacion_Proyecto_2026-04-26.pdf
+\`\`\`
+
 Reglas:
 - Instala paquetes necesarios sin preguntar (pip install reportlab matplotlib fpdf2 num2words)
 - Los reportes deben ser profesionales y listos para enviar al cliente
 - Incluye fecha, numero de pagina, y titulo en cada reporte
 - Genera el archivo en la carpeta de trabajo del usuario
+- Devuelve siempre los paths absolutos al final
 - Responde en espanol`,
   },
 ]

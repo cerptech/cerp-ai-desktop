@@ -747,4 +747,67 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/users/company',
   },
+
+  // ============================================================
+  // QUOTES — Monetización de Cotización con IA
+  // ============================================================
+  quote_eligibility: {
+    description: 'OBLIGATORIO antes de generar una cotización. Devuelve si la empresa puede generar cotización ahora, si tiene una gratis disponible (trial o mensual), o si debe pagar €19,99. Bloquea si la subscripción no está activa.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/quotes/eligibility',
+  },
+  quote_consume_free: {
+    description: 'Consume la cotización gratis disponible (trial o mensual). Llamar SOLO si quote_eligibility devolvió freeAvailable=true. Devuelve el quote creado con su id.',
+    schema: z.object({
+      source: z.enum(['trial_free', 'monthly_free']).describe('Fuente de la free quote según quote_eligibility.freeSource'),
+    }),
+    method: 'POST',
+    endpoint: '/quotes/consume-free',
+  },
+  quote_purchase_extra: {
+    description: 'Cobra €19,99 al método de pago guardado (off-session). PEDIR CONFIRMACIÓN AL USUARIO ANTES de llamar esto. Si Stripe pide autenticación adicional (SCA), devolverá fallbackCheckoutUrl que el usuario debe abrir.',
+    schema: z.object({}),
+    method: 'POST',
+    endpoint: '/quotes/purchase-extra',
+  },
+  quote_register_files: {
+    description: 'OBLIGATORIO al terminar de generar la cotización. Registra los paths locales del Excel y/o PDF generados, y opcionalmente metadata (projectName, totalAmount, lineItems).',
+    schema: z.object({
+      id: z.string().describe('quoteId devuelto por consume-free o purchase-extra'),
+      excelPath: z.string().optional().describe('Ruta absoluta del .xlsx generado'),
+      pdfPath: z.string().optional().describe('Ruta absoluta del .pdf/.docx generado'),
+      metadata: z.object({
+        projectName: z.string().optional(),
+        totalAmount: z.number().optional(),
+        lineItems: z.array(z.object({
+          description: z.string(),
+          quantity: z.number(),
+          unitPrice: z.number(),
+          subtotal: z.number(),
+        })).optional(),
+      }).optional(),
+    }),
+    method: 'POST',
+    endpoint: '/quotes/:id/files',
+  },
+  quote_mark_synced: {
+    description: 'Marca la cotización como sincronizada a un Budget del SaaS. Llamar después de crear el Budget en CERP via create_budget.',
+    schema: z.object({
+      id: z.string().describe('quoteId'),
+      budgetId: z.string().describe('ID del Budget recién creado en CERP'),
+    }),
+    method: 'PATCH',
+    endpoint: '/quotes/:id/sync',
+  },
+  list_quotes: {
+    description: 'Lista las cotizaciones generadas por la empresa, paginado. Útil para mostrar historial.',
+    schema: z.object({
+      page: z.number().min(1).optional(),
+      pageSize: z.number().min(1).max(100).optional(),
+      source: z.enum(['trial_free', 'monthly_free', 'paid_extra']).optional(),
+    }),
+    method: 'GET',
+    endpoint: '/quotes',
+  },
 }

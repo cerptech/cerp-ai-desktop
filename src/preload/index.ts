@@ -24,6 +24,8 @@ const IPC = {
   CONVERSATION_CREATE: 'conversation:create',
   CONVERSATION_APPEND_MESSAGE: 'conversation:append-message',
   CONVERSATION_DELETE: 'conversation:delete',
+  QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
+  QUOTES_LIST: 'quotes:list',
   APP_GET_VERSION: 'app:get-version',
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
@@ -136,6 +138,22 @@ const api = {
     ipcRenderer.invoke(IPC.CONVERSATION_APPEND_MESSAGE, { conversationId, message, metadata }),
   deleteConversation: (id: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.CONVERSATION_DELETE, id),
+
+  // Quotes
+  getQuoteEligibility: (): Promise<{
+    canQuote: boolean
+    freeAvailable: boolean
+    freeSource: 'trial_free' | 'monthly_free' | null
+    priceCents: number
+    currency: string
+    blockedReason?: 'no_subscription' | 'subscription_inactive'
+  } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
+  listQuotes: (page?: number, pageSize?: number): Promise<{
+    items: Array<Record<string, unknown>>
+    page: number
+    pageSize: number
+    total: number
+  }> => ipcRenderer.invoke(IPC.QUOTES_LIST, { page, pageSize }),
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
