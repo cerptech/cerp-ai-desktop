@@ -147,6 +147,7 @@ const api = {
     priceCents: number
     currency: string
     paidThisMonth: number
+    prepaidCredits: number
     blockedReason?: 'no_subscription' | 'subscription_inactive'
   } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
   listQuotes: (page?: number, pageSize?: number): Promise<{

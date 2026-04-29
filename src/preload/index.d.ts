@@ -106,6 +106,7 @@ interface CerpAPI {
     priceCents: number
     currency: string
     paidThisMonth: number
+    prepaidCredits: number
     blockedReason?: 'no_subscription' | 'subscription_inactive'
   } | null>
   listQuotes(page?: number, pageSize?: number): Promise<{

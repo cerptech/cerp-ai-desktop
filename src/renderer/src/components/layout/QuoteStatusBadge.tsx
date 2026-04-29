@@ -7,6 +7,7 @@ type Eligibility = {
   priceCents: number
   currency: string
   paidThisMonth: number
+  prepaidCredits: number
   blockedReason?: 'no_subscription' | 'subscription_inactive'
 }
 
@@ -81,13 +82,29 @@ export function QuoteStatusBadge() {
     )
   }
 
+  if (eligibility.prepaidCredits > 0) {
+    const n = eligibility.prepaidCredits
+    return (
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs"
+        title="Cotizaciones disponibles compradas previamente"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+        {n === 1 ? '1 cotización disponible' : `${n} cotizaciones disponibles`}
+      </div>
+    )
+  }
+
   return (
-    <div
-      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs"
-      title="Pedile al asistente que genere una cotización para comprar"
+    <a
+      href="https://app.cerp.es/settings/subscription"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs transition-colors"
+      title="Comprar cotizaciones desde el SaaS"
     >
       <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
       Comprar
-    </div>
+    </a>
   )
 }
