@@ -105,6 +105,7 @@ interface CerpAPI {
     freeSource: 'trial_free' | 'monthly_free' | null
     priceCents: number
     currency: string
+    paidThisMonth: number
     blockedReason?: 'no_subscription' | 'subscription_inactive'
   } | null>
   listQuotes(page?: number, pageSize?: number): Promise<{

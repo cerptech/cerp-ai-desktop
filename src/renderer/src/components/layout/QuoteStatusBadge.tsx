@@ -6,14 +6,14 @@ type Eligibility = {
   freeSource: 'trial_free' | 'monthly_free' | null
   priceCents: number
   currency: string
+  paidThisMonth: number
   blockedReason?: 'no_subscription' | 'subscription_inactive'
 }
 
 const REFRESH_INTERVAL_MS = 60_000
 
-function formatPrice(cents: number, currency: string): string {
-  const symbol = currency === 'EUR' ? '€' : currency
-  return `${symbol}${(cents / 100).toFixed(2).replace('.', ',')}`
+function pluralCotizaciones(n: number): string {
+  return n === 1 ? '1 cotización gratis' : `${n} cotizaciones gratis`
 }
 
 export function QuoteStatusBadge() {
@@ -76,18 +76,18 @@ export function QuoteStatusBadge() {
         title="Tenés una cotización gratis disponible este mes"
       >
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-        1 cotización gratis
+        {pluralCotizaciones(1)}
       </div>
     )
   }
 
   return (
     <div
-      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 text-xs"
-      title="Cotizaciones extra a este precio"
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs"
+      title="Pedile al asistente que genere una cotización para comprar"
     >
       <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-      Cotización: {formatPrice(eligibility.priceCents, eligibility.currency)}
+      Comprar
     </div>
   )
 }
