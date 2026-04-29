@@ -70,27 +70,21 @@ export function QuoteStatusBadge() {
     )
   }
 
-  if (eligibility.freeAvailable) {
-    return (
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs"
-        title="Tenés una cotización gratis disponible este mes"
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-        {pluralCotizaciones(1)}
-      </div>
-    )
-  }
+  const hasFree = eligibility.freeAvailable
+  const credits = eligibility.prepaidCredits
 
-  if (eligibility.prepaidCredits > 0) {
-    const n = eligibility.prepaidCredits
+  if (hasFree || credits > 0) {
+    const parts: string[] = []
+    if (hasFree) parts.push('1 gratis')
+    if (credits > 0) parts.push(credits === 1 ? '1 disponible' : `${credits} disponibles`)
+    const label = parts.join(' + ')
     return (
       <div
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs"
-        title="Cotizaciones disponibles compradas previamente"
+        title={hasFree && credits > 0 ? 'Tenés la cotización gratis del mes y créditos comprados disponibles' : hasFree ? 'Tenés tu cotización gratis del mes' : 'Cotizaciones compradas disponibles'}
       >
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-        {n === 1 ? '1 cotización disponible' : `${n} cotizaciones disponibles`}
+        {label}
       </div>
     )
   }
