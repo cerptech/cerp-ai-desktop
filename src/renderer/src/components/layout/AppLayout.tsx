@@ -1,5 +1,6 @@
 import { ReactNode } from 'react'
 import cerpLogo from '@/assets/images/cerp-logo.png'
+import { QuoteStatusBadge } from './QuoteStatusBadge'
 
 interface AppLayoutProps {
   children: ReactNode
@@ -29,6 +30,7 @@ export function AppLayout({ children, userName, onLogout, agentTags }: AppLayout
 
         {userName && (
           <div className="flex items-center gap-3 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <QuoteStatusBadge />
             <span className="text-xs text-slate-500">{userName}</span>
             {onLogout && (
               <button

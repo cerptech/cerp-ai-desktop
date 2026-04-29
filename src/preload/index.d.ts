@@ -99,6 +99,22 @@ interface CerpAPI {
   createConversation(data: { title: string; agentName: string; sessionId?: string; activeContextId?: string; metadata?: Record<string, unknown> }): Promise<{ data: ConversationFull } | null>
   appendConversationMessage(conversationId: string, message: Record<string, unknown>, metadata?: Record<string, unknown>): Promise<boolean>
   deleteConversation(id: string): Promise<boolean>
+  getQuoteEligibility(): Promise<{
+    canQuote: boolean
+    freeAvailable: boolean
+    freeSource: 'trial_free' | 'monthly_free' | null
+    priceCents: number
+    currency: string
+    paidThisMonth: number
+    prepaidCredits: number
+    blockedReason?: 'no_subscription' | 'subscription_inactive'
+  } | null>
+  listQuotes(page?: number, pageSize?: number): Promise<{
+    items: Array<Record<string, unknown>>
+    page: number
+    pageSize: number
+    total: number
+  }>
   getVersion(): Promise<string>
   checkPython(): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }>
   installPython(): Promise<boolean>

@@ -191,6 +191,30 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
   })
 
+  // Quotes: get eligibility (for status badge)
+  ipcMain.handle(IPC_CHANNELS.QUOTES_GET_ELIGIBILITY, async () => {
+    try {
+      return await httpClient.get('/quotes/eligibility')
+    } catch (err) {
+      logger.error('Failed to fetch quote eligibility:', err)
+      return null
+    }
+  })
+
+  // Quotes: list (for history)
+  ipcMain.handle(IPC_CHANNELS.QUOTES_LIST, async (_event, { page, pageSize }: { page?: number; pageSize?: number } = {}) => {
+    try {
+      const qs = new URLSearchParams()
+      if (page) qs.set('page', String(page))
+      if (pageSize) qs.set('pageSize', String(pageSize))
+      const path = qs.toString() ? `/quotes?${qs}` : '/quotes'
+      return await httpClient.get(path)
+    } catch (err) {
+      logger.error('Failed to list quotes:', err)
+      return { items: [], page: 1, pageSize: 20, total: 0 }
+    }
+  })
+
   // App: Get version
   ipcMain.handle(IPC_CHANNELS.APP_GET_VERSION, async (): Promise<string> => {
     const { app } = await import('electron')

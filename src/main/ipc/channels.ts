@@ -34,6 +34,10 @@ export const IPC_CHANNELS = {
   CONVERSATION_APPEND_MESSAGE: 'conversation:append-message',
   CONVERSATION_DELETE: 'conversation:delete',
 
+  // Quotes (cerp-ai-desktop monetization)
+  QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
+  QUOTES_LIST: 'quotes:list',
+
   // App
   APP_GET_VERSION: 'app:get-version',
 
