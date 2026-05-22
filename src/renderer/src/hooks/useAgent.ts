@@ -28,6 +28,9 @@ export interface AgentDelegation {
 export function useAgent() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  // isPending: true from the moment the user sends a message until the first stream event arrives.
+  // This closes the brief blank-screen window that occurs before the backend sends any data.
+  const [isPending, setIsPending] = useState(false)
   const [activeTool, setActiveTool] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeAgentDelegation, setActiveAgentDelegation] = useState<AgentDelegation | null>(null)
@@ -97,6 +100,8 @@ export function useAgent() {
     const unsubMessage = window.cerpAPI.onAgentMessage((event: AgentStreamEvent) => {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       lastEventRef.current = Date.now()
+      // Clear pending state on the very first event — the agent has started responding
+      setIsPending(false)
 
       switch (event.type) {
         case 'text': {
@@ -168,6 +173,7 @@ export function useAgent() {
         }
         case 'done':
           setIsStreaming(false)
+          setIsPending(false)
           setStatusMessage(null)
           setActiveTool(null)
           setActiveAgentDelegation(null)
@@ -176,6 +182,7 @@ export function useAgent() {
         case 'error':
           setError((event as { type: 'error'; message: string }).message)
           setIsStreaming(false)
+          setIsPending(false)
           setActiveTool(null)
           setActiveAgentDelegation(null)
           currentDelegationRef.current = null
@@ -187,6 +194,7 @@ export function useAgent() {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       // Force stop everything
       setIsStreaming(false)
+      setIsPending(false)
       setActiveTool(null)
       setActiveAgentDelegation(null)
       currentDelegationRef.current = null
@@ -211,6 +219,7 @@ export function useAgent() {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       setError(err.message)
       setIsStreaming(false)
+      setIsPending(false)
       setActiveTool(null)
       setActiveAgentDelegation(null)
       currentDelegationRef.current = null
@@ -227,6 +236,7 @@ export function useAgent() {
     acceptingRef.current = true // Accept events for this new prompt
     setError(null)
     setIsStreaming(true)
+    setIsPending(true) // Show loader immediately — before the first stream event arrives
     setActiveTool(null)
     setActiveAgentDelegation(null)
     setPromptSuggestions([])
@@ -250,6 +260,7 @@ export function useAgent() {
   const abort = useCallback(async () => {
     await window.cerpAPI.abortAgent()
     setIsStreaming(false)
+    setIsPending(false)
     setActiveTool(null)
     setActiveAgentDelegation(null)
     currentDelegationRef.current = null
@@ -259,6 +270,7 @@ export function useAgent() {
     acceptingRef.current = false // Block stale stream events from previous conversation
     setMessages([])
     setIsStreaming(false)
+    setIsPending(false)
     setActiveTool(null)
     setError(null)
     setActiveAgentDelegation(null)
@@ -271,6 +283,7 @@ export function useAgent() {
     acceptingRef.current = false // Block stale stream events from previous conversation
     setMessages(loadedMessages)
     setIsStreaming(false)
+    setIsPending(false)
     setActiveTool(null)
     setError(null)
     setActiveAgentDelegation(null)
@@ -281,6 +294,7 @@ export function useAgent() {
   return {
     messages,
     isStreaming,
+    isPending,
     activeTool,
     error,
     activeAgentDelegation,

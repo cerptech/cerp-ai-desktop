@@ -9,6 +9,7 @@ import { useToast } from '@/hooks/useToast'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
+  isPending: boolean
   messages: ChatMessage[]
   abort: () => Promise<void>
 }
@@ -25,7 +26,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
-  const { messages, isStreaming, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
@@ -74,7 +75,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   // Expose current chat state for parent to read before conversation switch
   useEffect(() => {
     if (chatStateRef) {
-      chatStateRef.current = { isStreaming, messages, abort }
+      chatStateRef.current = { isStreaming, isPending, messages, abort }
     }
   })
 
@@ -254,14 +255,17 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                 />
               )
             })}
-            {/* Thinking indicator — shown whenever streaming and not already visible inside a message bubble */}
-            {isStreaming && (() => {
+            {/* Thinking indicator — shown when pending (before first event) or streaming without
+                an assistant bubble that already displays its own loader */}
+            {(isPending || isStreaming) && (() => {
               const lastMsg = messages[messages.length - 1]
               const noAssistantYet = !lastMsg || lastMsg.role !== 'assistant'
               const assistantHasContent = lastMsg?.role === 'assistant' && lastMsg.content
-              // Show standalone loader when: no assistant message yet, OR assistant already
-              // wrote text but is still working (background tasks, tool calls, etc.)
-              if (noAssistantYet || assistantHasContent) {
+              // Show standalone loader when:
+              //   1. We are in the pending window before the first stream event, OR
+              //   2. Streaming is active but no assistant bubble is being rendered yet, OR
+              //   3. Assistant already has text content but is still working in the background
+              if (isPending || noAssistantYet || assistantHasContent) {
                 return (
                   <div className="flex justify-start mb-4">
                     <div className="rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-2 shadow-sm">
