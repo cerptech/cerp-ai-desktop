@@ -31,7 +31,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [showThoughts, setShowThoughts] = useState(false)
+  const [showThoughts, setShowThoughts] = useState(true)
   const [appVersion, setAppVersion] = useState('...')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
