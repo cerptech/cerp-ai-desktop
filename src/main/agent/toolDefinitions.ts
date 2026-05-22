@@ -267,7 +267,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/items',
   },
   add_budget_items_batch: {
-    description: 'Agrega MULTIPLES items/partidas al presupuesto en UNA sola llamada. MUCHO mas eficiente que add_budget_item individual. Puede crear productos nuevos y agregarlos al presupuesto en un solo paso. USAR SIEMPRE en vez de add_budget_item cuando hay mas de 3 items.',
+    description: 'Agrega MULTIPLES items/partidas al presupuesto en UNA sola llamada. MUCHO mas eficiente que add_budget_item individual. Puede crear productos nuevos y agregarlos al presupuesto en un solo paso. USAR SIEMPRE en vez de add_budget_item cuando hay mas de 3 items. Para items compuestos (APU - Analisis de Precio Unitario) SIEMPRE enviar materialsRequired y/o resourcesRequired con el desglose real; NO enviar solo costBreakdown agregado, el backend recalcula el costo desde el BOM si este existe.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       items: z.array(z.object({
@@ -276,19 +276,46 @@ export const toolSchemas: Record<string, ToolDef> = {
         parentItemId: z.string().describe('ID del capitulo padre'),
         overheadOverride: z.number().optional().describe('Override % gastos generales'),
         newProduct: z.object({
-          name: z.string().describe('Nombre del material'),
-          code: z.string().describe('Codigo unico (ej: "EXC-ZANJAS-001")'),
+          name: z.string().describe('Nombre del material o partida'),
+          code: z.string().optional().describe('Codigo unico (ej: "EXC-ZANJAS-001"). OPCIONAL: si no se envia, el backend genera uno con prefijo MAT- y numero correlativo.'),
           unit: z.string().optional().describe('Unidad (m2, m3, kg, u, gl)'),
           description: z.string().optional(),
           classification: z.string().optional().describe('ID classification product_type'),
-          defaultCost: z.number().optional().describe('Costo unitario'),
+          defaultCost: z.number().optional().describe('Costo unitario directo. Ignorado si se envia materialsRequired/resourcesRequired (el backend recalcula desde el BOM).'),
           costBreakdown: z.object({
             materials: z.number().optional(),
             labor: z.number().optional(),
             equipment: z.number().optional(),
             subcontracted: z.number().optional(),
-          }).optional(),
-        }).optional().describe('Producto nuevo a crear. Usar SOLO si no existe productId.'),
+          }).optional().describe('Desglose agregado. SOLO valido para items simples sin BOM. Si envias materialsRequired o resourcesRequired este campo se ignora y el costo se calcula desde el BOM.'),
+          materialsRequired: z.array(z.object({
+            materialId: z.string().optional().describe('ID del material existente en catalogo. Usar search_materials primero. Excluyente con newMaterial.'),
+            newMaterial: z.object({
+              name: z.string().describe('Nombre del material (ej: "Cemento Portland 50kg")'),
+              code: z.string().optional().describe('Codigo unico. Si se omite, el backend lo genera con prefijo MAT-.'),
+              unit: z.string().optional().describe('Unidad de medida (kg, m3, u, etc.)'),
+              description: z.string().optional(),
+              classification: z.string().optional().describe('ID classification product_type'),
+              defaultCost: z.number().optional().describe('Costo unitario del material. OBLIGATORIO preguntar al usuario si no esta en el archivo fuente. NUNCA inventar.'),
+            }).optional().describe('Material nuevo a crear si no existe en catalogo. Excluyente con materialId.'),
+            quantityNeeded: z.number().describe('Cantidad de este material necesaria para producir 1 unidad del item (ej: 0.35 m3 de hormigon por m2 de losa)'),
+            unitCost: z.number().optional().describe('Costo unitario especifico para esta receta. Si se omite, se usa el defaultCost del material.'),
+          })).optional().describe('BOM de materiales del item. Obligatorio para items compuestos (APU).'),
+          resourcesRequired: z.array(z.object({
+            resourceId: z.string().optional().describe('ID del recurso existente (mano de obra o maquinaria). Usar search_resources primero. Excluyente con newResource.'),
+            newResource: z.object({
+              name: z.string().describe('Nombre del recurso (ej: "Oficial Albañil", "Retroexcavadora CAT 320")'),
+              code: z.string().optional().describe('Codigo unico. Si se omite, el backend lo genera con prefijo MO- (labor) o EQ- (tools_machinery).'),
+              type: z.enum(['labor', 'tools_machinery']).describe('"labor" para personas (oficiales, ayudantes, especialistas). "tools_machinery" para maquinaria y herramientas. Inferir cuando es obvio por el nombre; preguntar al usuario si es ambiguo.'),
+              costRate: z.number().describe('Costo unitario del recurso (€/hora, €/dia, etc.). OBLIGATORIO preguntar al usuario si no esta en el archivo fuente.'),
+              costRateType: z.enum(['hourly', 'daily', 'fixed', 'unit', 'm2', 'm3']).optional().describe('Unidad del costo. Default "hourly".'),
+              description: z.string().optional(),
+            }).optional().describe('Recurso nuevo a crear si no existe. Excluyente con resourceId.'),
+            quantity: z.number().describe('Cantidad de horas/dias/unidades de este recurso por 1 unidad del item'),
+            hoursPerUnit: z.number().optional().describe('Horas dedicadas por unidad de item producido (opcional, alternativa a quantity)'),
+            estimatedCost: z.number().optional().describe('Costo estimado total ya calculado (si lo tenes precomputado).'),
+          })).optional().describe('BOM de recursos productivos (mano de obra + maquinaria) del item. Obligatorio para items compuestos (APU).'),
+        }).optional().describe('Producto nuevo a crear. Usar SOLO si no existe productId. Si es un APU compuesto, llenar materialsRequired y resourcesRequired.'),
       })).describe('Array de items a crear (max 200 por batch)'),
     }),
     method: 'POST',
@@ -453,6 +480,16 @@ export const toolSchemas: Record<string, ToolDef> = {
     }),
     method: 'GET',
     endpoint: '/items',
+  },
+  search_resources: {
+    description: 'Busca recursos productivos (mano de obra y maquinaria) en el catalogo de la empresa por nombre o codigo. Usar ANTES de crear un recurso nuevo, para evitar duplicados.',
+    schema: z.object({
+      searchTerm: z.string().min(1).describe('Texto de busqueda por nombre o codigo del recurso. OBLIGATORIO: usar al menos una palabra clave del nombre del recurso buscado para evitar listar todo el catalogo.'),
+      type: z.enum(['labor', 'tools_machinery']).optional().describe('Filtrar por tipo de recurso: "labor" para mano de obra, "tools_machinery" para maquinaria/herramientas'),
+      limit: z.number().min(1).max(50).optional().describe('Limite de resultados (default 20)'),
+    }),
+    method: 'GET',
+    endpoint: '/resources',
   },
   create_material: {
     description: 'Crea un nuevo material/item en el inventario. IMPORTANTE: siempre enviar code unico Y classification (usar get_classifications para obtener el ID de tipo product_type).',
