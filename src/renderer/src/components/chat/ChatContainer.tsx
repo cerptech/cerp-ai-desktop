@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
 import { useToast } from '@/hooks/useToast'
+import { usePlanMode } from '@/hooks/usePlanMode'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -28,6 +29,7 @@ interface ChatContainerProps {
 export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
   const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
+  const { planMode, togglePlanMode } = usePlanMode()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -206,6 +208,18 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* Plan Mode banner — shown at the top when active */}
+      {planMode && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-700">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          <span className="font-medium">Modo revision activo</span>
+          <span className="text-amber-500">— el agente planificara sin ejecutar acciones de escritura. Desactivalo para continuar con la ejecucion.</span>
+        </div>
+      )}
+
       {/* Folder indicator */}
       {cwd && (
         <div className="flex items-center gap-3 px-6 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
@@ -337,6 +351,19 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             </svg>
           </button>
 
+          {/* Plan Mode toggle button */}
+          <button
+            type="button"
+            onClick={togglePlanMode}
+            className={`p-2.5 rounded-lg border transition-colors ${planMode ? 'border-amber-400 bg-amber-50 text-amber-600 ring-1 ring-amber-300' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+            title={planMode ? 'Modo revision activo — click para desactivar' : 'Activar modo revision (planifica sin ejecutar)'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+          </button>
+
           {isStreaming ? (
             <button
               onClick={abort}
@@ -360,6 +387,12 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             v{appVersion}
           </span>
           <div className="flex items-center gap-3">
+            {planMode && (
+              <span className="text-xs font-medium text-amber-600 flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                Modo revision
+              </span>
+            )}
             {messages.length > 0 && (
               <button
                 onClick={toggleShowThoughts}

@@ -38,6 +38,10 @@ export const IPC_CHANNELS = {
   QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
   QUOTES_LIST: 'quotes:list',
 
+  // Plan Mode
+  AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
+  AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
+
   // App
   APP_GET_VERSION: 'app:get-version',
 

@@ -66,6 +66,28 @@ let sessionContextId: string | null = null
 let mainWindowRef: BrowserWindow | null = null
 let processingTurn = false
 
+// Plan Mode — when true the agent uses permissionMode:'plan' and cannot execute
+// write operations. The user reviews the plan and resumes in normal mode.
+let planModeEnabled = false
+
+export function getPlanMode(): boolean {
+  return planModeEnabled
+}
+
+/**
+ * Enable or disable Plan Mode.
+ * If a session is already open, close it so the next runAgent call applies the new mode.
+ */
+export function setPlanMode(enabled: boolean): void {
+  if (planModeEnabled === enabled) return
+  planModeEnabled = enabled
+  logger.info(`Plan Mode ${enabled ? 'enabled' : 'disabled'}`)
+  // Close the current session — the next message will start a fresh one with the updated mode
+  if (activeQuery) {
+    closeSession()
+  }
+}
+
 export function isAgentRunning(): boolean {
   return processingTurn
 }
@@ -261,7 +283,7 @@ async function startSession(
     },
     agents: [...builtInAgents, ...customSdkAgents],
     allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*'],
-    permissionMode: 'bypassPermissions',
+    permissionMode: planModeEnabled ? 'plan' : 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
     maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
     includePartialMessages: true,
@@ -269,7 +291,7 @@ async function startSession(
     effort: 'high',
   }
 
-  logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd})`)
+  logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd}, planMode: ${planModeEnabled})`)
 
   // Create persistent message queue — keeps the session alive between turns
   messageQueue = new MessageQueue()

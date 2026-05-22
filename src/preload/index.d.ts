@@ -82,6 +82,8 @@ interface CerpAPI {
   sendPrompt(payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string }): Promise<{ started: boolean; error?: string }>
   abortAgent(): Promise<void>
   resetSession(): Promise<void>
+  setPlanMode(enabled: boolean): Promise<void>
+  getPlanMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
   onAgentMessage(callback: (event: AgentStreamEvent) => void): () => void
   onAgentDone(callback: () => void): () => void

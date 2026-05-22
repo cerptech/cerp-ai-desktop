@@ -7,6 +7,8 @@ const IPC = {
   AGENT_SEND_PROMPT: 'agent:send-prompt',
   AGENT_ABORT: 'agent:abort',
   AGENT_RESET_SESSION: 'agent:reset-session',
+  AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
+  AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
   AGENT_STREAM_MESSAGE: 'agent:stream:message',
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
@@ -90,6 +92,8 @@ const api = {
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
   abortAgent: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT),
   resetSession: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION),
+  setPlanMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_PLAN_MODE, enabled),
+  getPlanMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_PLAN_MODE),
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
