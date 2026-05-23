@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
 import { useAgent, type ChatMessage } from '@/hooks/useAgent'
 import { MessageBubble } from './MessageBubble'
+import { AskUserQuestion } from './AskUserQuestion'
 import { QuickActions } from './QuickActions'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
@@ -30,7 +31,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef, searchInputRef }: ChatContainerProps) {
-  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sessionCost, sessionTokensIn, sessionTokensOut, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sessionCost, sessionTokensIn, sessionTokensOut, pendingQuestions, isSubmittingAnswers, sendPrompt, abort, submitAnswers, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const [input, setInput] = useState('')
@@ -157,7 +158,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
     const trimmed = input.trim()
-    if (!trimmed || isStreaming) return
+    if (!trimmed || isStreaming || pendingQuestions) return
     setInput('')
     sendPrompt(trimmed, cwd || undefined, activeContextId || undefined)
   }
@@ -346,6 +347,21 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
         </div>
       )}
 
+      {/* Structured question widget — shown when agent invokes ask_user_question tool */}
+      {pendingQuestions && pendingQuestions.length > 0 && (
+        <div className="mx-6 mb-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />
+            <span className="text-xs font-medium text-slate-500">El agente necesita tu decision para continuar</span>
+          </div>
+          <AskUserQuestion
+            questions={pendingQuestions}
+            onAnswer={submitAnswers}
+            isSubmitting={isSubmittingAnswers}
+          />
+        </div>
+      )}
+
       {/* Prompt suggestions */}
       {!isStreaming && promptSuggestions.length > 0 && (
         <div className="px-6 pb-2 flex flex-wrap gap-2">
@@ -383,8 +399,8 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
               }
               rows={1}
               style={{ maxHeight: '192px', overflowY: 'auto' }}
-              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50"
-              disabled={isStreaming}
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50 disabled:bg-slate-50 disabled:text-slate-400"
+              disabled={isStreaming || !!pendingQuestions}
             />
           </div>
 

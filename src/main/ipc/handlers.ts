@@ -4,10 +4,11 @@ import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Cli
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
+import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
-import type { SendPromptPayload, AuthState } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 const httpClient = new HttpClient(
@@ -223,6 +224,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       logger.error('Failed to list quotes:', err)
       return { items: [], page: 1, pageSize: 20, total: 0 }
     }
+  })
+
+  // ask_user_question: renderer sends back the user's answers
+  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, answers: UserAnswerPayload): Promise<void> => {
+    resolveAnswer(answers)
   })
 
   // App: Get version

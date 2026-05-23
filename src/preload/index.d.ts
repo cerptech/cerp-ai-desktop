@@ -1,3 +1,17 @@
+export interface AskUserQuestionOption {
+  label: string
+  description: string
+}
+
+export interface AskUserQuestionItem {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: AskUserQuestionOption[]
+}
+
+export type UserAnswerPayload = Record<string, string | string[]>
+
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_start'; name: string; input?: string }
@@ -7,6 +21,7 @@ export type AgentStreamEvent =
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
+  | { type: 'ask_user_question'; questions: AskUserQuestionItem[] }
   | { type: 'done'; cost?: number; turns?: number; duration?: number }
   | { type: 'error'; message: string }
 
@@ -85,6 +100,8 @@ interface CerpAPI {
   setPlanMode(enabled: boolean): Promise<void>
   getPlanMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
+  onAskUserQuestion(callback: (questions: AskUserQuestionItem[]) => void): () => void
+  submitUserAnswers(answers: UserAnswerPayload): Promise<void>
   onAgentMessage(callback: (event: AgentStreamEvent) => void): () => void
   onAgentDone(callback: () => void): () => void
   onAgentError(callback: (err: { message: string }) => void): () => void

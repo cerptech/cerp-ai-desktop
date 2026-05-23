@@ -16,6 +16,7 @@ export type AgentStreamEvent =
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
+  | { type: 'ask_user_question'; questions: AskUserQuestionItem[] }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   | { type: 'error'; message: string }
 
@@ -37,6 +38,27 @@ export interface DesktopConfig {
   maxBudgetPerQuery: number
   model: string
 }
+
+// ── ask_user_question tool types ──
+
+export interface AskUserQuestionOption {
+  label: string
+  description: string
+}
+
+export interface AskUserQuestionItem {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: AskUserQuestionOption[]
+}
+
+export interface AskUserQuestionPayload {
+  questions: AskUserQuestionItem[]
+}
+
+/** Map of question text → chosen label(s) or "Otro: <free text>" */
+export type UserAnswerPayload = Record<string, string | string[]>
 
 export interface ConversationMessage {
   role: 'user' | 'assistant'

@@ -9,6 +9,8 @@ const IPC = {
   AGENT_RESET_SESSION: 'agent:reset-session',
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
   AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
+  AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
+  AGENT_USER_ANSWER: 'agent:user_answer',
   AGENT_STREAM_MESSAGE: 'agent:stream:message',
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
@@ -37,6 +39,21 @@ const IPC = {
   GIT_INSTALL_PROGRESS: 'git:install:progress',
 } as const
 
+export interface AskUserQuestionOption {
+  label: string
+  description: string
+}
+
+export interface AskUserQuestionItem {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: AskUserQuestionOption[]
+}
+
+/** Map of question text → chosen label or "Otro: <free text>" (or array for multiSelect) */
+export type UserAnswerPayload = Record<string, string | string[]>
+
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_start'; name: string; input?: string }
@@ -46,6 +63,7 @@ export type AgentStreamEvent =
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
+  | { type: 'ask_user_question'; questions: AskUserQuestionItem[] }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   | { type: 'error'; message: string }
 
@@ -97,6 +115,16 @@ const api = {
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
+
+  // ask_user_question: listener for incoming questions + sender for user answers
+  onAskUserQuestion: (callback: (questions: AskUserQuestionItem[]) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { questions: AskUserQuestionItem[] }): void =>
+      callback(data.questions)
+    ipcRenderer.on(IPC.AGENT_ASK_USER_QUESTION, handler)
+    return () => ipcRenderer.removeListener(IPC.AGENT_ASK_USER_QUESTION, handler)
+  },
+  submitUserAnswers: (answers: UserAnswerPayload): Promise<void> =>
+    ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, answers),
 
   // Stream listeners
   onAgentMessage: (callback: (event: AgentStreamEvent) => void): (() => void) => {

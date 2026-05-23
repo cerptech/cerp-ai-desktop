@@ -42,6 +42,10 @@ export const IPC_CHANNELS = {
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
   AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
 
+  // ask_user_question tool — structured clarification widget
+  AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
+  AGENT_USER_ANSWER: 'agent:user_answer',
+
   // App
   APP_GET_VERSION: 'app:get-version',
 

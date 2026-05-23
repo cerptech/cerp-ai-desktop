@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
+import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
@@ -115,6 +116,8 @@ export async function interruptAgent(): Promise<void> {
  * Close the session entirely and clean up
  */
 export function closeSession(): void {
+  // Cancel any pending ask_user_question so the MCP promise doesn't hang
+  cancelPendingQuestion()
   if (messageQueue) {
     messageQueue.close()
     messageQueue = null
@@ -129,6 +132,7 @@ export function closeSession(): void {
   sessionContextId = null
   processingTurn = false
   cachedContextPrompt = null
+  setAskUserWindow(null)
   logger.info('Session closed')
 }
 
@@ -152,6 +156,7 @@ export async function runAgent(
   mainWindow: BrowserWindow,
 ): Promise<void> {
   mainWindowRef = mainWindow
+  setAskUserWindow(mainWindow)
   const cwd = payload.cwd || app.getPath('home')
   const contextId = payload.activeContextId || null
 
@@ -282,7 +287,7 @@ async function startSession(
       cerp: cerpMcpServer,
     },
     agents: [...builtInAgents, ...customSdkAgents],
-    allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*'],
+    allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*', 'mcp__cerp__ask_user_question'],
     permissionMode: planModeEnabled ? 'plan' : 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
     maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
