@@ -36,6 +36,10 @@ export function useAgent() {
   const [activeAgentDelegation, setActiveAgentDelegation] = useState<AgentDelegation | null>(null)
   const [promptSuggestions, setPromptSuggestions] = useState<string[]>([])
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  // Session-level cost and token accumulators — reset on clearMessages/restoreMessages
+  const [sessionCost, setSessionCost] = useState(0)
+  const [sessionTokensIn, setSessionTokensIn] = useState(0)
+  const [sessionTokensOut, setSessionTokensOut] = useState(0)
   const toolsRef = useRef<ToolExecution[]>([])
   const lastEventRef = useRef<number>(Date.now())
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -171,7 +175,11 @@ export function useAgent() {
           if (msg) setStatusMessage(msg)
           break
         }
-        case 'done':
+        case 'done': {
+          const doneEvent = event as { type: 'done'; cost?: number; tokensIn?: number; tokensOut?: number }
+          if (doneEvent.cost != null) setSessionCost((prev) => prev + doneEvent.cost!)
+          if (doneEvent.tokensIn != null) setSessionTokensIn((prev) => prev + doneEvent.tokensIn!)
+          if (doneEvent.tokensOut != null) setSessionTokensOut((prev) => prev + doneEvent.tokensOut!)
           setIsStreaming(false)
           setIsPending(false)
           setStatusMessage(null)
@@ -179,6 +187,7 @@ export function useAgent() {
           setActiveAgentDelegation(null)
           currentDelegationRef.current = null
           break
+        }
         case 'error':
           setError((event as { type: 'error'; message: string }).message)
           setIsStreaming(false)
@@ -276,6 +285,9 @@ export function useAgent() {
     setActiveAgentDelegation(null)
     currentDelegationRef.current = null
     toolsRef.current = []
+    setSessionCost(0)
+    setSessionTokensIn(0)
+    setSessionTokensOut(0)
   }, [])
 
   // Restore messages from a loaded conversation
@@ -289,6 +301,9 @@ export function useAgent() {
     setActiveAgentDelegation(null)
     currentDelegationRef.current = null
     toolsRef.current = []
+    setSessionCost(0)
+    setSessionTokensIn(0)
+    setSessionTokensOut(0)
   }, [])
 
   return {
@@ -300,6 +315,9 @@ export function useAgent() {
     activeAgentDelegation,
     promptSuggestions,
     statusMessage,
+    sessionCost,
+    sessionTokensIn,
+    sessionTokensOut,
     sendPrompt,
     abort,
     clearMessages,
