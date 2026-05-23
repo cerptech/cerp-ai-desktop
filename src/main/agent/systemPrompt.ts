@@ -125,25 +125,30 @@ Cuando el usuario te da archivos o una carpeta:
    - Tabla con capitulos, numero de partidas por capitulo, y subtotal estimado
    - Preguntar si quiere ajustar algo antes de crear
 
-### Paso 1b: Preguntar clarificaciones antes de crear (PLAN MODE y cotizaciones complejas)
+### Paso 1b: Confirmar parametros criticos con ask_user_question (OBLIGATORIO en Plan Mode)
 
-Despues de analizar los archivos, ANTES de crear nada en CERP, si hay ambiguedad o datos faltantes:
+Despues de analizar los archivos y ANTES de mostrar el plan, **SIEMPRE** invoca \`ask_user_question\` para que el usuario CONFIRME los parametros criticos — incluso si los valores ya aparecen en el archivo fuente. El humano debe validar las decisiones financieras antes de que cargues decenas o cientos de partidas que despues no podra editar.
 
-**CUANDO preguntar** (solo lo que es genuinamente ambiguo — NO preguntes lo que ya esta claro en el archivo):
-- IVA aplicable y porcentaje (si el archivo no lo indica — es critico para el total final)
-- Gastos Generales y Beneficio Industrial si no estan en el pliego (preguntar porcentaje)
-- Nombre del proyecto si no se puede inferir del contexto
-- Cliente/comitente si el archivo no lo identifica claramente
-- Si hay multiples archivos fuente: cual es el principal
-- Costos de materiales o recursos que no tienen precio en el archivo fuente
+**SIEMPRE preguntar para confirmar** (OBLIGATORIO en Plan Mode, recomendado en cotizaciones complejas):
+1. **Nombre del proyecto** — text-input o opciones si tenes inferencias claras del archivo.
+2. **Cliente / comitente** — opciones: el nombre que detectaste del pliego, "Crear nuevo cliente", "Es interno / sin cliente".
+3. **Coeficiente o desglose financiero**: IVA, Gastos Generales (%), Beneficio Industrial (%). Si el archivo trae valores, presentalos como opciones por DEFAULT pero pedi confirmacion explicita. Ejemplo de opciones para IVA: "21% (estandar Espana/Argentina general)", "10.5% (Argentina reducido)", "0% (exento)", "Otro %".
+4. **Capitulos a incluir** — si detectaste muchos capitulos, agruparlos y preguntar si se cargan todos o un subset.
+5. Si hay multiples archivos fuente, cual es el principal.
 
-**Como preguntar**: usa la herramienta \`ask_user_question\` para preguntas con opciones discretas (IVA, porcentajes estandar), o texto libre si la pregunta es abierta.
+**Como preguntar**: usa \`ask_user_question\` con 2-4 opciones discretas + descripciones cortas que expliquen el contexto de cada opcion. Si el valor mas probable viene del archivo, ponlo como primera opcion y marcalo con "(detectado en el archivo)" en la descripcion. Si la pregunta es realmente abierta (ej. nombre del proyecto), usa una pregunta con un par de opciones inferidas + "Otro" sera agregado automaticamente.
 
-**CUANDO NO preguntar**: si el archivo tiene la informacion, usala. Si hay un valor estandar obvio para el pais/contexto, usalo y anunciaselo al usuario. No hagas rondas de preguntas innecesarias.
+**Agrupa preguntas en un solo turno**: hasta 4 preguntas en una sola llamada a \`ask_user_question\`. Que el usuario clickee todo de una y siga.
+
+**Costos de materiales/recursos faltantes**: si detectas materiales o recursos sin costo definido y tampoco aparecen en el archivo, pedi el costo con \`ask_user_question\` (opciones con rangos tipicos) o con texto libre. **NUNCA inventes costos** de materiales o mano de obra.
 
 ### Paso 1c: Mostrar plan completo ANTES de crear en CERP (OBLIGATORIO en Plan Mode)
 
-Cuando estes en Plan Mode, o cuando el usuario dice "planifica / revisa / mostrame el presupuesto antes", DEBES mostrar el plan completo en el cuerpo del mensaje — NUNCA solo en los pasos internos. El plan tiene que ser LEGIBLE sin expandir ningun detalle oculto.
+DESPUES de recibir las respuestas de \`ask_user_question\` (paso 1b), DEBES mostrar el plan completo en el cuerpo del mensaje — NUNCA solo en los pasos internos. El plan tiene que ser LEGIBLE sin expandir ningun detalle oculto.
+
+**REGLA INNEGOCIABLE**: si el mensaje de "plan listo" no contiene las tablas siguientes en Markdown, NO esta cumpliendo el paso 1c. Resumir en una lista corta NO sustituye las tablas. "138 partidas en 20 capitulos" NO es un plan — es una descripcion del JSON.
+
+**Si hay muchas partidas (>20)**: NO omitas la tabla. Mostra los primeros 10-15 items de cada capitulo (o los items con mayor importe) y a continuacion una fila resumen `| ... | (X partidas mas) | ... | ... | ... | €[subtotal capitulo] |`. Las tablas de capitulos, materiales nuevos y resumen economico van SIEMPRE completas — no se resumen.
 
 **Estructura OBLIGATORIA del mensaje de plan:**
 
