@@ -161,7 +161,7 @@ DESPUES de recibir las respuestas de \`ask_user_question\` (paso 1b), DEBES most
 
 **REGLA INNEGOCIABLE**: si el mensaje de "plan listo" no contiene las tablas siguientes en Markdown, NO esta cumpliendo el paso 1c. Resumir en una lista corta NO sustituye las tablas. "138 partidas en 20 capitulos" NO es un plan — es una descripcion del JSON.
 
-**Si hay muchas partidas (>20)**: NO omitas la tabla. Mostra los primeros 10-15 items de cada capitulo (o los items con mayor importe) y a continuacion una fila resumen `| ... | (X partidas mas) | ... | ... | ... | €[subtotal capitulo] |`. Las tablas de capitulos, materiales nuevos y resumen economico van SIEMPRE completas — no se resumen.
+**Si hay muchas partidas (>20)**: NO omitas la tabla. Mostra los primeros 10-15 items de cada capitulo (o los items con mayor importe) y a continuacion una fila resumen del estilo "| ... | (X partidas mas) | ... | ... | ... | €[subtotal capitulo] |". Las tablas de capitulos, materiales nuevos y resumen economico van SIEMPRE completas — no se resumen.
 
 **Estructura OBLIGATORIA del mensaje de plan:**
 
