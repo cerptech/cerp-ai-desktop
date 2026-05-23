@@ -242,30 +242,100 @@ export function AskUserQuestion({ questions, onAnswer, isSubmitting }: AskUserQu
     onAnswer(result)
   }
 
-  return (
-    <div className="mt-3 space-y-3">
-      {questions.map((item) => (
-        <QuestionCard
-          key={item.question}
-          item={item}
-          answer={answers[item.question]}
-          onChange={(val) => handleChange(item.question, val)}
-          showOtherInput={!!showOther[item.question]}
-          otherText={otherText[item.question] || ''}
-          onToggleOther={() => handleToggleOther(item.question)}
-          onOtherTextChange={(text) => handleOtherText(item.question, text)}
-        />
-      ))}
+  // ── Step-by-step navigation ─────────────────────────────────────────────
+  const [currentStep, setCurrentStep] = useState(0)
+  const totalSteps = questions.length
+  const isWizard = totalSteps > 1
+  const currentItem = questions[currentStep]
+  const isLastStep = currentStep === totalSteps - 1
+  const currentAnswered = currentItem ? isQuestionAnswered(currentItem) : false
 
-      {/* Submit button */}
-      <div className="flex justify-end pt-1">
+  function goNext() {
+    if (!currentAnswered) return
+    if (isLastStep) {
+      handleSubmit()
+    } else {
+      setCurrentStep((s) => Math.min(s + 1, totalSteps - 1))
+    }
+  }
+
+  function goBack() {
+    setCurrentStep((s) => Math.max(s - 1, 0))
+  }
+
+  // Reset to step 0 if the questions prop changes (new turn)
+  // (currentStep can stay valid in most cases, but guard against out-of-bounds)
+  if (currentStep >= totalSteps) {
+    // Defensive — should not happen because questions are immutable per turn
+    setCurrentStep(0)
+  }
+
+  return (
+    <div className="mt-3">
+      {/* Progress indicator (wizard only) */}
+      {isWizard && (
+        <div className="flex items-center gap-2 mb-2 px-1">
+          <span className="text-[11px] font-medium text-slate-500">
+            Paso {currentStep + 1} de {totalSteps}
+          </span>
+          <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full bg-brand-orange transition-all duration-200"
+              style={{ width: `${((currentStep + 1) / totalSteps) * 100}%` }}
+            />
+          </div>
+          <span className="text-[11px] text-slate-400">
+            {questions.filter(isQuestionAnswered).length} / {totalSteps} respondidas
+          </span>
+        </div>
+      )}
+
+      {/* Scrollable area for the current question */}
+      <div className="max-h-[55vh] overflow-y-auto pr-1">
+        {currentItem && (
+          <QuestionCard
+            key={currentItem.question}
+            item={currentItem}
+            answer={answers[currentItem.question]}
+            onChange={(val) => handleChange(currentItem.question, val)}
+            showOtherInput={!!showOther[currentItem.question]}
+            otherText={otherText[currentItem.question] || ''}
+            onToggleOther={() => handleToggleOther(currentItem.question)}
+            onOtherTextChange={(text) => handleOtherText(currentItem.question, text)}
+          />
+        )}
+      </div>
+
+      {/* Navigation */}
+      <div className="flex items-center justify-between pt-3">
+        {isWizard ? (
+          <button
+            onClick={goBack}
+            disabled={currentStep === 0 || isSubmitting}
+            className={[
+              'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium',
+              'transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300',
+              currentStep === 0 || isSubmitting
+                ? 'text-slate-300 cursor-not-allowed'
+                : 'text-slate-600 hover:bg-slate-100',
+            ].join(' ')}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+            Atrás
+          </button>
+        ) : (
+          <span />
+        )}
+
         <button
-          onClick={handleSubmit}
-          disabled={!allAnswered || isSubmitting}
+          onClick={goNext}
+          disabled={!currentAnswered || isSubmitting}
           className={[
             'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold',
             'transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/50',
-            allAnswered && !isSubmitting
+            currentAnswered && !isSubmitting
               ? 'bg-brand-orange text-white hover:bg-brand-orange/90 shadow-sm'
               : 'bg-slate-100 text-slate-400 cursor-not-allowed',
           ].join(' ')}
@@ -278,12 +348,19 @@ export function AskUserQuestion({ questions, onAnswer, isSubmitting }: AskUserQu
               </svg>
               Enviando...
             </>
-          ) : (
+          ) : isLastStep ? (
             <>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               Enviar respuestas
+            </>
+          ) : (
+            <>
+              Siguiente
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
             </>
           )}
         </button>
