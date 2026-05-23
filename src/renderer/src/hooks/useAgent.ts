@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { AgentStreamEvent } from '../../../preload/index'
+import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload } from '../../../preload/index'
 
 export interface ToolExecution {
   name: string
@@ -40,6 +40,9 @@ export function useAgent() {
   const [sessionCost, setSessionCost] = useState(0)
   const [sessionTokensIn, setSessionTokensIn] = useState(0)
   const [sessionTokensOut, setSessionTokensOut] = useState(0)
+  // ask_user_question state — set when the agent needs structured clarifications
+  const [pendingQuestions, setPendingQuestions] = useState<AskUserQuestionItem[] | null>(null)
+  const [isSubmittingAnswers, setIsSubmittingAnswers] = useState(false)
   const toolsRef = useRef<ToolExecution[]>([])
   const lastEventRef = useRef<number>(Date.now())
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -101,6 +104,14 @@ export function useAgent() {
   }, [isStreaming])
 
   useEffect(() => {
+    // Subscribe to structured question requests from the agent
+    const unsubAsk = window.cerpAPI.onAskUserQuestion((questions) => {
+      if (!acceptingRef.current) return
+      setPendingQuestions(questions)
+      // The agent is now "streaming" but waiting — keep isStreaming true
+      // so the UI shows the waiting state correctly
+    })
+
     const unsubMessage = window.cerpAPI.onAgentMessage((event: AgentStreamEvent) => {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       lastEventRef.current = Date.now()
@@ -242,6 +253,7 @@ export function useAgent() {
     })
 
     return () => {
+      unsubAsk()
       unsubMessage()
       unsubDone()
       unsubError()
@@ -279,8 +291,25 @@ export function useAgent() {
     setIsPending(false)
     setActiveTool(null)
     setActiveAgentDelegation(null)
+    setPendingQuestions(null)
+    setIsSubmittingAnswers(false)
     currentDelegationRef.current = null
   }, [])
+
+  /**
+   * Submit the user's answers to the pending ask_user_question.
+   * Resumes agent execution on the main process side.
+   */
+  const submitAnswers = useCallback(async (answers: UserAnswerPayload) => {
+    if (!pendingQuestions) return
+    setIsSubmittingAnswers(true)
+    try {
+      await window.cerpAPI.submitUserAnswers(answers)
+      setPendingQuestions(null)
+    } finally {
+      setIsSubmittingAnswers(false)
+    }
+  }, [pendingQuestions])
 
   const clearMessages = useCallback(() => {
     acceptingRef.current = false // Block stale stream events from previous conversation
@@ -290,6 +319,8 @@ export function useAgent() {
     setActiveTool(null)
     setError(null)
     setActiveAgentDelegation(null)
+    setPendingQuestions(null)
+    setIsSubmittingAnswers(false)
     currentDelegationRef.current = null
     toolsRef.current = []
     setSessionCost(0)
@@ -306,6 +337,8 @@ export function useAgent() {
     setActiveTool(null)
     setError(null)
     setActiveAgentDelegation(null)
+    setPendingQuestions(null)
+    setIsSubmittingAnswers(false)
     currentDelegationRef.current = null
     toolsRef.current = []
     setSessionCost(0)
@@ -325,8 +358,11 @@ export function useAgent() {
     sessionCost,
     sessionTokensIn,
     sessionTokensOut,
+    pendingQuestions,
+    isSubmittingAnswers,
     sendPrompt,
     abort,
+    submitAnswers,
     clearMessages,
     restoreMessages,
   }
