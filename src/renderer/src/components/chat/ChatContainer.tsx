@@ -215,7 +215,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             <path d="M9 11l3 3L22 4" />
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
           </svg>
-          <span className="font-medium">Modo revision activo</span>
+          <span className="font-medium">Plan Mode activo</span>
           <span className="text-amber-500">— el agente planificara sin ejecutar acciones de escritura. Desactivalo para continuar con la ejecucion.</span>
         </div>
       )}
@@ -351,17 +351,27 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             </svg>
           </button>
 
-          {/* Plan Mode toggle button */}
+          {/* Plan Mode toggle — pill button con texto + icono, visible en ambos estados */}
           <button
             type="button"
             onClick={togglePlanMode}
-            className={`p-2.5 rounded-lg border transition-colors ${planMode ? 'border-amber-400 bg-amber-50 text-amber-600 ring-1 ring-amber-300' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
-            title={planMode ? 'Modo revision activo — click para desactivar' : 'Activar modo revision (planifica sin ejecutar)'}
+            aria-pressed={planMode}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
+              planMode
+                ? 'border-amber-500 bg-amber-100 text-amber-800 ring-2 ring-amber-300 shadow-sm'
+                : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+            }`}
+            title={
+              planMode
+                ? 'Plan Mode ACTIVO — el agente solo planifica, no ejecuta. Click para desactivar.'
+                : 'Activar Plan Mode — el agente planifica con solo lectura antes de ejecutar acciones.'
+            }
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 11l3 3L22 4" />
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
+            <span>Plan Mode{planMode ? ' · ON' : ''}</span>
           </button>
 
           {isStreaming ? (
@@ -390,7 +400,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             {planMode && (
               <span className="text-xs font-medium text-amber-600 flex items-center gap-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                Modo revision
+                Plan Mode
               </span>
             )}
             {messages.length > 0 && (
