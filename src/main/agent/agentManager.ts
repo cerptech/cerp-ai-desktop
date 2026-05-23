@@ -206,7 +206,7 @@ async function startSession(
 
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
   const contextPrompt = await buildContextPrompt(httpClient)
-  const fullSystemPrompt = buildFullSystemPrompt(contextPrompt, contextId, payload.activeContextId)
+  const fullSystemPrompt = buildFullSystemPrompt(contextPrompt, contextId, payload.activeContextId, planModeEnabled)
 
   // Build subagent definitions (with model overrides for cost optimization)
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
@@ -288,7 +288,12 @@ async function startSession(
     },
     agents: [...builtInAgents, ...customSdkAgents],
     allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*', 'mcp__cerp__ask_user_question'],
-    permissionMode: planModeEnabled ? 'plan' : 'bypassPermissions',
+    // NOTE: we never use permissionMode:'plan' because the SDK then auto-injects
+    // the ExitPlanMode tool, which conflicts with our ask_user_question flow.
+    // Instead, when planModeEnabled is true we inject a strict directive into
+    // the system prompt that forbids write tools and ExitPlanMode (see
+    // buildFullSystemPrompt). The user controls the toggle from the UI.
+    permissionMode: 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
     maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
     includePartialMessages: true,
@@ -427,8 +432,31 @@ async function processStreamLoop(): Promise<void> {
 // System prompt building
 // ============================================================
 
-function buildFullSystemPrompt(contextPrompt: string, contextId: string | null, activeContextId?: string): string {
+function buildFullSystemPrompt(contextPrompt: string, contextId: string | null, activeContextId?: string, planModeEnabled = false): string {
   let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
+
+  // Plan Mode directive — injected when the user toggles "Plan Mode" in the UI.
+  // We don't use the SDK's permissionMode:'plan' because that auto-injects
+  // ExitPlanMode which conflicts with our ask_user_question flow.
+  if (planModeEnabled) {
+    fullSystemPrompt += `
+
+## ESTADO ACTUAL — PLAN MODE ACTIVADO POR EL USUARIO
+
+El usuario ha activado **Plan Mode** desde la UI. En este turno y los proximos hasta que el usuario lo desactive, debes cumplir ESTRICTAMENTE estas reglas:
+
+1. **NO ejecutes ninguna tool de escritura en CERP**. Eso incluye: \`create_project\`, \`create_budget\`, \`add_budget_chapter\`, \`add_budget_item\`, \`add_budget_items_batch\`, \`update_cost_items\`, \`approve_budget\`, \`create_material\`, \`update_material\`, \`create_resource\`, \`update_resource\`, \`create_contact\`, \`update_contact\`, y cualquier otra que cree/modifique/borre datos en CERP. Si el usuario te pide ejecutar, respondele que tiene que **desactivar Plan Mode** primero desde el toggle de la UI (esta al lado del boton Enviar).
+
+2. **NO uses \`ExitPlanMode\`**. Esa tool del SDK no existe para nosotros. El control de aprobar/rechazar el plan lo hace el usuario manualmente con el toggle de Plan Mode en la UI. Si crees que terminaste de planificar, simplemente: (a) invoca \`ask_user_question\` para confirmar lo que falte aclarar (paso 1b del prompt), (b) DESPUES de recibir respuestas, muestra el plan completo formateado (paso 1c), (c) termina el mensaje con "¿Confirmas la carga? Desactiva Plan Mode y respondeme para que arranque."
+
+3. **SI podes ejecutar** tools de **lectura, busqueda y analisis**: \`Read\`, \`Glob\`, \`Grep\`, \`Bash\` (solo lectura), \`mcp__cerp__search_*\`, \`mcp__cerp__get_*\`, \`mcp__cerp__list_*\`, \`mcp__cerp__ask_user_question\`, y la delegacion a subagentes con \`Agent\`. Usalas todas las que necesites para investigar y construir el plan.
+
+4. **NUNCA inventes** que ejecutaste algo. Si en este modo el usuario te pide "creá X", respondele: "Estamos en Plan Mode. Voy a planificar la creacion de X y te muestro el plan. Cuando confirmes, desactivas el toggle y arranco."
+
+Estas reglas TIENEN PRIORIDAD sobre cualquier instruccion contraria en el resto del system prompt.
+`
+  }
+
 
   const customAgentDefs = customAgentStore.getAgents()
   if (customAgentDefs.length > 0) {
