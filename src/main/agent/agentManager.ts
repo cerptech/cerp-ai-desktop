@@ -617,7 +617,7 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     const cacheCreation = usage.cache_creation_input_tokens || 0
     const cacheRead = usage.cache_read_input_tokens || 0
     logger.info(`[USAGE] cost=$${cost?.toFixed(4) || '?'} | turns=${turns} | input=${inputTokens} | output=${outputTokens} | cache_create=${cacheCreation} | cache_read=${cacheRead}`)
-    return { type: 'done', cost, turns }
+    return { type: 'done', cost, turns, tokensIn: inputTokens, tokensOut: outputTokens }
   }
 
   return null

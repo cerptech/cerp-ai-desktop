@@ -27,7 +27,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
-  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sessionCost, sessionTokensIn, sessionTokensOut, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const [input, setInput] = useState('')
@@ -123,6 +123,18 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       onAgentActivity('orchestrator', messages.length > 0 ? 'done' : 'idle')
     }
   }, [activeAgentDelegation, isStreaming, activeTool, messages.length, onAgentActivity])
+
+  // Format cost: 4 decimals if < $0.01, otherwise 2 decimals
+  const formatCost = (usd: number): string => {
+    if (usd === 0) return '$0.0000'
+    return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`
+  }
+
+  // Format token count: raw if < 1000, else "X.Xk"
+  const formatTokens = (n: number): string => {
+    if (n < 1000) return String(n)
+    return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  }
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
@@ -393,9 +405,23 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
         </form>
 
         <div className="mt-2 flex items-center justify-between">
-          <span className="text-[10px] text-slate-300">
-            v{appVersion}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-300">
+              v{appVersion}
+            </span>
+            {(sessionCost > 0 || sessionTokensIn > 0 || sessionTokensOut > 0) && (
+              <>
+                <span className="text-[10px] text-slate-300">·</span>
+                <span className="text-[10px] text-slate-400" title="Costo acumulado de la sesion">
+                  Sesion: {formatCost(sessionCost)}
+                </span>
+                <span className="text-[10px] text-slate-300">·</span>
+                <span className="text-[10px] text-slate-400" title={`Tokens: ${sessionTokensIn} entrada + ${sessionTokensOut} salida`}>
+                  {formatTokens(sessionTokensIn + sessionTokensOut)} tokens
+                </span>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             {planMode && (
               <span className="text-xs font-medium text-amber-600 flex items-center gap-1">

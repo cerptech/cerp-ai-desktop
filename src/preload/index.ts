@@ -46,7 +46,7 @@ export type AgentStreamEvent =
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
-  | { type: 'done'; cost?: number; turns?: number; duration?: number }
+  | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   | { type: 'error'; message: string }
 
 export interface AuthState {
