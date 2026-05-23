@@ -46,6 +46,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   const restoreMessagesRef = useRef<((msgs: ChatMessage[]) => void) | null>(null)
   const clearMessagesRef = useRef<(() => void) | null>(null)
   const chatStateRef = useRef<ChatStateSnapshot | null>(null)
+  // Ref for the sidebar search input — used by Ctrl/Cmd+K shortcut in ChatContainer
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleAgentActivity = (agentName: string, status: 'active' | 'done' | 'idle') => {
     if (status === 'active') {
@@ -184,6 +186,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
           onDeleteConversation={handleDeleteConversation}
+          searchInputRef={searchInputRef}
         />
         <ChatContainer
           userName={userName}
@@ -194,6 +197,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           restoreMessagesRef={restoreMessagesRef}
           clearMessagesRef={clearMessagesRef}
           chatStateRef={chatStateRef}
+          searchInputRef={searchInputRef}
         />
       </div>
 

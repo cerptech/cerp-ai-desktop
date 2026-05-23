@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, type MutableRefObject } from 'react'
 import type { ConversationSummary } from '../../../../preload/index'
 import { AGENTS } from '@/components/agents/agentConfig'
 
@@ -11,6 +11,8 @@ interface ConversationPanelProps {
   onSelectConversation: (id: string) => void
   onNewConversation: () => void
   onDeleteConversation: (id: string) => void
+  /** Ref that external callers can use to focus the search input (e.g. Ctrl+K) */
+  searchInputRef?: MutableRefObject<HTMLInputElement | null>
 }
 
 function formatRelativeDate(dateStr: string): string {
@@ -42,6 +44,7 @@ export function ConversationPanel({
   onSelectConversation,
   onNewConversation,
   onDeleteConversation,
+  searchInputRef,
 }: ConversationPanelProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -122,6 +125,7 @@ export function ConversationPanel({
               <path d="m21 21-4.3-4.3" />
             </svg>
             <input
+              ref={searchInputRef}
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}

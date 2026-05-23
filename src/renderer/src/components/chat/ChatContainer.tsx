@@ -7,6 +7,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
 import { useToast } from '@/hooks/useToast'
 import { usePlanMode } from '@/hooks/usePlanMode'
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -24,9 +25,11 @@ interface ChatContainerProps {
   restoreMessagesRef?: MutableRefObject<((msgs: ChatMessage[]) => void) | null>
   clearMessagesRef?: MutableRefObject<(() => void) | null>
   chatStateRef?: MutableRefObject<ChatStateSnapshot | null>
+  /** Ref to the sidebar search input — used by Ctrl/Cmd+K to focus it */
+  searchInputRef?: MutableRefObject<HTMLInputElement | null>
 }
 
-export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
+export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef, searchInputRef }: ChatContainerProps) {
   const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
@@ -124,6 +127,21 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     }
   }, [activeAgentDelegation, isStreaming, activeTool, messages.length, onAgentActivity])
 
+  // --- Textarea autoresize ---
+  // Technique: set height to 'auto' first so shrinkage works, then to scrollHeight.
+  // Max height is capped at ~8 lines via CSS max-height on the textarea.
+  const adjustTextareaHeight = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
+
+  // Reset height when input is programmatically cleared (e.g. after submit)
+  useEffect(() => {
+    if (input === '' && inputRef.current) {
+      inputRef.current.style.height = 'auto'
+    }
+  }, [input])
+
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
     const trimmed = input.trim()
@@ -132,17 +150,23 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     sendPrompt(trimmed, cwd || undefined, activeContextId || undefined)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit()
+      return
     }
-    if (e.key === 'Escape' && isStreaming) {
-      abort()
+    if (e.key === 'Escape') {
+      if (isStreaming) {
+        abort()
+      } else if (input.trim()) {
+        setInput('')
+      }
+      return
     }
   }
 
-  // Global Escape key to abort
+  // Global Escape key to abort (covers cases where textarea is not focused)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && isStreaming) {
@@ -166,12 +190,20 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     if (folder) setCwd(folder)
   }
 
-  const handleNewConversation = async () => {
+  const handleNewConversation = useCallback(async () => {
     await window.cerpAPI.resetSession()
     clearMessages()
     setCwd(null)
     onNewConversation()
-  }
+  }, [clearMessages, onNewConversation])
+
+  // --- Global keyboard shortcuts (Ctrl/Cmd+N, Ctrl/Cmd+K) ---
+  // Must come after handleNewConversation so the stable callback reference is ready.
+  useKeyboardShortcuts({
+    onNewConversation: handleNewConversation,
+    searchInputRef,
+    chatInputRef: inputRef,
+  })
 
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault()
@@ -327,14 +359,18 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                adjustTextareaHeight(e.target)
+              }}
               onKeyDown={handleKeyDown}
               placeholder={
                 cwd
                   ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}...`
                   : 'Pregunta lo que necesites...'
               }
-              rows={input.split('\n').length > 3 ? 4 : input.includes('\n') ? 2 : 1}
+              rows={1}
+              style={{ maxHeight: '192px', overflowY: 'auto' }}
               className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50"
               disabled={isStreaming}
             />
@@ -391,6 +427,13 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             </Button>
           )}
         </form>
+
+        {/* Keyboard hint — visible only when not streaming */}
+        {!isStreaming && (
+          <p className="mt-1 text-[10px] text-slate-400 select-none">
+            Enter para enviar · Shift+Enter para nueva linea
+          </p>
+        )}
 
         <div className="mt-2 flex items-center justify-between">
           <span className="text-[10px] text-slate-300">
