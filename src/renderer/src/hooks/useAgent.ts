@@ -5,7 +5,7 @@ export interface ToolExecution {
   name: string
   input?: string
   output?: string
-  status: 'running' | 'done'
+  status: 'running' | 'done' | 'error'
   timestamp: number
   startTime: number
   endTime?: number
@@ -188,14 +188,21 @@ export function useAgent() {
           currentDelegationRef.current = null
           break
         }
-        case 'error':
+        case 'error': {
           setError((event as { type: 'error'; message: string }).message)
           setIsStreaming(false)
           setIsPending(false)
           setActiveTool(null)
           setActiveAgentDelegation(null)
           currentDelegationRef.current = null
+          // Mark any running tools as errored
+          const now = Date.now()
+          toolsRef.current = toolsRef.current.map((t) =>
+            t.status === 'running' ? { ...t, status: 'error' as const, endTime: now } : t,
+          )
+          updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
           break
+        }
       }
     })
 

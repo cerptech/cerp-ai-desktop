@@ -69,6 +69,15 @@ function CopyMessageButton({ text }: CopyMessageButtonProps) {
 }
 
 // ---------------------------------------------------------------------------
+// StreamingCursor — blinking pipe shown at the end of streaming content
+// Uses CSS animation defined in tailwind.css (@keyframes blink-cursor).
+// ---------------------------------------------------------------------------
+
+function StreamingCursor() {
+  return <span className="streaming-cursor text-slate-500" aria-hidden="true" />
+}
+
+// ---------------------------------------------------------------------------
 // MessageBubble — main export
 // ---------------------------------------------------------------------------
 
@@ -103,7 +112,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
         {/* Copy message button (hover reveal, top-right) */}
         {showCopyButton && <CopyMessageButton text={message.content} />}
 
-        {/* Thinking loader (default during streaming) */}
+        {/* Thinking loader (default during streaming, when showThoughts is off) */}
         {showThinkingLoader && (
           <ThinkingLoader
             onToggleDetails={onToggleThoughts}
@@ -112,7 +121,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
           />
         )}
 
-        {/* Detailed tool executions (opt-in during streaming, always after) */}
+        {/* Detailed tool executions (opt-in via showThoughts) */}
         {showToolDetails && (
           <div>
             {isStreaming && onToggleThoughts && (
@@ -120,10 +129,12 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
                 onClick={onToggleThoughts}
                 className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors mb-1"
               >
+                {/* Fix #9: "Ocultar detalles" when expanded */}
                 Ocultar detalles
               </button>
             )}
-            <ToolExecutions tools={message.tools!} />
+            {/* Fix #1/#5/#6: pass isStreaming so ToolExecutions knows if agent is still active */}
+            <ToolExecutions tools={message.tools!} isStreaming={isStreaming} />
           </div>
         )}
 
@@ -135,20 +146,25 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
           </div>
         )}
 
-        {/* Collapsed tool summary when hidden */}
+        {/* Collapsed tool summary when panel is closed and not streaming */}
         {hasTools && !showThinkingLoader && !showToolDetails && !isStreaming && (
           <button
             onClick={onToggleThoughts}
             className="text-[10px] text-slate-400 hover:text-slate-500 transition-colors mb-2 flex items-center gap-1"
           >
-            <span className="text-emerald-500">&#10003;</span>
-            {message.tools!.length} paso{message.tools!.length > 1 ? 's' : ''}
+            <span className="text-success">&#10003;</span>
+            {/* Fix #9: consistent label */}
+            {message.tools!.length} paso{message.tools!.length > 1 ? 's' : ''} · Ver detalles
           </button>
         )}
 
         {/* Message content with markdown */}
         {message.content && (
-          <MarkdownContent content={message.content} />
+          <div className="relative">
+            <MarkdownContent content={message.content} />
+            {/* Fix #7: blinking cursor at end of streaming content */}
+            {isStreaming && <StreamingCursor />}
+          </div>
         )}
       </div>
     </div>

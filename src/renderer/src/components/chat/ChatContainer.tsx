@@ -313,17 +313,24 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                 />
               )
             })}
-            {/* Thinking indicator — shown when pending (before first event) or streaming without
-                an assistant bubble that already displays its own loader */}
+            {/* Fix #8: Persistent "Trabajando..." bubble — always visible while agent is active.
+                The standalone bubble is suppressed ONLY when the ThinkingLoader is already
+                rendered inside the last assistant bubble (i.e. streaming=true, showThoughts=false,
+                and the assistant has tools but no text content yet — that's the one case where
+                the inner loader is sufficient).  In every other streaming state this bubble
+                must remain visible so the user always has a clear activity indicator. */}
             {(isPending || isStreaming) && (() => {
               const lastMsg = messages[messages.length - 1]
               const noAssistantYet = !lastMsg || lastMsg.role !== 'assistant'
-              const assistantHasContent = lastMsg?.role === 'assistant' && lastMsg.content
-              // Show standalone loader when:
-              //   1. We are in the pending window before the first stream event, OR
-              //   2. Streaming is active but no assistant bubble is being rendered yet, OR
-              //   3. Assistant already has text content but is still working in the background
-              if (isPending || noAssistantYet || assistantHasContent) {
+              const lastHasTools = (lastMsg?.role === 'assistant' && (lastMsg.tools?.length ?? 0) > 0)
+              const lastHasContent = lastMsg?.role === 'assistant' && !!lastMsg.content
+              // The inner ThinkingLoader IS visible when:
+              //   - streaming is active
+              //   - showThoughts is off (the thought panel is collapsed)
+              //   - the assistant bubble has tools OR has no content yet
+              const innerLoaderVisible = isStreaming && !showThoughts && (lastHasTools || !lastHasContent)
+              // Show standalone loader in every case EXCEPT when the inner loader already covers it
+              if (!innerLoaderVisible || isPending || noAssistantYet) {
                 return (
                   <div className="flex justify-start mb-4">
                     <div className="rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-2 shadow-sm">

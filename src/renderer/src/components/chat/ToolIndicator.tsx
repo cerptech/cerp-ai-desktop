@@ -2,79 +2,16 @@ import { useState, useEffect } from 'react'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { AGENTS } from '@/components/agents/agentConfig'
 import type { ToolExecution } from '@/hooks/useAgent'
+import {
+  truncateMiddle,
+  getToolHumanLabel,
+  formatToolInput,
+  summarizeToolOutput,
+} from '@/utils/toolUtils'
 
-const TOOL_ICONS: Record<string, string> = {
-  Bash: 'terminal',
-  Read: 'file',
-  Write: 'pencil',
-  Edit: 'pencil',
-  Glob: 'search',
-  Grep: 'search',
-  Agent: 'agent',
-  // MCP CERP tools
-  get_company_projects: 'database',
-  get_project_details: 'database',
-  get_construction_sites: 'database',
-  search_materials: 'database',
-  get_project_cashflow: 'database',
-  get_construction_orders: 'database',
-  get_purchase_orders: 'database',
-  get_budgets: 'database',
-  get_expenses: 'database',
-  get_warehouse_stock: 'database',
-  get_resources: 'database',
-  search_contacts: 'database',
-}
-
-function getToolIcon(name: string, agentName?: string): string {
-  // For Agent delegation tools, show the agent's icon
-  if (name === 'Agent' && agentName) {
-    const agent = AGENTS.find((a) => a.name === agentName)
-    if (agent) return agent.icon
-  }
-  const key = name.replace('mcp__cerp__', '')
-  const iconType = TOOL_ICONS[key] || TOOL_ICONS[name] || 'gear'
-  const icons: Record<string, string> = {
-    terminal: '\u{25B6}',
-    file: '\u{1F4C4}',
-    pencil: '\u{270F}',
-    search: '\u{1F50D}',
-    database: '\u{1F4CA}',
-    agent: '\u{1F916}',
-    gear: '\u{2699}',
-  }
-  return icons[iconType] || icons.gear
-}
-
-function getToolLabel(name: string, agentName?: string): string {
-  if (name === 'Agent' && agentName) {
-    const agent = AGENTS.find((a) => a.name === agentName)
-    if (agent) return `Delegando a ${agent.label}`
-  }
-  const clean = name.replace('mcp__cerp__', '')
-  const labels: Record<string, string> = {
-    Bash: 'Ejecutando comando',
-    Read: 'Leyendo archivo',
-    Write: 'Escribiendo archivo',
-    Edit: 'Editando archivo',
-    Glob: 'Buscando archivos',
-    Grep: 'Buscando en contenido',
-    Agent: 'Delegando a agente',
-    get_company_projects: 'Consultando proyectos CERP',
-    get_project_details: 'Detalle de proyecto CERP',
-    get_construction_sites: 'Consultando obras CERP',
-    search_materials: 'Buscando materiales CERP',
-    get_project_cashflow: 'Cashflow CERP',
-    get_construction_orders: 'Ordenes de construccion CERP',
-    get_purchase_orders: 'Ordenes de compra CERP',
-    get_budgets: 'Presupuestos CERP',
-    get_expenses: 'Gastos CERP',
-    get_warehouse_stock: 'Inventario CERP',
-    get_resources: 'Recursos CERP',
-    search_contacts: 'Contactos CERP',
-  }
-  return labels[clean] || labels[name] || clean.replace(/_/g, ' ')
-}
+// ---------------------------------------------------------------------------
+// Elapsed time counter (only used while a tool is running)
+// ---------------------------------------------------------------------------
 
 function formatDuration(ms: number): string {
   const secs = ms / 1000
@@ -94,88 +31,201 @@ function ElapsedTime({ startTime }: { startTime: number }) {
   return <span className="text-[10px] text-slate-400 ml-2">{formatDuration(elapsed)}</span>
 }
 
-interface ToolExecutionsProps {
-  tools: ToolExecution[]
-}
+// ---------------------------------------------------------------------------
+// Step status icons
+// ---------------------------------------------------------------------------
 
-export function ToolExecutions({ tools }: ToolExecutionsProps) {
-  const [expanded, setExpanded] = useState(false)
-
-  if (!tools.length) return null
-
-  const running = tools.filter((t) => t.status === 'running')
-  const done = tools.filter((t) => t.status === 'done')
-
+function StepStatusIcon({ status }: { status: ToolExecution['status'] }) {
+  if (status === 'running') {
+    return <LoadingSpinner size="sm" />
+  }
+  if (status === 'error') {
+    return (
+      <svg
+        className="w-4 h-4 text-error shrink-0"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        aria-label="Error"
+      >
+        <path
+          fillRule="evenodd"
+          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+          clipRule="evenodd"
+        />
+      </svg>
+    )
+  }
+  // done
   return (
-    <div className="mb-3 text-xs">
-      {/* Active tools */}
-      {running.map((tool, i) => (
-        <div key={`r-${i}`} className="flex items-start gap-2 py-1.5 text-brand-orange">
-          <LoadingSpinner size="sm" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1">
-              <span className="font-medium">{getToolLabel(tool.name, tool.agentName)}</span>
-              <ElapsedTime startTime={tool.startTime} />
-            </div>
-            {tool.input && (
-              <div className="mt-0.5 font-mono text-[11px] text-slate-500 bg-slate-50 rounded px-2 py-1 truncate max-w-[400px]">
-                {tool.input}
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-
-      {/* Completed tools - collapsible */}
-      {done.length > 0 && (
-        <div className="mt-1">
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="flex items-center gap-1.5 py-1 text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <span className={`text-[10px] transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}>&#9654;</span>
-            <span className="text-emerald-500 text-[10px]">&#10003;</span>
-            <span>{done.length} paso{done.length > 1 ? 's' : ''} completado{done.length > 1 ? 's' : ''}</span>
-          </button>
-
-          {expanded && (
-            <div className="ml-4 mt-1 border-l border-slate-200 pl-3 space-y-1.5">
-              {done.map((tool, i) => (
-                <ToolStep key={i} tool={tool} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <svg
+      className="w-4 h-4 text-success shrink-0"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-label="Completado"
+    >
+      <path
+        fillRule="evenodd"
+        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+        clipRule="evenodd"
+      />
+    </svg>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Individual step row (used in expanded list)
+// ---------------------------------------------------------------------------
 
 function ToolStep({ tool }: { tool: ToolExecution }) {
   const [showOutput, setShowOutput] = useState(false)
   const duration = tool.endTime && tool.startTime ? tool.endTime - tool.startTime : null
 
+  // Resolve agent name for Agent delegation tools
+  const resolvedAgentName = tool.name === 'Agent' && tool.agentName
+    ? (AGENTS.find((a) => a.name === tool.agentName)?.label ?? tool.agentName)
+    : undefined
+
+  const label = resolvedAgentName
+    ? `Delegando a ${resolvedAgentName}`
+    : getToolHumanLabel(tool.name, tool.agentName)
+
+  const inputFormatted = formatToolInput(tool.name, tool.input)
+  const outputSummary =
+    tool.status !== 'running' ? summarizeToolOutput(tool.name, tool.output) : null
+
+  const labelColor =
+    tool.status === 'error'
+      ? 'text-error'
+      : tool.status === 'running'
+        ? 'text-brand-orange'
+        : 'text-slate-600'
+
   return (
     <div>
       <button
         onClick={() => tool.output && setShowOutput(!showOutput)}
-        className={`flex items-start gap-2 text-left ${tool.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} text-slate-500 transition-colors`}
+        className={`flex items-start gap-2 text-left w-full ${tool.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors`}
+        title={inputFormatted?.tooltip}
       >
-        <span className="shrink-0 mt-0.5">{getToolIcon(tool.name, tool.agentName)}</span>
+        {/* Status icon */}
+        <span className="shrink-0 mt-0.5">
+          <StepStatusIcon status={tool.status} />
+        </span>
+
         <div className="min-w-0 flex-1">
-          <span className="font-medium text-slate-600">{getToolLabel(tool.name, tool.agentName)}</span>
-          {duration !== null && (
-            <span className="text-[10px] text-slate-400 ml-1.5">{formatDuration(duration)}</span>
+          {/* Label row */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className={`text-xs font-medium ${labelColor}`}>{label}</span>
+            {duration !== null && (
+              <span className="text-[10px] text-slate-400">{formatDuration(duration)}</span>
+            )}
+            {tool.status === 'running' && <ElapsedTime startTime={tool.startTime} />}
+          </div>
+
+          {/* Input hint */}
+          {inputFormatted && (
+            <span
+              className="block mt-0.5 font-mono text-[11px] text-slate-400 truncate max-w-[380px]"
+              title={inputFormatted.tooltip ?? inputFormatted.display}
+            >
+              {inputFormatted.display}
+            </span>
           )}
-          {tool.input && (
-            <span className="ml-1.5 font-mono text-slate-400 truncate">{tool.input.substring(0, 80)}</span>
+
+          {/* Output summary (only for done/error steps) */}
+          {outputSummary && (
+            <span className="block mt-0.5 text-[10px] text-slate-400 italic">
+              {outputSummary}
+            </span>
           )}
         </div>
       </button>
+
+      {/* Expandable raw output */}
       {showOutput && tool.output && (
         <pre className="mt-1 ml-6 p-2 bg-slate-900 text-slate-300 rounded-md text-[10px] font-mono overflow-x-auto max-h-40 overflow-y-auto leading-relaxed">
           {tool.output}
         </pre>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ToolExecutions — main export
+// ---------------------------------------------------------------------------
+
+interface ToolExecutionsProps {
+  tools: ToolExecution[]
+  /** True when the parent agent is still streaming (used for fix #6) */
+  isStreaming?: boolean
+}
+
+export function ToolExecutions({ tools, isStreaming }: ToolExecutionsProps) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (!tools.length) return null
+
+  const running = tools.filter((t) => t.status === 'running')
+  const finished = tools.filter((t) => t.status !== 'running') // done + error
+  const errorCount = tools.filter((t) => t.status === 'error').length
+
+  return (
+    <div className="mb-3 text-xs">
+      {/* Active tools */}
+      {running.map((tool, i) => (
+        <div key={`r-${i}`} className="flex items-start gap-2 py-1.5">
+          <ToolStep tool={tool} />
+        </div>
+      ))}
+
+      {/* Finished tools — collapsible summary */}
+      {finished.length > 0 && (
+        <div className="mt-1">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-1.5 py-1 text-slate-400 hover:text-slate-600 transition-colors"
+          >
+            <span
+              className={`text-[10px] transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+            >
+              &#9654;
+            </span>
+
+            {/* Fix #6: while still streaming, show "working" indicator not green check */}
+            {isStreaming ? (
+              <>
+                <LoadingSpinner size="sm" />
+                <span>
+                  {finished.length} paso{finished.length > 1 ? 's' : ''} · trabajando...
+                </span>
+              </>
+            ) : errorCount > 0 ? (
+              <>
+                <span className="text-error text-[10px]">&#10007;</span>
+                <span>
+                  {finished.length} paso{finished.length > 1 ? 's' : ''} completado{finished.length > 1 ? 's' : ''}
+                  {' '}({errorCount} error{errorCount > 1 ? 'es' : ''})
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="text-success text-[10px]">&#10003;</span>
+                <span>
+                  {finished.length} paso{finished.length > 1 ? 's' : ''} completado{finished.length > 1 ? 's' : ''}
+                </span>
+              </>
+            )}
+          </button>
+
+          {expanded && (
+            <div className="ml-4 mt-1 border-l border-slate-200 pl-3 space-y-1.5">
+              {finished.map((tool, i) => (
+                <ToolStep key={i} tool={tool} />
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
