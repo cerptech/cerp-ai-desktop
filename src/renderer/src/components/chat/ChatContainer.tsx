@@ -28,10 +28,12 @@ interface ChatContainerProps {
   chatStateRef?: MutableRefObject<ChatStateSnapshot | null>
   /** Ref to the sidebar search input — used by Ctrl/Cmd+K to focus it */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
+  /** Notifies the parent when the agent session goes active/idle (for the header badge). */
+  onSessionActiveChange?: (active: boolean) => void
 }
 
-export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef, searchInputRef }: ChatContainerProps) {
-  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sessionCost, sessionTokensIn, sessionTokensOut, pendingQuestions, isSubmittingAnswers, sendPrompt, abort, submitAnswers, clearMessages, restoreMessages } = useAgent()
+export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef, searchInputRef, onSessionActiveChange }: ChatContainerProps) {
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, pendingQuestions, isSubmittingAnswers, sendPrompt, abort, submitAnswers, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const [input, setInput] = useState('')
@@ -85,6 +87,11 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     }
   })
 
+  // Notify parent when the session goes active/idle — drives the header badge.
+  useEffect(() => {
+    onSessionActiveChange?.(isStreaming || isPending || !!pendingQuestions)
+  }, [isStreaming, isPending, pendingQuestions, onSessionActiveChange])
+
   // Sync completed messages to backend (fire-and-forget)
   const prevMessageCountRef = useRef(0)
   useEffect(() => {
@@ -127,18 +134,6 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       onAgentActivity('orchestrator', messages.length > 0 ? 'done' : 'idle')
     }
   }, [activeAgentDelegation, isStreaming, activeTool, messages.length, onAgentActivity])
-
-  // Format cost: 4 decimals if < $0.01, otherwise 2 decimals
-  const formatCost = (usd: number): string => {
-    if (usd === 0) return '$0.0000'
-    return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`
-  }
-
-  // Format token count: raw if < 1000, else "X.Xk"
-  const formatTokens = (n: number): string => {
-    if (n < 1000) return String(n)
-    return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
-  }
 
   // --- Textarea autoresize ---
   // Technique: set height to 'auto' first so shrinkage works, then to scrollHeight.
@@ -260,7 +255,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             <path d="M9 11l3 3L22 4" />
             <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
           </svg>
-          <span className="font-medium">Plan Mode activo</span>
+          <span className="font-medium">Modo plan activo</span>
           <span className="text-amber-500">— el agente planificara sin ejecutar acciones de escritura. Desactivalo para continuar con la ejecucion.</span>
         </div>
       )}
@@ -405,8 +400,8 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                   : 'Pregunta lo que necesites...'
               }
               rows={1}
-              style={{ maxHeight: '192px', overflowY: 'auto' }}
-              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50 disabled:bg-slate-50 disabled:text-slate-400"
+              style={{ maxHeight: '192px', overflowY: 'auto', minHeight: '44px' }}
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50 disabled:bg-slate-50 disabled:text-slate-400"
               disabled={isStreaming || !!pendingQuestions}
             />
           </div>
@@ -414,7 +409,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
           <button
             type="button"
             onClick={handleSelectFolder}
-            className={`p-2.5 rounded-lg border transition-colors ${cwd ? 'border-brand-orange/30 bg-orange-50 text-brand-orange' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+            className={`h-11 w-11 inline-flex items-center justify-center rounded-lg border transition-colors ${cwd ? 'border-brand-orange/30 bg-orange-50 text-brand-orange' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
             title="Seleccionar carpeta de trabajo"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -427,29 +422,29 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             type="button"
             onClick={togglePlanMode}
             aria-pressed={planMode}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-all ${
+            className={`h-11 inline-flex items-center gap-1.5 px-3 rounded-lg border text-sm font-medium transition-all ${
               planMode
                 ? 'border-amber-500 bg-amber-100 text-amber-800 ring-2 ring-amber-300 shadow-sm'
                 : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'
             }`}
             title={
               planMode
-                ? 'Plan Mode ACTIVO — el agente solo planifica, no ejecuta. Click para desactivar.'
-                : 'Activar Plan Mode — el agente planifica con solo lectura antes de ejecutar acciones.'
+                ? 'Modo plan ACTIVO — el agente solo planifica, no ejecuta. Click para desactivar.'
+                : 'Activar Modo plan — el agente planifica con solo lectura antes de ejecutar acciones.'
             }
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 11l3 3L22 4" />
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
-            <span>Plan Mode{planMode ? ' · ON' : ''}</span>
+            <span>Modo plan{planMode ? ' · ON' : ''}</span>
           </button>
 
           {isStreaming ? (
             <button
               onClick={abort}
               type="button"
-              className="p-2.5 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors"
+              className="h-11 w-11 inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors"
               title="Detener ejecucion (Esc)"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -457,42 +452,19 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
               </svg>
             </button>
           ) : (
-            <Button type="submit" disabled={!input.trim()}>
+            <Button type="submit" disabled={!input.trim()} className="h-11">
               Enviar
             </Button>
           )}
         </form>
 
-        {/* Keyboard hint — visible only when not streaming */}
-        {!isStreaming && (
-          <p className="mt-1 text-[10px] text-slate-400 select-none">
-            Enter para enviar · Shift+Enter para nueva linea
-          </p>
-        )}
-
         <div className="mt-2 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-300">
-              v{appVersion}
-            </span>
-            {(sessionCost > 0 || sessionTokensIn > 0 || sessionTokensOut > 0) && (
-              <>
-                <span className="text-[10px] text-slate-300">·</span>
-                <span className="text-[10px] text-slate-400" title="Costo acumulado de la sesion">
-                  Sesion: {formatCost(sessionCost)}
-                </span>
-                <span className="text-[10px] text-slate-300">·</span>
-                <span className="text-[10px] text-slate-400" title={`Tokens: ${sessionTokensIn} entrada + ${sessionTokensOut} salida`}>
-                  {formatTokens(sessionTokensIn + sessionTokensOut)} tokens
-                </span>
-              </>
-            )}
-          </div>
+          <span className="text-[10px] text-slate-300">v{appVersion}</span>
           <div className="flex items-center gap-3">
             {planMode && (
               <span className="text-xs font-medium text-amber-600 flex items-center gap-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                Plan Mode
+                Modo plan
               </span>
             )}
             {messages.length > 0 && (
