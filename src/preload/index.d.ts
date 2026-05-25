@@ -94,7 +94,7 @@ interface CerpAPI {
   login(): Promise<AuthState>
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
-  sendPrompt(payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string }): Promise<{ started: boolean; error?: string }>
+  sendPrompt(payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }>
   abortAgent(): Promise<void>
   resetSession(): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>

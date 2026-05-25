@@ -106,7 +106,7 @@ const api = {
   getAuthStatus: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_GET_STATUS),
 
   // Agent
-  sendPrompt: (payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string }): Promise<{ started: boolean; error?: string }> =>
+  sendPrompt: (payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
   abortAgent: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT),
   resetSession: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION),

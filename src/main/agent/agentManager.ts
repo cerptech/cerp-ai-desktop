@@ -206,7 +206,13 @@ async function startSession(
 
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
   const contextPrompt = await buildContextPrompt(httpClient)
-  const fullSystemPrompt = buildFullSystemPrompt(contextPrompt, contextId, payload.activeContextId, planModeEnabled)
+  const fullSystemPrompt = buildFullSystemPrompt(
+    contextPrompt,
+    contextId,
+    payload.activeContextId,
+    planModeEnabled,
+    payload.conversationHistory,
+  )
 
   // Build subagent definitions (with model overrides for cost optimization)
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
@@ -432,8 +438,41 @@ async function processStreamLoop(): Promise<void> {
 // System prompt building
 // ============================================================
 
-function buildFullSystemPrompt(contextPrompt: string, contextId: string | null, activeContextId?: string, planModeEnabled = false): string {
+function buildFullSystemPrompt(
+  contextPrompt: string,
+  contextId: string | null,
+  activeContextId?: string,
+  planModeEnabled = false,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+): string {
   let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
+
+  // Conversation history (passed by renderer when starting a NEW SDK session
+  // — Plan Mode toggle closes the session, restored conversations also reset
+  // it). Re-injecting the prior messages keeps the model coherent across
+  // session boundaries.
+  if (conversationHistory && conversationHistory.length > 0) {
+    fullSystemPrompt += `
+
+## HISTORIAL DE LA CONVERSACION ACTUAL
+
+Esta sesion del SDK acaba de iniciarse pero la conversacion con el usuario ya tiene contexto previo. Estos son los mensajes anteriores entre el usuario y vos (el agente). Usalos como contexto para continuar coherente:
+
+`
+    for (const msg of conversationHistory) {
+      const speaker = msg.role === 'user' ? '**Usuario**' : '**Agente (vos)**'
+      // Cap each message to keep the prompt bounded — long pasted budget
+      // tables don't help, we just need the gist.
+      const content = msg.content.length > 4000
+        ? msg.content.slice(0, 4000) + '\n\n[...mensaje truncado...]'
+        : msg.content
+      fullSystemPrompt += `\n${speaker}:\n${content}\n\n---\n`
+    }
+    fullSystemPrompt += `
+Continua la conversacion respondiendo al ULTIMO mensaje del usuario teniendo en cuenta TODO lo que paso antes. Si el usuario dice algo como "confirmo" o "si" o "dale", interpretalo en el contexto del plan / pregunta inmediatamente anterior — NO le digas "no tengo contexto".
+`
+  }
+
 
   // Plan Mode directive — injected when the user toggles "Plan Mode" in the UI.
   // We don't use the SDK's permissionMode:'plan' because that auto-injects

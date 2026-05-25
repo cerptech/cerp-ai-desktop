@@ -54,6 +54,10 @@ export function useAgent() {
   // round-trips so the agent's new turn doesn't overwrite the context that
   // preceded the widget.
   const needsNewAssistantRef = useRef(false)
+  // Live mirror of `messages` — sendPrompt snapshots this without depending
+  // on the `messages` state in useCallback deps (which would re-create the
+  // callback on every keystroke that changes the chat).
+  const messagesRef = useRef<ChatMessage[]>([])
 
   const updateLastAssistant = useCallback((updater: (msg: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
@@ -71,6 +75,12 @@ export function useAgent() {
       return [...prev, updater(newMsg)]
     })
   }, [])
+
+  // Keep messagesRef in sync with messages — used by sendPrompt to snapshot
+  // history without re-creating the callback on every chat update.
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   // Phase 1: Fallback timer to force-reset isStreaming after 30s of inactivity
   useEffect(() => {
@@ -296,13 +306,25 @@ export function useAgent() {
     currentDelegationRef.current = null
     toolsRef.current = []
 
+    // Snapshot history BEFORE we append the new user message — we want the
+    // main process to inject the prior turns into the system prompt only if
+    // it starts a fresh SDK session (Plan Mode toggle, restored conversation
+    // or cwd/context change). When the SDK session is already open, the main
+    // process ignores conversationHistory because the SDK already has it.
+    const history = messagesRef.current.map((m) => ({ role: m.role, content: m.content }))
+
     setMessages((prev) => [...prev, {
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
     }])
 
-    const result = await window.cerpAPI.sendPrompt({ prompt, cwd, activeContextId })
+    const result = await window.cerpAPI.sendPrompt({
+      prompt,
+      cwd,
+      activeContextId,
+      conversationHistory: history,
+    })
     if (!result.started) {
       setError(result.error || 'No se pudo iniciar la consulta')
       setIsStreaming(false)
@@ -327,6 +349,25 @@ export function useAgent() {
    */
   const submitAnswers = useCallback(async (answers: UserAnswerPayload) => {
     if (!pendingQuestions) return
+
+    // Audit trail: append a user message with the formatted answers so the
+    // conversation has a record of what the user chose in the widget.
+    // Otherwise the widget disappears and the agent's next turn replies into
+    // the void — no record of the decisions for review or screenshots.
+    const echoLines = pendingQuestions.map((q) => {
+      const ans = answers[q.question]
+      const ansText = Array.isArray(ans) ? ans.join(', ') : (ans ?? '(sin respuesta)')
+      return `- **${q.header}**: ${ansText}`
+    }).join('\n')
+    const echoContent = pendingQuestions.length === 1
+      ? `Respuesta: ${echoLines.replace(/^- \*\*[^*]+\*\*: /, '')}`
+      : `Respondí:\n${echoLines}`
+    setMessages((prev) => [...prev, {
+      role: 'user',
+      content: echoContent,
+      timestamp: Date.now(),
+    }])
+
     setIsSubmittingAnswers(true)
     // Re-arm activity indicators so the user sees a "trabajando..." state in the
     // window between closing the widget and the agent's next text event.

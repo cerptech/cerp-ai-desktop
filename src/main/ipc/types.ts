@@ -1,3 +1,8 @@
+export interface ConversationHistoryEntry {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface SendPromptPayload {
   prompt: string
   sessionId?: string
@@ -5,6 +10,13 @@ export interface SendPromptPayload {
   maxTurns?: number
   maxBudgetUsd?: number
   activeContextId?: string
+  /**
+   * Renderer-side conversation history. The main process inlines it into the
+   * system prompt when starting a NEW SDK session, so model context survives
+   * events that close the session (Plan Mode toggle, restored conversation,
+   * cwd or context change). Ignored when the session is already open.
+   */
+  conversationHistory?: ConversationHistoryEntry[]
 }
 
 export type AgentStreamEvent =
