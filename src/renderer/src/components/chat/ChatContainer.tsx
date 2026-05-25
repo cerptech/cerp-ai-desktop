@@ -57,7 +57,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, activeTool])
+  }, [messages, activeTool, pendingQuestions])
 
   // Expose restoreMessages and clearMessages to parent via refs
   // Wrap to also reset persistence-tracking refs on conversation switch

@@ -49,6 +49,11 @@ export function useAgent() {
   const currentDelegationRef = useRef<string | null>(null)
   // Gate to ignore stream events after a conversation switch
   const acceptingRef = useRef(true)
+  // When true, the next `text` event must START a NEW assistant message
+  // instead of updating the last one. Set after ask_user_question + answer
+  // round-trips so the agent's new turn doesn't overwrite the context that
+  // preceded the widget.
+  const needsNewAssistantRef = useRef(false)
 
   const updateLastAssistant = useCallback((updater: (msg: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
@@ -108,6 +113,11 @@ export function useAgent() {
     const unsubAsk = window.cerpAPI.onAskUserQuestion((questions) => {
       if (!acceptingRef.current) return
       setPendingQuestions(questions)
+      // The agent will start a NEW turn after the user answers. Mark the next
+      // `text` event so it appends a new assistant message instead of
+      // overwriting the last one (which has the "voy a hacerte preguntas..."
+      // context the user is reading above the widget).
+      needsNewAssistantRef.current = true
       // The agent is now "streaming" but waiting — keep isStreaming true
       // so the UI shows the waiting state correctly
     })
@@ -120,6 +130,20 @@ export function useAgent() {
 
       switch (event.type) {
         case 'text': {
+          // If a previous turn ended with ask_user_question, the next text must
+          // be a NEW assistant message so we don't overwrite the pre-widget context.
+          if (needsNewAssistantRef.current) {
+            needsNewAssistantRef.current = false
+            toolsRef.current = []
+            setMessages((prev) => [...prev, {
+              role: 'assistant',
+              content: event.text,
+              timestamp: Date.now(),
+              tools: [],
+              agentContext: currentDelegationRef.current || undefined,
+            }])
+            break
+          }
           updateLastAssistant((msg) => ({
             ...msg,
             content: event.text,
@@ -293,6 +317,7 @@ export function useAgent() {
     setActiveAgentDelegation(null)
     setPendingQuestions(null)
     setIsSubmittingAnswers(false)
+    needsNewAssistantRef.current = false
     currentDelegationRef.current = null
   }, [])
 
@@ -303,6 +328,12 @@ export function useAgent() {
   const submitAnswers = useCallback(async (answers: UserAnswerPayload) => {
     if (!pendingQuestions) return
     setIsSubmittingAnswers(true)
+    // Re-arm activity indicators so the user sees a "trabajando..." state in the
+    // window between closing the widget and the agent's next text event.
+    // Without these, isStreaming may already be false (turn done event arrived
+    // before the tool resolved) and there's a blank-screen ~1-3s gap.
+    setIsPending(true)
+    setIsStreaming(true)
     try {
       await window.cerpAPI.submitUserAnswers(answers)
       setPendingQuestions(null)
@@ -321,6 +352,7 @@ export function useAgent() {
     setActiveAgentDelegation(null)
     setPendingQuestions(null)
     setIsSubmittingAnswers(false)
+    needsNewAssistantRef.current = false
     currentDelegationRef.current = null
     toolsRef.current = []
     setSessionCost(0)
@@ -339,6 +371,7 @@ export function useAgent() {
     setActiveAgentDelegation(null)
     setPendingQuestions(null)
     setIsSubmittingAnswers(false)
+    needsNewAssistantRef.current = false
     currentDelegationRef.current = null
     toolsRef.current = []
     setSessionCost(0)

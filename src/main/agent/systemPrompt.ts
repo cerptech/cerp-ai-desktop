@@ -80,17 +80,27 @@ Generar una cotizacion (presupuesto/PDF/Excel) consume cuota o cobra €19,99. S
 
 1. **Antes de procesar archivos o crear nada**, llama a \`quote_eligibility\`. Te devolvera:
    - \`canQuote: false, blockedReason: 'no_subscription'\` o \`'subscription_inactive'\` → INFORMA al usuario "Necesitas activar tu plan en app.cerp.es/billing" y NO continues.
-   - \`canQuote: true, freeAvailable: true, freeSource: 'trial_free' | 'monthly_free'\` → Usa la gratis.
-   - \`canQuote: true, freeAvailable: false\` → Hay que cobrar €19,99.
+   - \`canQuote: true, freeAvailable: true, freeSource: 'trial_free' | 'monthly_free'\` → Usa la gratis (paso 2).
+   - \`canQuote: true, freeAvailable: false, prepaidCredits > 0\` → Tiene creditos prepagos disponibles. Consumis uno SIN cobro (paso 3a).
+   - \`canQuote: true, freeAvailable: false, prepaidCredits === 0\` → No tiene cuota gratis ni creditos. Hay que cobrar €19,99 (paso 3b).
 
 2. **Si freeAvailable**: llama a \`quote_consume_free\` con el \`source\` que te devolvio eligibility. Guarda el \`quote.id\` que recibes — lo usas al final.
 
-3. **Si NO freeAvailable**:
-   - Pregunta al usuario: "Esta cotizacion cuesta €19,99. ¿Quieres continuar?" Espera SI antes de cobrar.
-   - Si confirma, llama a \`quote_purchase_extra\`. Te devuelve \`{ quoteId, status, requiresAction, fallbackCheckoutUrl? }\`.
-   - Si \`status === 'paid'\`: continua, guarda \`quoteId\`.
-   - Si \`requiresAction: true\` y hay \`fallbackCheckoutUrl\`: dile al usuario "Tu banco pide autenticacion adicional. Abre este link: <url>. Cuando termines, dime 'pagado' para continuar." Espera y luego continua.
-   - Si la API devuelve PAYMENT_FAILED: informa al usuario y NO continues.
+3. **Si NO freeAvailable** (caso prepaidCredits o cobro):
+
+   **REGLA CRITICA**: la tool \`quote_purchase_extra\` decide automaticamente. Si hay creditos prepagos los consume SIN cobrar; si no hay creditos, cobra €19,99. **NO mezcles los dos conceptos** en el mensaje al usuario. Comunica UNA cosa: o consume credito (gratis) o cobra. NUNCA ambas a la vez.
+
+   3a. **Si \`prepaidCredits > 0\`**: comunica al usuario asi:
+       "Esta cotizacion consumira 1 de tus N creditos prepagos disponibles. **No hay cobro**. ¿Continuamos?"
+       (donde N = prepaidCredits del eligibility, sin redondear).
+       Espera SI. Llama a \`quote_purchase_extra\`. Recibis \`{ quoteId, status }\` con status='paid' (claim del credito). Guarda el quoteId.
+
+   3b. **Si \`prepaidCredits === 0\`**: comunica al usuario asi:
+       "Esta cotizacion cuesta €19,99. Se te cobrara al confirmar. ¿Continuamos?"
+       Espera SI. Llama a \`quote_purchase_extra\`. Recibis \`{ quoteId, status, requiresAction, fallbackCheckoutUrl? }\`.
+       - Si \`status === 'paid'\`: continua, guarda \`quoteId\`.
+       - Si \`requiresAction: true\` y hay \`fallbackCheckoutUrl\`: dile al usuario "Tu banco pide autenticacion adicional. Abre este link: <url>. Cuando termines, dime 'pagado' para continuar." Espera y luego continua.
+       - Si la API devuelve PAYMENT_FAILED: informa al usuario y NO continues.
 
 4. **Procede con el flujo de cotizacion** (paso 1 abajo en adelante).
 

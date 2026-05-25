@@ -290,8 +290,9 @@ export function AskUserQuestion({ questions, onAnswer, isSubmitting }: AskUserQu
         </div>
       )}
 
-      {/* Scrollable area for the current question */}
-      <div className="max-h-[55vh] overflow-y-auto pr-1">
+      {/* Scrollable area for the current question — capped so the chat above
+          (agent message that introduced the questions) stays visible. */}
+      <div className="max-h-[40vh] overflow-y-auto pr-1">
         {currentItem && (
           <QuestionCard
             key={currentItem.question}
