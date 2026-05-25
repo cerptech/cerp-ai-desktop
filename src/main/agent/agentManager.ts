@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
+import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
@@ -66,6 +67,28 @@ let sessionContextId: string | null = null
 let mainWindowRef: BrowserWindow | null = null
 let processingTurn = false
 
+// Plan Mode — when true the agent uses permissionMode:'plan' and cannot execute
+// write operations. The user reviews the plan and resumes in normal mode.
+let planModeEnabled = false
+
+export function getPlanMode(): boolean {
+  return planModeEnabled
+}
+
+/**
+ * Enable or disable Plan Mode.
+ * If a session is already open, close it so the next runAgent call applies the new mode.
+ */
+export function setPlanMode(enabled: boolean): void {
+  if (planModeEnabled === enabled) return
+  planModeEnabled = enabled
+  logger.info(`Plan Mode ${enabled ? 'enabled' : 'disabled'}`)
+  // Close the current session — the next message will start a fresh one with the updated mode
+  if (activeQuery) {
+    closeSession()
+  }
+}
+
 export function isAgentRunning(): boolean {
   return processingTurn
 }
@@ -93,6 +116,8 @@ export async function interruptAgent(): Promise<void> {
  * Close the session entirely and clean up
  */
 export function closeSession(): void {
+  // Cancel any pending ask_user_question so the MCP promise doesn't hang
+  cancelPendingQuestion()
   if (messageQueue) {
     messageQueue.close()
     messageQueue = null
@@ -107,6 +132,7 @@ export function closeSession(): void {
   sessionContextId = null
   processingTurn = false
   cachedContextPrompt = null
+  setAskUserWindow(null)
   logger.info('Session closed')
 }
 
@@ -130,6 +156,7 @@ export async function runAgent(
   mainWindow: BrowserWindow,
 ): Promise<void> {
   mainWindowRef = mainWindow
+  setAskUserWindow(mainWindow)
   const cwd = payload.cwd || app.getPath('home')
   const contextId = payload.activeContextId || null
 
@@ -179,7 +206,13 @@ async function startSession(
 
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
   const contextPrompt = await buildContextPrompt(httpClient)
-  const fullSystemPrompt = buildFullSystemPrompt(contextPrompt, contextId, payload.activeContextId)
+  const fullSystemPrompt = buildFullSystemPrompt(
+    contextPrompt,
+    contextId,
+    payload.activeContextId,
+    planModeEnabled,
+    payload.conversationHistory,
+  )
 
   // Build subagent definitions (with model overrides for cost optimization)
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
@@ -260,7 +293,12 @@ async function startSession(
       cerp: cerpMcpServer,
     },
     agents: [...builtInAgents, ...customSdkAgents],
-    allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*'],
+    allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*', 'mcp__cerp__ask_user_question'],
+    // NOTE: we never use permissionMode:'plan' because the SDK then auto-injects
+    // the ExitPlanMode tool, which conflicts with our ask_user_question flow.
+    // Instead, when planModeEnabled is true we inject a strict directive into
+    // the system prompt that forbids write tools and ExitPlanMode (see
+    // buildFullSystemPrompt). The user controls the toggle from the UI.
     permissionMode: 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
     maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
@@ -269,7 +307,7 @@ async function startSession(
     effort: 'high',
   }
 
-  logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd})`)
+  logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd}, planMode: ${planModeEnabled})`)
 
   // Create persistent message queue — keeps the session alive between turns
   messageQueue = new MessageQueue()
@@ -400,8 +438,64 @@ async function processStreamLoop(): Promise<void> {
 // System prompt building
 // ============================================================
 
-function buildFullSystemPrompt(contextPrompt: string, contextId: string | null, activeContextId?: string): string {
+function buildFullSystemPrompt(
+  contextPrompt: string,
+  contextId: string | null,
+  activeContextId?: string,
+  planModeEnabled = false,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+): string {
   let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
+
+  // Conversation history (passed by renderer when starting a NEW SDK session
+  // — Plan Mode toggle closes the session, restored conversations also reset
+  // it). Re-injecting the prior messages keeps the model coherent across
+  // session boundaries.
+  if (conversationHistory && conversationHistory.length > 0) {
+    fullSystemPrompt += `
+
+## HISTORIAL DE LA CONVERSACION ACTUAL
+
+Esta sesion del SDK acaba de iniciarse pero la conversacion con el usuario ya tiene contexto previo. Estos son los mensajes anteriores entre el usuario y vos (el agente). Usalos como contexto para continuar coherente:
+
+`
+    for (const msg of conversationHistory) {
+      const speaker = msg.role === 'user' ? '**Usuario**' : '**Agente (vos)**'
+      // Cap each message to keep the prompt bounded — long pasted budget
+      // tables don't help, we just need the gist.
+      const content = msg.content.length > 4000
+        ? msg.content.slice(0, 4000) + '\n\n[...mensaje truncado...]'
+        : msg.content
+      fullSystemPrompt += `\n${speaker}:\n${content}\n\n---\n`
+    }
+    fullSystemPrompt += `
+Continua la conversacion respondiendo al ULTIMO mensaje del usuario teniendo en cuenta TODO lo que paso antes. Si el usuario dice algo como "confirmo" o "si" o "dale", interpretalo en el contexto del plan / pregunta inmediatamente anterior — NO le digas "no tengo contexto".
+`
+  }
+
+
+  // Plan Mode directive — injected when the user toggles "Plan Mode" in the UI.
+  // We don't use the SDK's permissionMode:'plan' because that auto-injects
+  // ExitPlanMode which conflicts with our ask_user_question flow.
+  if (planModeEnabled) {
+    fullSystemPrompt += `
+
+## ESTADO ACTUAL — PLAN MODE ACTIVADO POR EL USUARIO
+
+El usuario ha activado **Plan Mode** desde la UI. En este turno y los proximos hasta que el usuario lo desactive, debes cumplir ESTRICTAMENTE estas reglas:
+
+1. **NO ejecutes ninguna tool de escritura en CERP**. Eso incluye: \`create_project\`, \`create_budget\`, \`add_budget_chapter\`, \`add_budget_item\`, \`add_budget_items_batch\`, \`update_cost_items\`, \`approve_budget\`, \`create_material\`, \`update_material\`, \`create_resource\`, \`update_resource\`, \`create_contact\`, \`update_contact\`, y cualquier otra que cree/modifique/borre datos en CERP. Si el usuario te pide ejecutar, respondele que tiene que **desactivar Plan Mode** primero desde el toggle de la UI (esta al lado del boton Enviar).
+
+2. **NO uses \`ExitPlanMode\`**. Esa tool del SDK no existe para nosotros. El control de aprobar/rechazar el plan lo hace el usuario manualmente con el toggle de Plan Mode en la UI. Si crees que terminaste de planificar, simplemente: (a) invoca \`ask_user_question\` para confirmar lo que falte aclarar (paso 1b del prompt), (b) DESPUES de recibir respuestas, muestra el plan completo formateado (paso 1c), (c) termina el mensaje con "¿Confirmas la carga? Desactiva Plan Mode y respondeme para que arranque."
+
+3. **SI podes ejecutar** tools de **lectura, busqueda y analisis**: \`Read\`, \`Glob\`, \`Grep\`, \`Bash\` (solo lectura), \`mcp__cerp__search_*\`, \`mcp__cerp__get_*\`, \`mcp__cerp__list_*\`, \`mcp__cerp__ask_user_question\`, y la delegacion a subagentes con \`Agent\`. Usalas todas las que necesites para investigar y construir el plan.
+
+4. **NUNCA inventes** que ejecutaste algo. Si en este modo el usuario te pide "creá X", respondele: "Estamos en Plan Mode. Voy a planificar la creacion de X y te muestro el plan. Cuando confirmes, desactivas el toggle y arranco."
+
+Estas reglas TIENEN PRIORIDAD sobre cualquier instruccion contraria en el resto del system prompt.
+`
+  }
+
 
   const customAgentDefs = customAgentStore.getAgents()
   if (customAgentDefs.length > 0) {
@@ -595,7 +689,7 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     const cacheCreation = usage.cache_creation_input_tokens || 0
     const cacheRead = usage.cache_read_input_tokens || 0
     logger.info(`[USAGE] cost=$${cost?.toFixed(4) || '?'} | turns=${turns} | input=${inputTokens} | output=${outputTokens} | cache_create=${cacheCreation} | cache_read=${cacheRead}`)
-    return { type: 'done', cost, turns }
+    return { type: 'done', cost, turns, tokensIn: inputTokens, tokensOut: outputTokens }
   }
 
   return null

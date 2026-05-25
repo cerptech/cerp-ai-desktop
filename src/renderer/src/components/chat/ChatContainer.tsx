@@ -1,14 +1,18 @@
 import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
 import { useAgent, type ChatMessage } from '@/hooks/useAgent'
 import { MessageBubble } from './MessageBubble'
+import { AskUserQuestion } from './AskUserQuestion'
 import { QuickActions } from './QuickActions'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
 import { useToast } from '@/hooks/useToast'
+import { usePlanMode } from '@/hooks/usePlanMode'
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
+  isPending: boolean
   messages: ChatMessage[]
   abort: () => Promise<void>
 }
@@ -22,15 +26,20 @@ interface ChatContainerProps {
   restoreMessagesRef?: MutableRefObject<((msgs: ChatMessage[]) => void) | null>
   clearMessagesRef?: MutableRefObject<(() => void) | null>
   chatStateRef?: MutableRefObject<ChatStateSnapshot | null>
+  /** Ref to the sidebar search input — used by Ctrl/Cmd+K to focus it */
+  searchInputRef?: MutableRefObject<HTMLInputElement | null>
+  /** Notifies the parent when the agent session goes active/idle (for the header badge). */
+  onSessionActiveChange?: (active: boolean) => void
 }
 
-export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef }: ChatContainerProps) {
-  const { messages, isStreaming, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, sendPrompt, abort, clearMessages, restoreMessages } = useAgent()
+export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef, searchInputRef, onSessionActiveChange }: ChatContainerProps) {
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, pendingQuestions, isSubmittingAnswers, sendPrompt, abort, submitAnswers, clearMessages, restoreMessages } = useAgent()
   const { addToast } = useToast()
+  const { planMode, togglePlanMode } = usePlanMode()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [showThoughts, setShowThoughts] = useState(false)
+  const [showThoughts, setShowThoughts] = useState(true)
   const [appVersion, setAppVersion] = useState('...')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -50,7 +59,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, activeTool])
+  }, [messages, activeTool, pendingQuestions])
 
   // Expose restoreMessages and clearMessages to parent via refs
   // Wrap to also reset persistence-tracking refs on conversation switch
@@ -74,9 +83,14 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   // Expose current chat state for parent to read before conversation switch
   useEffect(() => {
     if (chatStateRef) {
-      chatStateRef.current = { isStreaming, messages, abort }
+      chatStateRef.current = { isStreaming, isPending, messages, abort }
     }
   })
+
+  // Notify parent when the session goes active/idle — drives the header badge.
+  useEffect(() => {
+    onSessionActiveChange?.(isStreaming || isPending || !!pendingQuestions)
+  }, [isStreaming, isPending, pendingQuestions, onSessionActiveChange])
 
   // Sync completed messages to backend (fire-and-forget)
   const prevMessageCountRef = useRef(0)
@@ -121,25 +135,46 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     }
   }, [activeAgentDelegation, isStreaming, activeTool, messages.length, onAgentActivity])
 
+  // --- Textarea autoresize ---
+  // Technique: set height to 'auto' first so shrinkage works, then to scrollHeight.
+  // Max height is capped at ~8 lines via CSS max-height on the textarea.
+  const adjustTextareaHeight = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
+
+  // Reset height when input is programmatically cleared (e.g. after submit)
+  useEffect(() => {
+    if (input === '' && inputRef.current) {
+      inputRef.current.style.height = 'auto'
+    }
+  }, [input])
+
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
     const trimmed = input.trim()
-    if (!trimmed || isStreaming) return
+    if (!trimmed || isStreaming || pendingQuestions) return
     setInput('')
     sendPrompt(trimmed, cwd || undefined, activeContextId || undefined)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit()
+      return
     }
-    if (e.key === 'Escape' && isStreaming) {
-      abort()
+    if (e.key === 'Escape') {
+      if (isStreaming) {
+        abort()
+      } else if (input.trim()) {
+        setInput('')
+      }
+      return
     }
   }
 
-  // Global Escape key to abort
+  // Global Escape key to abort (covers cases where textarea is not focused)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && isStreaming) {
@@ -163,12 +198,20 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     if (folder) setCwd(folder)
   }
 
-  const handleNewConversation = async () => {
+  const handleNewConversation = useCallback(async () => {
     await window.cerpAPI.resetSession()
     clearMessages()
     setCwd(null)
     onNewConversation()
-  }
+  }, [clearMessages, onNewConversation])
+
+  // --- Global keyboard shortcuts (Ctrl/Cmd+N, Ctrl/Cmd+K) ---
+  // Must come after handleNewConversation so the stable callback reference is ready.
+  useKeyboardShortcuts({
+    onNewConversation: handleNewConversation,
+    searchInputRef,
+    chatInputRef: inputRef,
+  })
 
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault()
@@ -205,6 +248,18 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* Plan Mode banner — shown at the top when active */}
+      {planMode && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-700">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          <span className="font-medium">Modo plan activo</span>
+          <span className="text-amber-500">— el agente planificara sin ejecutar acciones de escritura. Desactivalo para continuar con la ejecucion.</span>
+        </div>
+      )}
+
       {/* Folder indicator */}
       {cwd && (
         <div className="flex items-center gap-3 px-6 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
@@ -254,14 +309,24 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                 />
               )
             })}
-            {/* Thinking indicator — shown whenever streaming and not already visible inside a message bubble */}
-            {isStreaming && (() => {
+            {/* Fix #8: Persistent "Trabajando..." bubble — always visible while agent is active.
+                The standalone bubble is suppressed ONLY when the ThinkingLoader is already
+                rendered inside the last assistant bubble (i.e. streaming=true, showThoughts=false,
+                and the assistant has tools but no text content yet — that's the one case where
+                the inner loader is sufficient).  In every other streaming state this bubble
+                must remain visible so the user always has a clear activity indicator. */}
+            {(isPending || isStreaming) && (() => {
               const lastMsg = messages[messages.length - 1]
               const noAssistantYet = !lastMsg || lastMsg.role !== 'assistant'
-              const assistantHasContent = lastMsg?.role === 'assistant' && lastMsg.content
-              // Show standalone loader when: no assistant message yet, OR assistant already
-              // wrote text but is still working (background tasks, tool calls, etc.)
-              if (noAssistantYet || assistantHasContent) {
+              const lastHasTools = (lastMsg?.role === 'assistant' && (lastMsg.tools?.length ?? 0) > 0)
+              const lastHasContent = lastMsg?.role === 'assistant' && !!lastMsg.content
+              // The inner ThinkingLoader IS visible when:
+              //   - streaming is active
+              //   - showThoughts is off (the thought panel is collapsed)
+              //   - the assistant bubble has tools OR has no content yet
+              const innerLoaderVisible = isStreaming && !showThoughts && (lastHasTools || !lastHasContent)
+              // Show standalone loader in every case EXCEPT when the inner loader already covers it
+              if (!innerLoaderVisible || isPending || noAssistantYet) {
                 return (
                   <div className="flex justify-start mb-4">
                     <div className="rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-2 shadow-sm">
@@ -281,6 +346,21 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
       {error && (
         <div className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {/* Structured question widget — shown when agent invokes ask_user_question tool */}
+      {pendingQuestions && pendingQuestions.length > 0 && (
+        <div className="mx-6 mb-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />
+            <span className="text-xs font-medium text-slate-500">El agente necesita tu decision para continuar</span>
+          </div>
+          <AskUserQuestion
+            questions={pendingQuestions}
+            onAnswer={submitAnswers}
+            isSubmitting={isSubmittingAnswers}
+          />
         </div>
       )}
 
@@ -309,23 +389,27 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                adjustTextareaHeight(e.target)
+              }}
               onKeyDown={handleKeyDown}
               placeholder={
                 cwd
                   ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}...`
                   : 'Pregunta lo que necesites...'
               }
-              rows={input.split('\n').length > 3 ? 4 : input.includes('\n') ? 2 : 1}
-              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50"
-              disabled={isStreaming}
+              rows={1}
+              style={{ maxHeight: '192px', overflowY: 'auto', minHeight: '44px' }}
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/30 focus:border-brand-orange/50 disabled:bg-slate-50 disabled:text-slate-400"
+              disabled={isStreaming || !!pendingQuestions}
             />
           </div>
 
           <button
             type="button"
             onClick={handleSelectFolder}
-            className={`p-2.5 rounded-lg border transition-colors ${cwd ? 'border-brand-orange/30 bg-orange-50 text-brand-orange' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+            className={`h-11 w-11 inline-flex items-center justify-center rounded-lg border transition-colors ${cwd ? 'border-brand-orange/30 bg-orange-50 text-brand-orange' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
             title="Seleccionar carpeta de trabajo"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -333,11 +417,34 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
             </svg>
           </button>
 
+          {/* Plan Mode toggle — pill button con texto + icono, visible en ambos estados */}
+          <button
+            type="button"
+            onClick={togglePlanMode}
+            aria-pressed={planMode}
+            className={`h-11 inline-flex items-center gap-1.5 px-3 rounded-lg border text-sm font-medium transition-all ${
+              planMode
+                ? 'border-amber-500 bg-amber-100 text-amber-800 ring-2 ring-amber-300 shadow-sm'
+                : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+            }`}
+            title={
+              planMode
+                ? 'Modo plan ACTIVO — el agente solo planifica, no ejecuta. Click para desactivar.'
+                : 'Activar Modo plan — el agente planifica con solo lectura antes de ejecutar acciones.'
+            }
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            <span>Modo plan{planMode ? ' · ON' : ''}</span>
+          </button>
+
           {isStreaming ? (
             <button
               onClick={abort}
               type="button"
-              className="p-2.5 rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors"
+              className="h-11 w-11 inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors"
               title="Detener ejecucion (Esc)"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -345,17 +452,21 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
               </svg>
             </button>
           ) : (
-            <Button type="submit" disabled={!input.trim()}>
+            <Button type="submit" disabled={!input.trim()} className="h-11">
               Enviar
             </Button>
           )}
         </form>
 
         <div className="mt-2 flex items-center justify-between">
-          <span className="text-[10px] text-slate-300">
-            v{appVersion}
-          </span>
+          <span className="text-[10px] text-slate-300">v{appVersion}</span>
           <div className="flex items-center gap-3">
+            {planMode && (
+              <span className="text-xs font-medium text-amber-600 flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                Modo plan
+              </span>
+            )}
             {messages.length > 0 && (
               <button
                 onClick={toggleShowThoughts}

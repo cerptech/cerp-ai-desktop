@@ -139,7 +139,7 @@ export function ThinkingLoader({ onToggleDetails, onStop, activeAgentName }: Thi
             onClick={onToggleDetails}
             className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
           >
-            Ver paso a paso
+            Ver detalles
           </button>
         )}
       </div>

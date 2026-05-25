@@ -1,15 +1,17 @@
 import { ReactNode } from 'react'
 import cerpLogo from '@/assets/images/cerp-logo.png'
 import { QuoteStatusBadge } from './QuoteStatusBadge'
+import { SessionStatusBadge } from './SessionStatusBadge'
 
 interface AppLayoutProps {
   children: ReactNode
   userName?: string
   onLogout?: () => void
-  agentTags?: ReactNode
+  /** Whether the agent session is actively working (streaming or pending). */
+  sessionActive?: boolean
 }
 
-export function AppLayout({ children, userName, onLogout, agentTags }: AppLayoutProps) {
+export function AppLayout({ children, userName, onLogout, sessionActive = false }: AppLayoutProps) {
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       {/* Title bar */}
@@ -21,12 +23,10 @@ export function AppLayout({ children, userName, onLogout, agentTags }: AppLayout
           <span className="font-semibold text-slate-800 text-sm">CERP AI</span>
         </div>
 
-        {/* Agent tags in center */}
-        {agentTags && (
-          <div className="flex-1 min-w-0 mx-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {agentTags}
-          </div>
-        )}
+        {/* Session activity indicator in center */}
+        <div className="flex-1 flex justify-center min-w-0 mx-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <SessionStatusBadge active={sessionActive} />
+        </div>
 
         {userName && (
           <div className="flex items-center gap-3 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>

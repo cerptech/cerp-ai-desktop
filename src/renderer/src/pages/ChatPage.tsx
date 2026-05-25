@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ChatContainer, type ChatStateSnapshot } from '@/components/chat/ChatContainer'
-import { AgentTags } from '@/components/agents/AgentTags'
 import { ConversationPanel } from '@/components/conversations/ConversationPanel'
 import { CustomAgentModal } from '@/components/settings/CustomAgentModal'
 import { ContextModal } from '@/components/settings/ContextModal'
@@ -19,6 +18,9 @@ interface ChatPageProps {
 export function ChatPage({ userName, onLogout }: ChatPageProps) {
   const [activeAgents, setActiveAgents] = useState<string[]>([])
   const [doneAgents, setDoneAgents] = useState<string[]>([])
+  // Whether the agent session is actively working — surfaced as a badge in
+  // the top bar so the user always knows if the AI is thinking or idle.
+  const [sessionActive, setSessionActive] = useState(false)
   const [convPanelCollapsed, setConvPanelCollapsed] = useState(false)
   const [activeContextId, setActiveContextId] = useState<string | null>(null)
 
@@ -46,6 +48,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   const restoreMessagesRef = useRef<((msgs: ChatMessage[]) => void) | null>(null)
   const clearMessagesRef = useRef<(() => void) | null>(null)
   const chatStateRef = useRef<ChatStateSnapshot | null>(null)
+  // Ref for the sidebar search input — used by Ctrl/Cmd+K shortcut in ChatContainer
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleAgentActivity = (agentName: string, status: 'active' | 'done' | 'idle') => {
     if (status === 'active') {
@@ -160,19 +164,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     <AppLayout
       userName={userName}
       onLogout={onLogout}
-      agentTags={
-        <AgentTags
-          activeAgents={activeAgents}
-          doneAgents={doneAgents}
-          customAgents={customAgents}
-          customContexts={customContexts}
-          activeContextId={activeContextId}
-          onEditAgent={handleEditAgent}
-          onEditContext={handleEditContext}
-          onToggleContext={handleToggleContext}
-          onAdd={handleAddCustom}
-        />
-      }
+      sessionActive={sessionActive}
     >
       <div className="flex h-full">
         <ConversationPanel
@@ -184,6 +176,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
           onDeleteConversation={handleDeleteConversation}
+          searchInputRef={searchInputRef}
         />
         <ChatContainer
           userName={userName}
@@ -194,6 +187,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           restoreMessagesRef={restoreMessagesRef}
           clearMessagesRef={clearMessagesRef}
           chatStateRef={chatStateRef}
+          searchInputRef={searchInputRef}
+          onSessionActiveChange={setSessionActive}
         />
       </div>
 

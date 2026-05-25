@@ -3,11 +3,12 @@ import { IPC_CHANNELS } from './channels'
 import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
-import { runAgent, interruptAgent, resetSession } from '../agent/agentManager'
+import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
+import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
-import type { SendPromptPayload, AuthState } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 const httpClient = new HttpClient(
@@ -90,6 +91,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Agent: Reset session (new conversation)
   ipcMain.handle(IPC_CHANNELS.AGENT_RESET_SESSION, async (): Promise<void> => {
     resetSession()
+  })
+
+  // Agent: Set plan mode
+  ipcMain.handle(IPC_CHANNELS.AGENT_SET_PLAN_MODE, async (_event, enabled: boolean): Promise<void> => {
+    setPlanMode(enabled)
+  })
+
+  // Agent: Get plan mode (so the renderer can hydrate on startup)
+  ipcMain.handle(IPC_CHANNELS.AGENT_GET_PLAN_MODE, async (): Promise<boolean> => {
+    return getPlanMode()
   })
 
   // Dialog: Select folder
@@ -213,6 +224,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       logger.error('Failed to list quotes:', err)
       return { items: [], page: 1, pageSize: 20, total: 0 }
     }
+  })
+
+  // ask_user_question: renderer sends back the user's answers
+  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, answers: UserAnswerPayload): Promise<void> => {
+    resolveAnswer(answers)
   })
 
   // App: Get version

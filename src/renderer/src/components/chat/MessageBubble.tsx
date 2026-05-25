@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ChatMessage } from '@/hooks/useAgent'
 import { ToolExecutions } from './ToolIndicator'
 import { MarkdownContent } from './MarkdownContent'
@@ -15,6 +16,70 @@ interface MessageBubbleProps {
   /** Callback to abort the running agent */
   onStop?: () => void
 }
+
+// ---------------------------------------------------------------------------
+// CopyMessageButton — copies the full message text to clipboard
+// ---------------------------------------------------------------------------
+
+interface CopyMessageButtonProps {
+  text: string
+}
+
+function CopyMessageButton({ text }: CopyMessageButtonProps) {
+  const [copied, setCopied] = useState(false)
+
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      aria-label="Copiar mensaje"
+      title="Copiar mensaje"
+      className={[
+        'absolute top-2 right-2 flex items-center gap-1 rounded px-1.5 py-1',
+        'text-[10px] transition-all duration-150',
+        'bg-white/80 border border-slate-200 shadow-sm',
+        copied
+          ? 'text-emerald-500 opacity-100'
+          : 'text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-600',
+      ].join(' ')}
+    >
+      {copied ? (
+        <>
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          Copiado
+        </>
+      ) : (
+        <>
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Copiar
+        </>
+      )}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// StreamingCursor — blinking pipe shown at the end of streaming content
+// Uses CSS animation defined in tailwind.css (@keyframes blink-cursor).
+// ---------------------------------------------------------------------------
+
+function StreamingCursor() {
+  return <span className="streaming-cursor text-slate-500" aria-hidden="true" />
+}
+
+// ---------------------------------------------------------------------------
+// MessageBubble — main export
+// ---------------------------------------------------------------------------
 
 export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts, onStop }: MessageBubbleProps) {
   const isUser = message.role === 'user'
@@ -36,10 +101,18 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
   // Find active agent delegation for context in ThinkingLoader
   const activeAgent = message.tools?.find((t) => t.status === 'running' && t.name === 'Agent')
 
+  // Show copy button only when there's actual text content and not streaming
+  const showCopyButton = !!message.content && !isStreaming
+
   return (
     <div className="flex justify-start mb-4">
-      <div className="max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 text-slate-800 px-4 py-3 shadow-sm">
-        {/* Thinking loader (default during streaming) */}
+      {/* group class enables hover-based opacity on CopyMessageButton */}
+      <div className="relative group max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 text-slate-800 px-4 py-3 shadow-sm">
+
+        {/* Copy message button (hover reveal, top-right) */}
+        {showCopyButton && <CopyMessageButton text={message.content} />}
+
+        {/* Thinking loader (default during streaming, when showThoughts is off) */}
         {showThinkingLoader && (
           <ThinkingLoader
             onToggleDetails={onToggleThoughts}
@@ -48,7 +121,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
           />
         )}
 
-        {/* Detailed tool executions (opt-in during streaming, always after) */}
+        {/* Detailed tool executions (opt-in via showThoughts) */}
         {showToolDetails && (
           <div>
             {isStreaming && onToggleThoughts && (
@@ -56,10 +129,12 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
                 onClick={onToggleThoughts}
                 className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors mb-1"
               >
+                {/* Fix #9: "Ocultar detalles" when expanded */}
                 Ocultar detalles
               </button>
             )}
-            <ToolExecutions tools={message.tools!} />
+            {/* Fix #1/#5/#6: pass isStreaming so ToolExecutions knows if agent is still active */}
+            <ToolExecutions tools={message.tools!} isStreaming={isStreaming} />
           </div>
         )}
 
@@ -71,20 +146,25 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
           </div>
         )}
 
-        {/* Collapsed tool summary when hidden */}
+        {/* Collapsed tool summary when panel is closed and not streaming */}
         {hasTools && !showThinkingLoader && !showToolDetails && !isStreaming && (
           <button
             onClick={onToggleThoughts}
             className="text-[10px] text-slate-400 hover:text-slate-500 transition-colors mb-2 flex items-center gap-1"
           >
-            <span className="text-emerald-500">&#10003;</span>
-            {message.tools!.length} paso{message.tools!.length > 1 ? 's' : ''}
+            <span className="text-success">&#10003;</span>
+            {/* Fix #9: consistent label */}
+            {message.tools!.length} paso{message.tools!.length > 1 ? 's' : ''} · Ver detalles
           </button>
         )}
 
         {/* Message content with markdown */}
         {message.content && (
-          <MarkdownContent content={message.content} />
+          <div className="relative">
+            <MarkdownContent content={message.content} />
+            {/* Fix #7: blinking cursor at end of streaming content */}
+            {isStreaming && <StreamingCursor />}
+          </div>
         )}
       </div>
     </div>

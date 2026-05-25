@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { AgentStreamEvent } from '../../../preload/index'
+import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload } from '../../../preload/index'
 
 export interface ToolExecution {
   name: string
   input?: string
   output?: string
-  status: 'running' | 'done'
+  status: 'running' | 'done' | 'error'
   timestamp: number
   startTime: number
   endTime?: number
@@ -28,17 +28,36 @@ export interface AgentDelegation {
 export function useAgent() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  // isPending: true from the moment the user sends a message until the first stream event arrives.
+  // This closes the brief blank-screen window that occurs before the backend sends any data.
+  const [isPending, setIsPending] = useState(false)
   const [activeTool, setActiveTool] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeAgentDelegation, setActiveAgentDelegation] = useState<AgentDelegation | null>(null)
   const [promptSuggestions, setPromptSuggestions] = useState<string[]>([])
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  // Session-level cost and token accumulators — reset on clearMessages/restoreMessages
+  const [sessionCost, setSessionCost] = useState(0)
+  const [sessionTokensIn, setSessionTokensIn] = useState(0)
+  const [sessionTokensOut, setSessionTokensOut] = useState(0)
+  // ask_user_question state — set when the agent needs structured clarifications
+  const [pendingQuestions, setPendingQuestions] = useState<AskUserQuestionItem[] | null>(null)
+  const [isSubmittingAnswers, setIsSubmittingAnswers] = useState(false)
   const toolsRef = useRef<ToolExecution[]>([])
   const lastEventRef = useRef<number>(Date.now())
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const currentDelegationRef = useRef<string | null>(null)
   // Gate to ignore stream events after a conversation switch
   const acceptingRef = useRef(true)
+  // When true, the next `text` event must START a NEW assistant message
+  // instead of updating the last one. Set after ask_user_question + answer
+  // round-trips so the agent's new turn doesn't overwrite the context that
+  // preceded the widget.
+  const needsNewAssistantRef = useRef(false)
+  // Live mirror of `messages` — sendPrompt snapshots this without depending
+  // on the `messages` state in useCallback deps (which would re-create the
+  // callback on every keystroke that changes the chat).
+  const messagesRef = useRef<ChatMessage[]>([])
 
   const updateLastAssistant = useCallback((updater: (msg: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
@@ -56,6 +75,12 @@ export function useAgent() {
       return [...prev, updater(newMsg)]
     })
   }, [])
+
+  // Keep messagesRef in sync with messages — used by sendPrompt to snapshot
+  // history without re-creating the callback on every chat update.
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   // Phase 1: Fallback timer to force-reset isStreaming after 30s of inactivity
   useEffect(() => {
@@ -94,12 +119,41 @@ export function useAgent() {
   }, [isStreaming])
 
   useEffect(() => {
+    // Subscribe to structured question requests from the agent
+    const unsubAsk = window.cerpAPI.onAskUserQuestion((questions) => {
+      if (!acceptingRef.current) return
+      setPendingQuestions(questions)
+      // The agent will start a NEW turn after the user answers. Mark the next
+      // `text` event so it appends a new assistant message instead of
+      // overwriting the last one (which has the "voy a hacerte preguntas..."
+      // context the user is reading above the widget).
+      needsNewAssistantRef.current = true
+      // The agent is now "streaming" but waiting — keep isStreaming true
+      // so the UI shows the waiting state correctly
+    })
+
     const unsubMessage = window.cerpAPI.onAgentMessage((event: AgentStreamEvent) => {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       lastEventRef.current = Date.now()
+      // Clear pending state on the very first event — the agent has started responding
+      setIsPending(false)
 
       switch (event.type) {
         case 'text': {
+          // If a previous turn ended with ask_user_question, the next text must
+          // be a NEW assistant message so we don't overwrite the pre-widget context.
+          if (needsNewAssistantRef.current) {
+            needsNewAssistantRef.current = false
+            toolsRef.current = []
+            setMessages((prev) => [...prev, {
+              role: 'assistant',
+              content: event.text,
+              timestamp: Date.now(),
+              tools: [],
+              agentContext: currentDelegationRef.current || undefined,
+            }])
+            break
+          }
           updateLastAssistant((msg) => ({
             ...msg,
             content: event.text,
@@ -166,20 +220,34 @@ export function useAgent() {
           if (msg) setStatusMessage(msg)
           break
         }
-        case 'done':
+        case 'done': {
+          const doneEvent = event as { type: 'done'; cost?: number; tokensIn?: number; tokensOut?: number }
+          if (doneEvent.cost != null) setSessionCost((prev) => prev + doneEvent.cost!)
+          if (doneEvent.tokensIn != null) setSessionTokensIn((prev) => prev + doneEvent.tokensIn!)
+          if (doneEvent.tokensOut != null) setSessionTokensOut((prev) => prev + doneEvent.tokensOut!)
           setIsStreaming(false)
+          setIsPending(false)
           setStatusMessage(null)
           setActiveTool(null)
           setActiveAgentDelegation(null)
           currentDelegationRef.current = null
           break
-        case 'error':
+        }
+        case 'error': {
           setError((event as { type: 'error'; message: string }).message)
           setIsStreaming(false)
+          setIsPending(false)
           setActiveTool(null)
           setActiveAgentDelegation(null)
           currentDelegationRef.current = null
+          // Mark any running tools as errored
+          const now = Date.now()
+          toolsRef.current = toolsRef.current.map((t) =>
+            t.status === 'running' ? { ...t, status: 'error' as const, endTime: now } : t,
+          )
+          updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
           break
+        }
       }
     })
 
@@ -187,6 +255,7 @@ export function useAgent() {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       // Force stop everything
       setIsStreaming(false)
+      setIsPending(false)
       setActiveTool(null)
       setActiveAgentDelegation(null)
       currentDelegationRef.current = null
@@ -211,12 +280,14 @@ export function useAgent() {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       setError(err.message)
       setIsStreaming(false)
+      setIsPending(false)
       setActiveTool(null)
       setActiveAgentDelegation(null)
       currentDelegationRef.current = null
     })
 
     return () => {
+      unsubAsk()
       unsubMessage()
       unsubDone()
       unsubError()
@@ -227,6 +298,7 @@ export function useAgent() {
     acceptingRef.current = true // Accept events for this new prompt
     setError(null)
     setIsStreaming(true)
+    setIsPending(true) // Show loader immediately — before the first stream event arrives
     setActiveTool(null)
     setActiveAgentDelegation(null)
     setPromptSuggestions([])
@@ -234,13 +306,25 @@ export function useAgent() {
     currentDelegationRef.current = null
     toolsRef.current = []
 
+    // Snapshot history BEFORE we append the new user message — we want the
+    // main process to inject the prior turns into the system prompt only if
+    // it starts a fresh SDK session (Plan Mode toggle, restored conversation
+    // or cwd/context change). When the SDK session is already open, the main
+    // process ignores conversationHistory because the SDK already has it.
+    const history = messagesRef.current.map((m) => ({ role: m.role, content: m.content }))
+
     setMessages((prev) => [...prev, {
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
     }])
 
-    const result = await window.cerpAPI.sendPrompt({ prompt, cwd, activeContextId })
+    const result = await window.cerpAPI.sendPrompt({
+      prompt,
+      cwd,
+      activeContextId,
+      conversationHistory: history,
+    })
     if (!result.started) {
       setError(result.error || 'No se pudo iniciar la consulta')
       setIsStreaming(false)
@@ -250,20 +334,71 @@ export function useAgent() {
   const abort = useCallback(async () => {
     await window.cerpAPI.abortAgent()
     setIsStreaming(false)
+    setIsPending(false)
     setActiveTool(null)
     setActiveAgentDelegation(null)
+    setPendingQuestions(null)
+    setIsSubmittingAnswers(false)
+    needsNewAssistantRef.current = false
     currentDelegationRef.current = null
   }, [])
+
+  /**
+   * Submit the user's answers to the pending ask_user_question.
+   * Resumes agent execution on the main process side.
+   */
+  const submitAnswers = useCallback(async (answers: UserAnswerPayload) => {
+    if (!pendingQuestions) return
+
+    // Audit trail: append a user message with the formatted answers so the
+    // conversation has a record of what the user chose in the widget.
+    // Otherwise the widget disappears and the agent's next turn replies into
+    // the void — no record of the decisions for review or screenshots.
+    const echoLines = pendingQuestions.map((q) => {
+      const ans = answers[q.question]
+      const ansText = Array.isArray(ans) ? ans.join(', ') : (ans ?? '(sin respuesta)')
+      return `- **${q.header}**: ${ansText}`
+    }).join('\n')
+    const echoContent = pendingQuestions.length === 1
+      ? `Respuesta: ${echoLines.replace(/^- \*\*[^*]+\*\*: /, '')}`
+      : `Respondí:\n${echoLines}`
+    setMessages((prev) => [...prev, {
+      role: 'user',
+      content: echoContent,
+      timestamp: Date.now(),
+    }])
+
+    setIsSubmittingAnswers(true)
+    // Re-arm activity indicators so the user sees a "trabajando..." state in the
+    // window between closing the widget and the agent's next text event.
+    // Without these, isStreaming may already be false (turn done event arrived
+    // before the tool resolved) and there's a blank-screen ~1-3s gap.
+    setIsPending(true)
+    setIsStreaming(true)
+    try {
+      await window.cerpAPI.submitUserAnswers(answers)
+      setPendingQuestions(null)
+    } finally {
+      setIsSubmittingAnswers(false)
+    }
+  }, [pendingQuestions])
 
   const clearMessages = useCallback(() => {
     acceptingRef.current = false // Block stale stream events from previous conversation
     setMessages([])
     setIsStreaming(false)
+    setIsPending(false)
     setActiveTool(null)
     setError(null)
     setActiveAgentDelegation(null)
+    setPendingQuestions(null)
+    setIsSubmittingAnswers(false)
+    needsNewAssistantRef.current = false
     currentDelegationRef.current = null
     toolsRef.current = []
+    setSessionCost(0)
+    setSessionTokensIn(0)
+    setSessionTokensOut(0)
   }, [])
 
   // Restore messages from a loaded conversation
@@ -271,23 +406,37 @@ export function useAgent() {
     acceptingRef.current = false // Block stale stream events from previous conversation
     setMessages(loadedMessages)
     setIsStreaming(false)
+    setIsPending(false)
     setActiveTool(null)
     setError(null)
     setActiveAgentDelegation(null)
+    setPendingQuestions(null)
+    setIsSubmittingAnswers(false)
+    needsNewAssistantRef.current = false
     currentDelegationRef.current = null
     toolsRef.current = []
+    setSessionCost(0)
+    setSessionTokensIn(0)
+    setSessionTokensOut(0)
   }, [])
 
   return {
     messages,
     isStreaming,
+    isPending,
     activeTool,
     error,
     activeAgentDelegation,
     promptSuggestions,
     statusMessage,
+    sessionCost,
+    sessionTokensIn,
+    sessionTokensOut,
+    pendingQuestions,
+    isSubmittingAnswers,
     sendPrompt,
     abort,
+    submitAnswers,
     clearMessages,
     restoreMessages,
   }
