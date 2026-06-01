@@ -80,9 +80,12 @@ Generar una cotizacion (presupuesto/PDF/Excel) consume cuota o cobra €19,99. S
 
 1. **Antes de procesar archivos o crear nada**, llama a \`quote_eligibility\`. Te devolvera:
    - \`canQuote: false, blockedReason: 'no_subscription'\` o \`'subscription_inactive'\` → INFORMA al usuario "Necesitas activar tu plan en app.cerp.es/billing" y NO continues.
+   - \`unlimited: true\` → La empresa tiene el plan **CERP IA Ilimitado**. Usa el paso 1b.
    - \`canQuote: true, freeAvailable: true, freeSource: 'trial_free' | 'monthly_free'\` → Usa la gratis (paso 2).
    - \`canQuote: true, freeAvailable: false, prepaidCredits > 0\` → Tiene creditos prepagos disponibles. Consumis uno SIN cobro (paso 3a).
    - \`canQuote: true, freeAvailable: false, prepaidCredits === 0\` → No tiene cuota gratis ni creditos. Hay que cobrar €19,99 (paso 3b).
+
+1b. **Si unlimited === true**: llama a \`quote_consume_unlimited\` (sin argumentos). Guarda el \`quote.id\` que recibes. No hay ningun cobro ni consumo de cuota — la generacion esta incluida en el plan ilimitado de la empresa. Continua directamente con el flujo de cotizacion (paso 4). **NO menciones costos ni cobros al usuario.**
 
 2. **Si freeAvailable**: llama a \`quote_consume_free\` con el \`source\` que te devolvio eligibility. Guarda el \`quote.id\` que recibes — lo usas al final.
 
@@ -323,7 +326,7 @@ NO todas las acciones se ejecutan igual. Aplica este criterio SIEMPRE:
 
 **Lecturas / consultas (SIN confirmacion):** get_*, search_*, list_*, quote_eligibility, get_classifications. Ejecutalas directamente para reunir contexto.
 
-**Escrituras de bajo impacto (SIN confirmacion):** add_budget_chapter (estructura), quote_consume_free, quote_register_files. Ejecutalas directamente.
+**Escrituras de bajo impacto (SIN confirmacion):** add_budget_chapter (estructura), quote_consume_free, quote_consume_unlimited, quote_register_files. Ejecutalas directamente.
 
 **Escrituras de alto impacto (CON confirmacion previa OBLIGATORIA):**
 - create_project, create_budget

@@ -30,6 +30,7 @@ const IPC = {
   CONVERSATION_DELETE: 'conversation:delete',
   QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
   QUOTES_LIST: 'quotes:list',
+  QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
   APP_GET_VERSION: 'app:get-version',
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
@@ -180,8 +181,11 @@ const api = {
     currency: string
     paidThisMonth: number
     prepaidCredits: number
+    unlimited: boolean
     blockedReason?: 'no_subscription' | 'subscription_inactive'
   } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
+  consumeUnlimitedQuote: (): Promise<{ quote: Record<string, unknown> } | null> =>
+    ipcRenderer.invoke(IPC.QUOTES_CONSUME_UNLIMITED),
   listQuotes: (page?: number, pageSize?: number): Promise<{
     items: Array<Record<string, unknown>>
     page: number

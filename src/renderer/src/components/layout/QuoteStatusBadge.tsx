@@ -8,6 +8,7 @@ type Eligibility = {
   currency: string
   paidThisMonth: number
   prepaidCredits: number
+  unlimited: boolean
   blockedReason?: 'no_subscription' | 'subscription_inactive'
 }
 
@@ -54,6 +55,18 @@ export function QuoteStatusBadge() {
   }
 
   if (!eligibility) return null
+
+  if (eligibility.unlimited) {
+    return (
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 text-xs"
+        title="Tu empresa tiene CERP IA Ilimitado — generacion de cotizaciones sin limite"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+        Ilimitado
+      </div>
+    )
+  }
 
   if (eligibility.blockedReason) {
     return (

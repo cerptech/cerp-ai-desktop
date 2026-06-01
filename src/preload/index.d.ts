@@ -126,8 +126,10 @@ interface CerpAPI {
     currency: string
     paidThisMonth: number
     prepaidCredits: number
+    unlimited: boolean
     blockedReason?: 'no_subscription' | 'subscription_inactive'
   } | null>
+  consumeUnlimitedQuote(): Promise<{ quote: Record<string, unknown> } | null>
   listQuotes(page?: number, pageSize?: number): Promise<{
     items: Array<Record<string, unknown>>
     page: number

@@ -37,6 +37,7 @@ export const IPC_CHANNELS = {
   // Quotes (cerp-ai-desktop monetization)
   QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
   QUOTES_LIST: 'quotes:list',
+  QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
 
   // Plan Mode
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
