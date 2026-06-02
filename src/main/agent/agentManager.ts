@@ -370,12 +370,21 @@ async function processStreamLoop(): Promise<void> {
   }
 
   let activeTaskCount = 0
-  // Heartbeat throttle: stream_event deltas are NOT mapped/forwarded to the renderer,
-  // so during long generation/reasoning pauses the renderer would see no events for
-  // >30s and its safety timer would flip the "IA activa" badge to inactive even though
-  // the agent is actively working. We forward a lightweight stream_start heartbeat
-  // (throttled) on stream_event so the badge stays active and the timer doesn't trip.
-  let lastHeartbeatAt = 0
+
+  // Heartbeat: keep the renderer's "IA activa" badge alive during long SILENT gaps.
+  // The for-await loop BLOCKS while awaiting the next SDK message, so during a multi-minute
+  // pause (e.g. a background subagent generating with no parent stream_events) nothing is
+  // forwarded and the renderer's safety timer would flip the badge to inactive even though
+  // the agent is actively working. A standalone interval forwards a lightweight stream_start
+  // every 5s WHILE actively processing — a background task is running (`activeTaskCount > 0`)
+  // OR a turn is in progress (`processingTurn`). It stops emitting on its own once the turn
+  // completes (processingTurn=false, activeTaskCount=0) and is cleared in `finally`.
+  const heartbeat = setInterval(() => {
+    if (!mainWindowRef || mainWindowRef.isDestroyed()) return
+    if (activeTaskCount > 0 || processingTurn) {
+      sendEvent({ type: 'stream_start' })
+    }
+  }, 5000)
 
   try {
     for await (const msg of activeQuery) {
@@ -407,17 +416,9 @@ async function processStreamLoop(): Promise<void> {
         }
       }
 
-      // Track turn state
+      // Track turn state (the heartbeat interval handles keep-alive during silent gaps)
       if (msgType === 'assistant' || msgType === 'stream_event') {
         processingTurn = true
-        // Keep the renderer's "active" state alive during long silent generation.
-        if (msgType === 'stream_event') {
-          const nowMs = Date.now()
-          if (nowMs - lastHeartbeatAt > 4000) {
-            lastHeartbeatAt = nowMs
-            sendEvent({ type: 'stream_start' })
-          }
-        }
       }
 
       // ── Subagent inner activity routing ──────────────────────────────────
@@ -510,6 +511,7 @@ async function processStreamLoop(): Promise<void> {
     }
     sendDone()
   } finally {
+    clearInterval(heartbeat)
     processingTurn = false
     activeQuery = null
     // Always ensure UI resets — covers budget exceeded, errors, etc.
