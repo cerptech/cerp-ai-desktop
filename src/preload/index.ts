@@ -55,16 +55,28 @@ export interface AskUserQuestionItem {
 /** Map of question text → chosen label or "Otro: <free text>" (or array for multiSelect) */
 export type UserAnswerPayload = Record<string, string | string[]>
 
+// Tool lifecycle is keyed by `toolUseId` (never by name). SDK 0.3.x delivers tool
+// results as `type:'user'` messages with tool_result content blocks carrying tool_use_id.
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
-  | { type: 'tool_start'; name: string; input?: string }
-  | { type: 'tool_done'; name: string; output?: string }
+  | { type: 'tool_start'; toolUseId: string; name: string; input?: string }
+  | { type: 'tool_done'; toolUseId: string; output?: string; isError?: boolean }
   | { type: 'thinking'; text: string }
   | { type: 'status'; message: string }
+  // Explicit turn-start signal — sent when the first system task_started arrives
+  // so the renderer badge flips to "activa" even before the first text/tool event.
+  | { type: 'stream_start' }
   | { type: 'session_id'; sessionId: string }
-  | { type: 'agent_delegation'; agentName: string; task: string }
+  | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
   | { type: 'ask_user_question'; questions: AskUserQuestionItem[] }
+  // Subagent inner activity — tool calls made INSIDE a delegated subagent.
+  // parentToolUseId links to the Agent tool_use_id that spawned the subagent;
+  // toolUseId is the subagent's own inner tool id (keys done→start).
+  | { type: 'subagent_tool_start'; parentToolUseId: string; toolUseId: string; agentName: string; name: string; input?: string }
+  | { type: 'subagent_tool_done'; parentToolUseId: string; toolUseId: string; output?: string; isError?: boolean }
+  // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK >= 0.2.119).
+  | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   | { type: 'error'; message: string }
 

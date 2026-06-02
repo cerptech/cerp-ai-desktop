@@ -1,6 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload } from '../../../preload/index'
 
+export interface SubagentStep {
+  /** The subagent's own inner tool_use id — keys done→start (never by name). */
+  toolUseId?: string
+  name: string
+  input?: string
+  output?: string
+  status: 'running' | 'done' | 'error'
+  startTime: number
+  endTime?: number
+}
+
 export interface ToolExecution {
   name: string
   input?: string
@@ -10,6 +21,12 @@ export interface ToolExecution {
   startTime: number
   endTime?: number
   agentName?: string
+  /** Tool_use_id of the Agent delegation — used to key subagentSteps */
+  toolUseId?: string
+  /** Inner tool calls the subagent made, accumulated as subagent_tool_start/done events arrive */
+  subagentSteps?: SubagentStep[]
+  /** Latest text/reasoning streamed from the subagent (forwardSubagentText, Fase 2) */
+  subagentText?: string
 }
 
 export interface ChatMessage {
@@ -54,6 +71,11 @@ export function useAgent() {
   // round-trips so the agent's new turn doesn't overwrite the context that
   // preceded the widget.
   const needsNewAssistantRef = useRef(false)
+  // Bug #4: When true, we are waiting for the agent to resume after the user
+  // submitted answers to ask_user_question. We block `done`/`onAgentDone`
+  // from resetting isStreaming/isPending until the first real stream event
+  // arrives, preventing a blank loading gap.
+  const waitingAfterAnswerRef = useRef(false)
   // Live mirror of `messages` — sendPrompt snapshots this without depending
   // on the `messages` state in useCallback deps (which would re-create the
   // callback on every keystroke that changes the chat).
@@ -93,7 +115,9 @@ export function useAgent() {
     }
     fallbackTimerRef.current = setInterval(() => {
       if (!acceptingRef.current) return
-      if (Date.now() - lastEventRef.current > 30_000) {
+      // 60s with no event = true stall. The main process sends a stream_start heartbeat
+      // every ~4s during streaming, so a legit long reasoning pause won't trip this.
+      if (Date.now() - lastEventRef.current > 60_000) {
         setIsStreaming(false)
         setActiveTool(null)
         setActiveAgentDelegation(null)
@@ -135,8 +159,18 @@ export function useAgent() {
     const unsubMessage = window.cerpAPI.onAgentMessage((event: AgentStreamEvent) => {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
       lastEventRef.current = Date.now()
-      // Clear pending state on the very first event — the agent has started responding
+
+      // Bug #2: stream_start is a pure signal — flip isStreaming/isPending on, no other state change.
+      if (event.type === 'stream_start') {
+        setIsStreaming(true)
+        setIsPending(false)
+        return
+      }
+
+      // Clear pending state on the very first real event — the agent has started responding.
+      // Also clear the waitingAfterAnswer gate so done events resume normal handling.
       setIsPending(false)
+      waitingAfterAnswerRef.current = false
 
       switch (event.type) {
         case 'text': {
@@ -164,20 +198,18 @@ export function useAgent() {
         }
         case 'tool_start': {
           const now = Date.now()
-          // Detect agent delegation from Agent tool input
-          let agentName: string | undefined
-          if (event.name === 'Agent' && event.input) {
-            // Try to extract agent name from input text
-            const match = event.input.match(/(?:agent_name|name)["']?\s*[:=]\s*["']?([a-z-]+)/i)
-            if (match) agentName = match[1]
-          }
+          const isAgentTool = event.name === 'Agent' || event.name === 'Task'
+          // Every tool carries its tool_use id — the ToolExecution is keyed by it,
+          // and tool_done matches by id (never by name). Agent/Task tools also own
+          // a subagentSteps array, keyed by the same id via parentToolUseId.
           const tool: ToolExecution = {
             name: event.name,
             input: event.input,
             status: 'running',
             timestamp: now,
             startTime: now,
-            agentName,
+            toolUseId: event.toolUseId,
+            ...(isAgentTool ? { subagentSteps: [] } : {}),
           }
           toolsRef.current = [...toolsRef.current, tool]
           setActiveTool(event.name)
@@ -186,16 +218,29 @@ export function useAgent() {
         }
         case 'tool_done': {
           const now = Date.now()
-          let found = false
-          toolsRef.current = toolsRef.current.map((t) => {
-            if (!found && t.name === event.name && t.status === 'running') {
-              found = true
-              return { ...t, status: 'done' as const, output: event.output, endTime: now }
-            }
-            return t
-          })
-          // If an Agent tool just finished, clear delegation tracking
-          if (event.name === 'Agent') {
+          // Match by tool_use id — the only reliable key. Name matching broke because
+          // SDK tool results don't carry the tool name and names can repeat.
+          const doneTool = toolsRef.current.find((t) => t.toolUseId === event.toolUseId)
+          const isAgentTool = doneTool?.name === 'Agent' || doneTool?.name === 'Task'
+          toolsRef.current = toolsRef.current.map((t) =>
+            t.toolUseId === event.toolUseId && t.status === 'running'
+              ? {
+                  ...t,
+                  status: (event.isError ? 'error' : 'done') as ToolExecution['status'],
+                  output: event.output,
+                  endTime: now,
+                  // mark any still-running subagent steps as done when the delegation closes
+                  ...(t.subagentSteps
+                    ? {
+                        subagentSteps: t.subagentSteps.map((s) =>
+                          s.status === 'running' ? { ...s, status: 'done' as const, endTime: now } : s,
+                        ),
+                      }
+                    : {}),
+                }
+              : t,
+          )
+          if (isAgentTool) {
             currentDelegationRef.current = null
             setActiveAgentDelegation(null)
           }
@@ -205,9 +250,62 @@ export function useAgent() {
           break
         }
         case 'agent_delegation': {
-          const delegation = event as { type: 'agent_delegation'; agentName: string; task: string }
+          const delegation = event as { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
           currentDelegationRef.current = delegation.agentName
           setActiveAgentDelegation({ agentName: delegation.agentName, task: delegation.task })
+          // Backfill agentName onto the exact Agent ToolExecution by tool_use id.
+          toolsRef.current = toolsRef.current.map((t) =>
+            t.toolUseId === delegation.toolUseId ? { ...t, agentName: delegation.agentName } : t,
+          )
+          updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
+          break
+        }
+        case 'subagent_tool_start': {
+          // A tool call inside a delegated subagent — nest it under the Agent tool whose
+          // tool_use id === parentToolUseId. Concurrency-safe: parallel subagents each
+          // resolve to their own ToolExecution by id.
+          const ev = event as { type: 'subagent_tool_start'; parentToolUseId: string; toolUseId: string; agentName: string; name: string; input?: string }
+          const now = Date.now()
+          const newStep: SubagentStep = {
+            toolUseId: ev.toolUseId,
+            name: ev.name,
+            input: ev.input,
+            status: 'running',
+            startTime: now,
+          }
+          toolsRef.current = toolsRef.current.map((t) =>
+            t.toolUseId === ev.parentToolUseId
+              ? { ...t, subagentSteps: [...(t.subagentSteps ?? []), newStep] }
+              : t,
+          )
+          updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
+          break
+        }
+        case 'subagent_tool_done': {
+          // Result of an inner subagent tool call — mark the matching step done by its id.
+          const ev = event as { type: 'subagent_tool_done'; parentToolUseId: string; toolUseId: string; output?: string; isError?: boolean }
+          const now = Date.now()
+          toolsRef.current = toolsRef.current.map((t) => {
+            if (t.toolUseId !== ev.parentToolUseId || !t.subagentSteps) return t
+            return {
+              ...t,
+              subagentSteps: t.subagentSteps.map((s) =>
+                s.toolUseId === ev.toolUseId && s.status === 'running'
+                  ? { ...s, status: (ev.isError ? 'error' : 'done') as SubagentStep['status'], output: ev.output, endTime: now }
+                  : s,
+              ),
+            }
+          })
+          updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
+          break
+        }
+        case 'subagent_text': {
+          // Live text/reasoning from the subagent (forwardSubagentText) — show under its Agent tool.
+          const ev = event as { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
+          toolsRef.current = toolsRef.current.map((t) =>
+            t.toolUseId === ev.parentToolUseId ? { ...t, subagentText: ev.text } : t,
+          )
+          updateLastAssistant((msg) => ({ ...msg, tools: [...toolsRef.current] }))
           break
         }
         case 'prompt_suggestions': {
@@ -221,6 +319,11 @@ export function useAgent() {
           break
         }
         case 'done': {
+          // Bug #4: If the user just submitted ask_user_question answers and the agent
+          // hasn't yet emitted any response, a stale `done` from the prior turn may arrive
+          // and reset isStreaming/isPending prematurely, causing a blank loading gap.
+          // We hold off resetting these flags while waitingAfterAnswerRef is set.
+          if (waitingAfterAnswerRef.current) break
           const doneEvent = event as { type: 'done'; cost?: number; tokensIn?: number; tokensOut?: number }
           if (doneEvent.cost != null) setSessionCost((prev) => prev + doneEvent.cost!)
           if (doneEvent.tokensIn != null) setSessionTokensIn((prev) => prev + doneEvent.tokensIn!)
@@ -253,6 +356,9 @@ export function useAgent() {
 
     const unsubDone = window.cerpAPI.onAgentDone(() => {
       if (!acceptingRef.current) return // Ignore stale events after conversation switch
+      // Bug #4: while waiting for the agent to resume after ask_user_question answers,
+      // do not reset isStreaming/isPending — that would cause a blank loading gap.
+      if (waitingAfterAnswerRef.current) return
       // Force stop everything
       setIsStreaming(false)
       setIsPending(false)
@@ -296,6 +402,7 @@ export function useAgent() {
 
   const sendPrompt = useCallback(async (prompt: string, cwd?: string, activeContextId?: string) => {
     acceptingRef.current = true // Accept events for this new prompt
+    waitingAfterAnswerRef.current = false // Clear answer-wait gate on new user prompt
     setError(null)
     setIsStreaming(true)
     setIsPending(true) // Show loader immediately — before the first stream event arrives
@@ -340,6 +447,7 @@ export function useAgent() {
     setPendingQuestions(null)
     setIsSubmittingAnswers(false)
     needsNewAssistantRef.current = false
+    waitingAfterAnswerRef.current = false
     currentDelegationRef.current = null
   }, [])
 
@@ -369,6 +477,10 @@ export function useAgent() {
     }])
 
     setIsSubmittingAnswers(true)
+    // Bug #4: arm the waitingAfterAnswer gate BEFORE calling submitUserAnswers.
+    // This prevents any stale `done`/`onAgentDone` from resetting isStreaming/isPending
+    // while the agent is resuming. The gate is cleared on the first real stream event.
+    waitingAfterAnswerRef.current = true
     // Re-arm activity indicators so the user sees a "trabajando..." state in the
     // window between closing the widget and the agent's next text event.
     // Without these, isStreaming may already be false (turn done event arrived
@@ -394,6 +506,7 @@ export function useAgent() {
     setPendingQuestions(null)
     setIsSubmittingAnswers(false)
     needsNewAssistantRef.current = false
+    waitingAfterAnswerRef.current = false
     currentDelegationRef.current = null
     toolsRef.current = []
     setSessionCost(0)
@@ -413,6 +526,7 @@ export function useAgent() {
     setPendingQuestions(null)
     setIsSubmittingAnswers(false)
     needsNewAssistantRef.current = false
+    waitingAfterAnswerRef.current = false
     currentDelegationRef.current = null
     toolsRef.current = []
     setSessionCost(0)
