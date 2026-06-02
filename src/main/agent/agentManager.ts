@@ -239,14 +239,22 @@ async function startSession(
   // shipped as a per-platform optional dependency (e.g. @anthropic-ai/claude-agent-sdk-win32-x64/claude.exe).
   // We resolve that binary explicitly because Electron's asar / require.resolve can't find it
   // reliably (see the SDK README note on bundled executables).
-  // NOTE: linux-musl variants are not distinguished here (glibc assumed) — follow-up if we ship musl.
+  // npm may HOIST the platform package to the top-level node_modules (dev) or NEST it under
+  // claude-agent-sdk/node_modules (production CI build) — the layout is non-deterministic, so we
+  // probe both. NOTE: linux-musl variants are not distinguished here (glibc assumed).
   const platformPkg = `claude-agent-sdk-${process.platform}-${process.arch}`
   const binName = process.platform === 'win32' ? 'claude.exe' : 'claude'
-  const sdkCliPath = join(
-    __dirname, '..', '..', 'node_modules', '@anthropic-ai', platformPkg, binName,
-  ).replace('app.asar', 'app.asar.unpacked')
+  const appRoot = join(__dirname, '..', '..').replace('app.asar', 'app.asar.unpacked')
+  const fsMod = require('fs')
+  const binCandidates = [
+    // hoisted (typical in dev)
+    join(appRoot, 'node_modules', '@anthropic-ai', platformPkg, binName),
+    // nested under the SDK package (typical in the packaged CI build)
+    join(appRoot, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'node_modules', '@anthropic-ai', platformPkg, binName),
+  ]
+  const sdkCliPath = binCandidates.find((p: string) => fsMod.existsSync(p)) ?? binCandidates[0]
 
-  logger.info(`SDK native binary path: ${sdkCliPath} (exists: ${require('fs').existsSync(sdkCliPath)})`)
+  logger.info(`SDK native binary path: ${sdkCliPath} (exists: ${fsMod.existsSync(sdkCliPath)})`)
   logger.info(`Electron execPath: ${process.execPath}`)
 
   const options: Record<string, unknown> = {
