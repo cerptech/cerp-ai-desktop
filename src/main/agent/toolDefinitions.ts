@@ -802,6 +802,12 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'POST',
     endpoint: '/quotes/consume-free',
   },
+  quote_consume_unlimited: {
+    description: 'Registra una cotización para empresas con el plan CERP IA Ilimitado. Llamar SOLO si quote_eligibility devolvió unlimited=true. No hay cobro ni consumo de cuota. Devuelve el quote creado con su id para usarlo en quote_register_files.',
+    schema: z.object({}),
+    method: 'POST',
+    endpoint: '/quotes/consume-unlimited',
+  },
   quote_purchase_extra: {
     description: 'Cobra €19,99 al método de pago guardado (off-session). PEDIR CONFIRMACIÓN AL USUARIO ANTES de llamar esto. Si Stripe pide autenticación adicional (SCA), devolverá fallbackCheckoutUrl que el usuario debe abrir.',
     schema: z.object({}),

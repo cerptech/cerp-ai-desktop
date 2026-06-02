@@ -212,6 +212,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
   })
 
+  // Quotes: consume-unlimited (CERP IA Ilimitado add-on)
+  ipcMain.handle(IPC_CHANNELS.QUOTES_CONSUME_UNLIMITED, async () => {
+    try {
+      return await httpClient.post('/quotes/consume-unlimited', {})
+    } catch (err) {
+      logger.error('Failed to consume unlimited quote:', err)
+      return null
+    }
+  })
+
   // Quotes: list (for history)
   ipcMain.handle(IPC_CHANNELS.QUOTES_LIST, async (_event, { page, pageSize }: { page?: number; pageSize?: number } = {}) => {
     try {

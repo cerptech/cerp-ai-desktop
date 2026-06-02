@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { AGENTS } from '@/components/agents/agentConfig'
-import type { ToolExecution } from '@/hooks/useAgent'
+import type { ToolExecution, SubagentStep } from '@/hooks/useAgent'
 import {
-  truncateMiddle,
   getToolHumanLabel,
   formatToolInput,
   summarizeToolOutput,
@@ -76,22 +75,99 @@ function StepStatusIcon({ status }: { status: ToolExecution['status'] }) {
 // Individual step row (used in expanded list)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// SubagentStepRow — a single inner tool call from a delegated subagent
+// ---------------------------------------------------------------------------
+
+function SubagentStepRow({ step }: { step: SubagentStep }) {
+  const [showOutput, setShowOutput] = useState(false)
+  const duration = step.endTime && step.startTime ? step.endTime - step.startTime : null
+  const label = getToolHumanLabel(step.name)
+  const inputFormatted = formatToolInput(step.name, step.input)
+  const outputSummary = step.status !== 'running' ? summarizeToolOutput(step.name, step.output) : null
+
+  return (
+    <div>
+      <button
+        onClick={() => step.output ? setShowOutput(!showOutput) : undefined}
+        className={`flex items-start gap-1.5 text-left w-full ${step.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors py-0.5`}
+        title={inputFormatted?.tooltip}
+      >
+        <span className="shrink-0 mt-0.5">
+          <StepStatusIcon status={step.status} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className={`text-[11px] font-medium ${step.status === 'error' ? 'text-error' : step.status === 'running' ? 'text-brand-orange' : 'text-slate-500'}`}>
+              {label}
+            </span>
+            {duration !== null && (
+              <span className="text-[10px] text-slate-400">{formatDuration(duration)}</span>
+            )}
+            {step.status === 'running' && <ElapsedTime startTime={step.startTime} />}
+          </div>
+          {inputFormatted && (
+            <span
+              className="block mt-0 font-mono text-[10px] text-slate-400 truncate max-w-[340px]"
+              title={inputFormatted.tooltip ?? inputFormatted.display}
+            >
+              {inputFormatted.display}
+            </span>
+          )}
+          {outputSummary && (
+            <span className="block text-[10px] text-slate-400 italic">{outputSummary}</span>
+          )}
+        </div>
+      </button>
+      {showOutput && step.output && (
+        <pre className="mt-1 ml-5 p-2 bg-slate-900 text-slate-300 rounded-md text-[10px] font-mono overflow-x-auto max-h-32 overflow-y-auto leading-relaxed">
+          {step.output}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ToolStep — a single orchestrator-level tool, with optional nested subagent steps
+// ---------------------------------------------------------------------------
+
 function ToolStep({ tool }: { tool: ToolExecution }) {
   const [showOutput, setShowOutput] = useState(false)
+  const [subStepsExpanded, setSubStepsExpanded] = useState(true)
   const duration = tool.endTime && tool.startTime ? tool.endTime - tool.startTime : null
 
-  // Resolve agent name for Agent delegation tools
-  const resolvedAgentName = tool.name === 'Agent' && tool.agentName
+  const isAgentTool = tool.name === 'Agent' || tool.name === 'Task'
+
+  // Resolve agent name for Agent/Task delegation tools
+  const resolvedAgentName = isAgentTool && tool.agentName
     ? (AGENTS.find((a) => a.name === tool.agentName)?.label ?? tool.agentName)
     : undefined
 
-  const label = resolvedAgentName
-    ? `Delegando a ${resolvedAgentName}`
-    : getToolHumanLabel(tool.name, tool.agentName)
+  const subSteps = tool.subagentSteps ?? []
+  const subStepsRunning = subSteps.filter((s) => s.status === 'running').length
+  const subStepsDone = subSteps.filter((s) => s.status !== 'running').length
+  const hasSubSteps = subSteps.length > 0
 
-  const inputFormatted = formatToolInput(tool.name, tool.input)
+  // Label for Agent/Task tools — show step count while running
+  let label: string
+  if (resolvedAgentName) {
+    if (tool.status === 'running') {
+      label = hasSubSteps
+        ? `${resolvedAgentName} · ${subSteps.length} paso${subSteps.length !== 1 ? 's' : ''} · trabajando...`
+        : `Delegando a ${resolvedAgentName}`
+    } else {
+      label = hasSubSteps
+        ? `${resolvedAgentName} · ${subSteps.length} paso${subSteps.length !== 1 ? 's' : ''}`
+        : `${resolvedAgentName}`
+    }
+  } else {
+    label = getToolHumanLabel(tool.name, tool.agentName)
+  }
+
+  const inputFormatted = isAgentTool ? null : formatToolInput(tool.name, tool.input)
   const outputSummary =
-    tool.status !== 'running' ? summarizeToolOutput(tool.name, tool.output) : null
+    tool.status !== 'running' && !isAgentTool ? summarizeToolOutput(tool.name, tool.output) : null
 
   const labelColor =
     tool.status === 'error'
@@ -103,8 +179,14 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
   return (
     <div>
       <button
-        onClick={() => tool.output && setShowOutput(!showOutput)}
-        className={`flex items-start gap-2 text-left w-full ${tool.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors`}
+        onClick={() => {
+          if (isAgentTool && hasSubSteps) {
+            setSubStepsExpanded(!subStepsExpanded)
+          } else if (tool.output) {
+            setShowOutput(!showOutput)
+          }
+        }}
+        className={`flex items-start gap-2 text-left w-full ${(isAgentTool && hasSubSteps) || tool.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors`}
         title={inputFormatted?.tooltip}
       >
         {/* Status icon */}
@@ -115,14 +197,23 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
         <div className="min-w-0 flex-1">
           {/* Label row */}
           <div className="flex items-center gap-1 flex-wrap">
+            {/* Expand/collapse indicator for delegation tools with sub-steps */}
+            {isAgentTool && hasSubSteps && (
+              <span className={`text-[10px] text-slate-400 transition-transform duration-150 ${subStepsExpanded ? 'rotate-90' : ''}`}>
+                &#9654;
+              </span>
+            )}
             <span className={`text-xs font-medium ${labelColor}`}>{label}</span>
             {duration !== null && (
               <span className="text-[10px] text-slate-400">{formatDuration(duration)}</span>
             )}
-            {tool.status === 'running' && <ElapsedTime startTime={tool.startTime} />}
+            {tool.status === 'running' && !hasSubSteps && <ElapsedTime startTime={tool.startTime} />}
+            {tool.status === 'running' && hasSubSteps && subStepsRunning > 0 && (
+              <LoadingSpinner size="sm" />
+            )}
           </div>
 
-          {/* Input hint */}
+          {/* Input hint (non-agent tools) */}
           {inputFormatted && (
             <span
               className="block mt-0.5 font-mono text-[11px] text-slate-400 truncate max-w-[380px]"
@@ -132,17 +223,39 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
             </span>
           )}
 
-          {/* Output summary (only for done/error steps) */}
+          {/* Output summary (done non-agent steps) */}
           {outputSummary && (
             <span className="block mt-0.5 text-[10px] text-slate-400 italic">
               {outputSummary}
             </span>
           )}
+
+          {/* Subagent live reasoning text (Fase 2, forwardSubagentText) */}
+          {isAgentTool && tool.status === 'running' && tool.subagentText && (
+            <span className="block mt-0.5 text-[10px] text-slate-400 italic truncate max-w-[380px]">
+              {tool.subagentText.split('\n')[0].slice(0, 120)}
+            </span>
+          )}
         </div>
       </button>
 
-      {/* Expandable raw output */}
-      {showOutput && tool.output && (
+      {/* Nested subagent steps — indented, expandable */}
+      {isAgentTool && hasSubSteps && subStepsExpanded && (
+        <div className="ml-6 mt-1 border-l border-slate-200 pl-3 space-y-0.5">
+          {subSteps.map((step, i) => (
+            <SubagentStepRow key={`${step.name}-${i}`} step={step} />
+          ))}
+          {/* Summary of finished sub-steps while still running */}
+          {tool.status === 'running' && subStepsDone > 0 && subStepsRunning === 0 && (
+            <span className="block text-[10px] text-slate-400 italic pt-0.5">
+              {subStepsDone} paso{subStepsDone !== 1 ? 's' : ''} completado{subStepsDone !== 1 ? 's' : ''} · esperando resultado...
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Expandable raw output (non-agent tools) */}
+      {!isAgentTool && showOutput && tool.output && (
         <pre className="mt-1 ml-6 p-2 bg-slate-900 text-slate-300 rounded-md text-[10px] font-mono overflow-x-auto max-h-40 overflow-y-auto leading-relaxed">
           {tool.output}
         </pre>

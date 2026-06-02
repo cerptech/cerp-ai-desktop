@@ -67,6 +67,12 @@ let sessionContextId: string | null = null
 let mainWindowRef: BrowserWindow | null = null
 let processingTurn = false
 
+// Active delegation registry: Agent/Task tool_use_id → agentName
+// Populated when the orchestrator emits an Agent tool_use block; used to
+// attach a human-readable label to every inner event the subagent emits
+// (which carry parent_tool_use_id = that tool_use_id).
+const activeDelegations = new Map<string, string>()
+
 // Plan Mode — when true the agent uses permissionMode:'plan' and cannot execute
 // write operations. The user reviews the plan and resumes in normal mode.
 let planModeEnabled = false
@@ -132,6 +138,7 @@ export function closeSession(): void {
   sessionContextId = null
   processingTurn = false
   cachedContextPrompt = null
+  activeDelegations.clear()
   setAskUserWindow(null)
   logger.info('Session closed')
 }
@@ -228,13 +235,18 @@ async function startSession(
     instructions: a.systemPrompt,
   }))
 
-  // In production builds, the SDK is unpacked from asar to app.asar.unpacked
-  // __dirname is out/main/ so we go up 2 levels to reach the app root
+  // SDK 0.3.x no longer ships a bundled `cli.js`. It spawns a NATIVE Claude Code binary
+  // shipped as a per-platform optional dependency (e.g. @anthropic-ai/claude-agent-sdk-win32-x64/claude.exe).
+  // We resolve that binary explicitly because Electron's asar / require.resolve can't find it
+  // reliably (see the SDK README note on bundled executables).
+  // NOTE: linux-musl variants are not distinguished here (glibc assumed) — follow-up if we ship musl.
+  const platformPkg = `claude-agent-sdk-${process.platform}-${process.arch}`
+  const binName = process.platform === 'win32' ? 'claude.exe' : 'claude'
   const sdkCliPath = join(
-    __dirname, '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js',
+    __dirname, '..', '..', 'node_modules', '@anthropic-ai', platformPkg, binName,
   ).replace('app.asar', 'app.asar.unpacked')
 
-  logger.info(`SDK CLI path: ${sdkCliPath} (exists: ${require('fs').existsSync(sdkCliPath)})`)
+  logger.info(`SDK native binary path: ${sdkCliPath} (exists: ${require('fs').existsSync(sdkCliPath)})`)
   logger.info(`Electron execPath: ${process.execPath}`)
 
   const options: Record<string, unknown> = {
@@ -242,10 +254,10 @@ async function startSession(
     systemPrompt: fullSystemPrompt,
     cwd,
     pathToClaudeCodeExecutable: sdkCliPath,
-    // Use Electron's built-in Node.js to spawn cli.js — no external Node required
+    // SDK 0.3.x: spawn the NATIVE Claude Code binary directly (no Electron-as-node / cli.js).
     spawnClaudeCodeProcess: (spawnOpts: any) => {
       const { spawn } = require('child_process')
-      // Find git-bash — required by Claude Code SDK on Windows
+      // Find git-bash — required by Claude Code on Windows
       let gitBashPath = process.env.CLAUDE_CODE_GIT_BASH_PATH || ''
       if (!gitBashPath && process.platform === 'win32') {
         const { existsSync } = require('fs')
@@ -264,18 +276,19 @@ async function startSession(
         ...process.env,
         ...(spawnOpts?.options?.env || {}),
         ANTHROPIC_API_KEY: apiKey,
-        ELECTRON_RUN_AS_NODE: '1',
         ...(gitBashPath ? { CLAUDE_CODE_GIT_BASH_PATH: gitBashPath } : {}),
       }
+      // The native binary doesn't run under Electron's Node — strip the flag if present.
+      delete (spawnEnv as Record<string, unknown>).ELECTRON_RUN_AS_NODE
       const spawnArgs = spawnOpts?.args || []
       const spawnCwd = spawnOpts?.options?.cwd || cwd
-      logger.info(`Spawning CLI: ${process.execPath} [ELECTRON_RUN_AS_NODE=1] ${sdkCliPath} ${spawnArgs.join(' ').slice(0, 100)}`)
+      logger.info(`Spawning native CLI: ${sdkCliPath} ${spawnArgs.join(' ').slice(0, 100)}`)
       const child = spawn(
-        process.execPath,
-        [sdkCliPath, ...spawnArgs],
+        sdkCliPath,
+        spawnArgs,
         { ...spawnOpts?.options, cwd: spawnCwd, env: spawnEnv },
       )
-      // Capture stderr to diagnose exit code 1
+      // Capture stderr to diagnose non-zero exits
       child.stderr?.on('data', (data: Buffer) => {
         logger.error(`CLI stderr: ${data.toString().trim()}`)
       })
@@ -287,7 +300,6 @@ async function startSession(
     env: {
       ...process.env,
       ANTHROPIC_API_KEY: apiKey,
-      ELECTRON_RUN_AS_NODE: '1',
     },
     mcpServers: {
       cerp: cerpMcpServer,
@@ -304,7 +316,14 @@ async function startSession(
     maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
     includePartialMessages: true,
     promptSuggestions: true,
-    effort: 'high',
+    // 'medium' keeps the agent responsive: 'high' triggers long extended-reasoning
+    // pauses with no visible output, which reads as "frozen" in a live desktop UI.
+    effort: 'medium',
+    // Fase 2: forward subagent text/reasoning deltas so we can render them
+    // inside the delegation card in real-time. Requires SDK >= 0.2.119.
+    // When true, assistant messages from subagents (parent_tool_use_id set)
+    // include full text blocks, not just tool_use/tool_result heartbeats.
+    forwardSubagentText: true,
   }
 
   logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd}, planMode: ${planModeEnabled})`)
@@ -352,6 +371,21 @@ async function processStreamLoop(): Promise<void> {
 
   let activeTaskCount = 0
 
+  // Heartbeat: keep the renderer's "IA activa" badge alive during long SILENT gaps.
+  // The for-await loop BLOCKS while awaiting the next SDK message, so during a multi-minute
+  // pause (e.g. a background subagent generating with no parent stream_events) nothing is
+  // forwarded and the renderer's safety timer would flip the badge to inactive even though
+  // the agent is actively working. A standalone interval forwards a lightweight stream_start
+  // every 5s WHILE actively processing — a background task is running (`activeTaskCount > 0`)
+  // OR a turn is in progress (`processingTurn`). It stops emitting on its own once the turn
+  // completes (processingTurn=false, activeTaskCount=0) and is cleared in `finally`.
+  const heartbeat = setInterval(() => {
+    if (!mainWindowRef || mainWindowRef.isDestroyed()) return
+    if (activeTaskCount > 0 || processingTurn) {
+      sendEvent({ type: 'stream_start' })
+    }
+  }, 5000)
+
   try {
     for await (const msg of activeQuery) {
       if (!mainWindowRef || mainWindowRef.isDestroyed()) break
@@ -367,6 +401,10 @@ async function processStreamLoop(): Promise<void> {
         if (msgSubtype === 'task_started') {
           activeTaskCount++
           processingTurn = true
+          // Bug #2 fix: send an explicit stream_start event so the renderer
+          // badge flips to "activa" immediately, regardless of whether
+          // isStreaming was reset by a stale done event from a prior turn.
+          sendEvent({ type: 'stream_start' })
           logger.info(`Background task started (${activeTaskCount} active)`)
         } else if (msgSubtype === 'task_notification') {
           activeTaskCount = Math.max(0, activeTaskCount - 1)
@@ -378,16 +416,64 @@ async function processStreamLoop(): Promise<void> {
         }
       }
 
-      // Track turn state
+      // Track turn state (the heartbeat interval handles keep-alive during silent gaps)
       if (msgType === 'assistant' || msgType === 'stream_event') {
         processingTurn = true
       }
 
-      // Skip subagent messages from rendering in the main chat
-      // Messages from background tasks have parent_tool_use_id set
-      const parentToolId = (msgObj as any).parent_tool_use_id
-      if (parentToolId && (msgType === 'assistant' || msgType === 'tool_result' || msgType === 'user')) {
-        continue // Don't forward subagent internals to UI
+      // ── Subagent inner activity routing ──────────────────────────────────
+      // Messages from inside a subagent carry parent_tool_use_id = the Agent
+      // tool_use_id that spawned them. We route these to dedicated subagent
+      // events instead of discarding them.
+      const parentToolUseId = (msgObj as any).parent_tool_use_id as string | null | undefined
+      if (parentToolUseId) {
+        const agentName = activeDelegations.get(parentToolUseId) ?? 'agente'
+
+        if (msgType === 'assistant') {
+          // The subagent is making tool calls and/or writing text.
+          const message = msgObj.message as { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }> } | undefined
+          if (message?.content) {
+            for (const block of message.content) {
+              if (block.type === 'tool_use' && block.name && block.id) {
+                // Inner tool call by the subagent — keyed by its own tool_use id.
+                sendEvent({
+                  type: 'subagent_tool_start',
+                  parentToolUseId,
+                  toolUseId: block.id,
+                  agentName,
+                  name: block.name,
+                  input: extractInputStr(block.input as Record<string, unknown> | undefined),
+                })
+                logger.debug(`Subagent ${agentName}: tool_start ${block.name} (${block.id})`)
+              } else if (block.type === 'text' && block.text) {
+                // forwardSubagentText: text/reasoning from the subagent in real-time
+                sendEvent({
+                  type: 'subagent_text',
+                  parentToolUseId,
+                  agentName,
+                  text: block.text,
+                })
+              }
+            }
+          }
+        } else if (msgType === 'user') {
+          // The subagent's tool RESULTS arrive as `user` messages whose content blocks
+          // are tool_result (NOT a top-level tool_result message). Key done by tool_use_id.
+          const message = msgObj.message as { content?: Array<{ type: string; tool_use_id?: string; content?: unknown; is_error?: boolean }> } | undefined
+          for (const block of message?.content ?? []) {
+            if (block.type === 'tool_result' && block.tool_use_id) {
+              sendEvent({
+                type: 'subagent_tool_done',
+                parentToolUseId,
+                toolUseId: block.tool_use_id,
+                output: extractToolResultOutput(block.content),
+                isError: block.is_error,
+              })
+              logger.debug(`Subagent ${agentName}: tool_done (${block.tool_use_id})`)
+            }
+          }
+        }
+        continue
       }
 
       // Map and forward events
@@ -425,6 +511,7 @@ async function processStreamLoop(): Promise<void> {
     }
     sendDone()
   } finally {
+    clearInterval(heartbeat)
     processingTurn = false
     activeQuery = null
     // Always ensure UI resets — covers budget exceeded, errors, etc.
@@ -602,37 +689,55 @@ export function resetContextCache(): void {
 // Message mapping
 // ============================================================
 
+/** Extract a short input summary string from a tool_use block's input object. */
+function extractInputStr(input: Record<string, unknown> | undefined): string {
+  if (!input) return ''
+  if (input.command) return String(input.command).substring(0, 200)
+  if (input.file_path) return String(input.file_path)
+  if (input.pattern) return String(input.pattern)
+  if (input.prompt) return String(input.prompt).substring(0, 150)
+  if (input.description) return String(input.description).substring(0, 150)
+  return JSON.stringify(input).substring(0, 200)
+}
+
+/** Extract a short output string from a tool_result block's `content` (string or block array). */
+function extractToolResultOutput(content: unknown): string {
+  if (typeof content === 'string') return content.substring(0, 800)
+  if (Array.isArray(content)) {
+    return content.map((c: any) => (typeof c === 'string' ? c : c?.text || '')).join('').substring(0, 800)
+  }
+  return ''
+}
+
 function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStreamEvent[] | null {
   const type = msg.type as string
   const subtype = msg.subtype as string | undefined
 
   // Assistant message with text and/or tool_use blocks
   if (type === 'assistant') {
-    const content = msg.message as { content?: Array<{ type: string; text?: string; name?: string; input?: unknown }> }
+    const content = msg.message as { content?: Array<{ type: string; id?: string; text?: string; name?: string; input?: unknown }> }
     if (content?.content) {
       const events: AgentStreamEvent[] = []
       for (const block of content.content) {
         if (block.type === 'text' && block.text) {
           events.push({ type: 'text', text: block.text })
         }
-        if (block.type === 'tool_use' && block.name) {
+        if (block.type === 'tool_use' && block.name && block.id) {
           const input = block.input as Record<string, unknown> | undefined
-          let inputStr = ''
-          if (input) {
-            if (input.command) inputStr = String(input.command).substring(0, 200)
-            else if (input.file_path) inputStr = String(input.file_path)
-            else if (input.pattern) inputStr = String(input.pattern)
-            else if (input.prompt) inputStr = String(input.prompt).substring(0, 150)
-            else if (input.description) inputStr = String(input.description).substring(0, 150)
-            else inputStr = JSON.stringify(input).substring(0, 200)
-          }
-          events.push({ type: 'tool_start', name: block.name, input: inputStr })
-
-          if (block.name === 'Agent' && input) {
-            const agentName = String(input.agent_name || input.name || input.subagent_type || '').trim()
-            const task = String(input.prompt || input.description || '').substring(0, 150)
+          const inputStr = extractInputStr(input)
+          const toolUseId = block.id as string
+          // Every tool_start carries its tool_use id. The renderer keys the
+          // ToolExecution by it and marks it done when the matching tool_result arrives.
+          events.push({ type: 'tool_start', toolUseId, name: block.name, input: inputStr })
+          // Agent (was 'Task' before Claude Code v2.1.63) — register the delegation so
+          // the subagent's inner events resolve the agent name, and emit agent_delegation.
+          if (block.name === 'Agent' || block.name === 'Task') {
+            const agentName = String(input?.agent_name || input?.name || input?.subagent_type || '').trim()
+            const task = String(input?.prompt || input?.description || '').substring(0, 150)
+            activeDelegations.set(toolUseId, agentName || 'agente')
+            logger.debug(`Delegation registered: ${toolUseId} → ${agentName || 'agente'}`)
             if (agentName) {
-              events.push({ type: 'agent_delegation', agentName, task })
+              events.push({ type: 'agent_delegation', toolUseId, agentName, task })
             }
           }
         }
@@ -641,17 +746,25 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     }
   }
 
-  // Tool result
-  if (type === 'tool_result') {
-    const name = (msg as any).name as string || 'tool'
-    const content = (msg as any).content
-    let output = ''
-    if (typeof content === 'string') {
-      output = content.substring(0, 800)
-    } else if (Array.isArray(content)) {
-      output = content.map((c: any) => c.text || '').join('').substring(0, 800)
+  // Tool results from the orchestrator's own tools arrive as `type:'user'` messages
+  // whose content blocks are `{ type:'tool_result', tool_use_id, content, is_error }`.
+  // (There is NO top-level `type:'tool_result'` message in the SDK 0.3.x stream.)
+  // Key the done event by tool_use_id so it matches the right tool_start regardless of name.
+  if (type === 'user') {
+    const message = msg.message as { content?: Array<{ type: string; tool_use_id?: string; content?: unknown; is_error?: boolean }> } | undefined
+    const events: AgentStreamEvent[] = []
+    for (const block of message?.content ?? []) {
+      if (block.type === 'tool_result' && block.tool_use_id) {
+        activeDelegations.delete(block.tool_use_id) // no-op unless it was an Agent delegation
+        events.push({
+          type: 'tool_done',
+          toolUseId: block.tool_use_id,
+          output: extractToolResultOutput(block.content),
+          isError: block.is_error,
+        })
+      }
     }
-    return { type: 'tool_done', name, output }
+    return events.length ? events : null
   }
 
   // Prompt suggestions

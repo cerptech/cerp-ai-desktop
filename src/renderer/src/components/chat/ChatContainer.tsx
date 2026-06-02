@@ -61,21 +61,28 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, activeTool, pendingQuestions])
 
-  // Expose restoreMessages and clearMessages to parent via refs
-  // Wrap to also reset persistence-tracking refs on conversation switch
+  // ── Conversation persistence (fire-and-forget) ──────────────────────────
+  // Track already-persisted messages by a STABLE key (timestamp+role), not by a
+  // length counter. A counter desyncs across conversation switches/clears and
+  // silently drops new messages (the "my messages disappear" bug). A key set
+  // never desyncs: each message is persisted exactly once, ever.
+  const persistedKeysRef = useRef<Set<string>>(new Set())
+  const msgKey = (m: ChatMessage): string => `${m.timestamp}:${m.role}`
+
+  // Expose restoreMessages and clearMessages to parent via refs.
+  // On restore, the loaded messages are ALREADY in the backend → seed the set so
+  // they're never re-persisted. On clear, reset so the next conversation is fresh.
   useEffect(() => {
     if (restoreMessagesRef) {
       restoreMessagesRef.current = (msgs: ChatMessage[]) => {
         restoreMessages(msgs)
-        prevMessageCountRef.current = msgs.length
-        wasStreamingRef.current = false
+        persistedKeysRef.current = new Set(msgs.map(msgKey))
       }
     }
     if (clearMessagesRef) {
       clearMessagesRef.current = () => {
         clearMessages()
-        prevMessageCountRef.current = 0
-        wasStreamingRef.current = false
+        persistedKeysRef.current = new Set()
       }
     }
   }, [restoreMessages, clearMessages, restoreMessagesRef, clearMessagesRef])
@@ -92,35 +99,22 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     onSessionActiveChange?.(isStreaming || isPending || !!pendingQuestions)
   }, [isStreaming, isPending, pendingQuestions, onSessionActiveChange])
 
-  // Sync completed messages to backend (fire-and-forget)
-  const prevMessageCountRef = useRef(0)
+  // Persist each message exactly once: user messages immediately, assistant
+  // messages once streaming stops (so we store the final content + tools).
   useEffect(() => {
     if (!onMessageComplete) return
-    const count = messages.length
-    if (count > prevMessageCountRef.current) {
-      const newMessages = messages.slice(prevMessageCountRef.current)
-      for (const msg of newMessages) {
-        if (msg.role === 'user') {
-          onMessageComplete(msg)
-        } else if (msg.role === 'assistant' && !isStreaming) {
-          onMessageComplete(msg)
-        }
+    for (const msg of messages) {
+      const key = msgKey(msg)
+      if (persistedKeysRef.current.has(key)) continue
+      if (msg.role === 'user') {
+        persistedKeysRef.current.add(key)
+        onMessageComplete(msg)
+      } else if (msg.role === 'assistant' && !isStreaming && (msg.content || msg.tools?.length)) {
+        persistedKeysRef.current.add(key)
+        onMessageComplete(msg)
       }
     }
-    prevMessageCountRef.current = count
   }, [messages, isStreaming, onMessageComplete])
-
-  // When streaming stops, sync the last assistant message
-  const wasStreamingRef = useRef(false)
-  useEffect(() => {
-    if (wasStreamingRef.current && !isStreaming && onMessageComplete) {
-      const lastMsg = messages[messages.length - 1]
-      if (lastMsg?.role === 'assistant') {
-        onMessageComplete(lastMsg)
-      }
-    }
-    wasStreamingRef.current = isStreaming
-  }, [isStreaming, messages, onMessageComplete])
 
   // Track agent activity from delegation events
   useEffect(() => {
@@ -309,33 +303,21 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
                 />
               )
             })}
-            {/* Fix #8: Persistent "Trabajando..." bubble — always visible while agent is active.
-                The standalone bubble is suppressed ONLY when the ThinkingLoader is already
-                rendered inside the last assistant bubble (i.e. streaming=true, showThoughts=false,
-                and the assistant has tools but no text content yet — that's the one case where
-                the inner loader is sufficient).  In every other streaming state this bubble
-                must remain visible so the user always has a clear activity indicator. */}
+            {/* Standalone "Trabajando..." loader — shown ONLY during the initial gap, before
+                the assistant bubble exists. Once the assistant message is rendering, its own
+                inline indicator (tools "trabajando..." / blinking cursor) covers the state, so
+                we never show a second redundant bubble. */}
             {(isPending || isStreaming) && (() => {
               const lastMsg = messages[messages.length - 1]
               const noAssistantYet = !lastMsg || lastMsg.role !== 'assistant'
-              const lastHasTools = (lastMsg?.role === 'assistant' && (lastMsg.tools?.length ?? 0) > 0)
-              const lastHasContent = lastMsg?.role === 'assistant' && !!lastMsg.content
-              // The inner ThinkingLoader IS visible when:
-              //   - streaming is active
-              //   - showThoughts is off (the thought panel is collapsed)
-              //   - the assistant bubble has tools OR has no content yet
-              const innerLoaderVisible = isStreaming && !showThoughts && (lastHasTools || !lastHasContent)
-              // Show standalone loader in every case EXCEPT when the inner loader already covers it
-              if (!innerLoaderVisible || isPending || noAssistantYet) {
-                return (
-                  <div className="flex justify-start mb-4">
-                    <div className="rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-2 shadow-sm">
-                      <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} />
-                    </div>
+              if (!noAssistantYet) return null
+              return (
+                <div className="flex justify-start mb-4">
+                  <div className="rounded-2xl rounded-bl-md bg-white border border-slate-200 px-4 py-2 shadow-sm">
+                    <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} />
                   </div>
-                )
-              }
-              return null
+                </div>
+              )
             })()}
             <div ref={messagesEndRef} />
           </>
