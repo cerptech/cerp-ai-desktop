@@ -15,6 +15,7 @@ const IPC = {
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
   SELECT_FOLDER: 'dialog:select-folder',
+  SELECT_PDF: 'dialog:select-pdf',
   CUSTOM_CONTEXTS_LIST: 'custom:contexts:list',
   CUSTOM_CONTEXT_CREATE: 'custom:context:create',
   CUSTOM_CONTEXT_UPDATE: 'custom:context:update',
@@ -128,6 +129,7 @@ const api = {
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
+  selectPdf: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_PDF),
 
   // ask_user_question: listener for incoming questions + sender for user answers
   onAskUserQuestion: (callback: (questions: AskUserQuestionItem[]) => void): (() => void) => {

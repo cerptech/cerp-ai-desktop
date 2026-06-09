@@ -103,6 +103,21 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return getPlanMode()
   })
 
+  // Dialog: Select PDF file
+  ipcMain.handle(IPC_CHANNELS.SELECT_PDF, async (): Promise<string | null> => {
+    const mainWindow = getMainWindow()
+    if (!mainWindow) return null
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      title: 'Seleccionar PDF para adjuntar',
+      filters: [{ name: 'Documentos PDF', extensions: ['pdf'] }],
+    })
+
+    if (result.canceled || !result.filePaths.length) return null
+    return result.filePaths[0]
+  })
+
   // Dialog: Select folder
   ipcMain.handle(IPC_CHANNELS.SELECT_FOLDER, async (): Promise<string | null> => {
     const mainWindow = getMainWindow()

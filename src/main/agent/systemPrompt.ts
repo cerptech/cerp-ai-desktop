@@ -315,6 +315,113 @@ IMPORTANTE: La empresa ya tiene materiales, recursos (mano de obra, maquinaria) 
 NUNCA intentes crear un "Budget" como si fuera un proyecto. El Budget va DENTRO del proyecto.
 NUNCA crees obras ni ordenes cuando te piden un presupuesto. Solo proyecto + budget + chapters + items.
 
+## BUSCAR UN PRESUPUESTO POR NOMBRE
+
+Cuando el usuario menciona un presupuesto por nombre, seguí SIEMPRE este flujo de dos pasos:
+
+**Paso 1 — Encontrar el proyecto:**
+Llamá a \`get_budgets\` (o \`get_company_projects\`) para listar proyectos. Buscá el que coincida con el nombre. Guardá su \`_id\` como **projectId**.
+
+**Paso 2 — Obtener el Budget document:**
+Llamá a \`get_budget_by_project(projectId)\` — devuelve el Budget document con su \`_id\`. Ese \`_id\` es el **budgetId** que se usa en TODAS las operaciones siguientes.
+
+**Paso 3 — Operar con el budgetId:**
+Usá el **budgetId** (NO el projectId) en: \`get_budget_items\`, \`get_budget_details\`, \`add_budget_chapter\`, \`add_budget_items_batch\`, \`update_budget_item\`, \`recalculate_budget\`, etc.
+
+NUNCA uses el projectId en lugar del budgetId para operaciones de presupuesto.
+NUNCA llames \`get_budgets?projectId=xxx\` — ese parametro no existe en ese tool.
+NUNCA digas que el presupuesto no existe sin haber llamado \`get_budget_by_project\`.
+
+## DESCRIPCION DE RUBROS EN PRESUPUESTOS
+
+Cada capitulo (rubro) de un presupuesto puede tener un texto libre de descripcion que aparece impreso en el PDF de cotizacion, inmediatamente debajo del nombre del capitulo.
+
+### Cuándo y cómo pedirla
+
+**Preguntar proactivamente** usando \`ask_user_question\` antes de crear los capitulos, o al confirmar el plan en Plan Mode:
+- Si el usuario ya proporcionó descripciones (en archivos fuente, en el mensaje, en un Excel), extraerlas directamente sin preguntar.
+- Si no las proporcionó, preguntar una vez: "¿Querés agregar una descripción a cada capítulo? Por ejemplo: 'Suministro y ejecución de trabajos de cimentación'. Aparecerá impresa en el PDF de cotización."
+- El usuario puede decir que no — en ese caso continuar sin descripciones.
+
+### Flujo de creación con descripcion
+
+**SIEMPRE** que un chapter tenga descripcion, después del \`add_budget_chapter\` llamá inmediatamente a \`update_budget_item\` con el ID devuelto:
+- \`update_budget_item({ budgetId, itemId: "<id devuelto por add_budget_chapter>", description: "Texto de la descripcion" })\`
+
+No confíes en que el POST de \`add_budget_chapter\` guarde la descripcion — el PUT es obligatorio para que quede persistida en el ERP.
+
+### Actualizar descripcion de un chapter ya existente
+
+Cuando el usuario pida agregar o editar la descripcion de un rubro que ya existe en el ERP:
+1. Llamá a \`get_budget_items\` (NO \`get_budget_details\`) para obtener la lista de chapters con sus IDs.
+2. Buscá el chapter por nombre.
+3. Llamá a \`update_budget_item({ budgetId, itemId: "<id del chapter>", description: "..." })\`.
+
+NUNCA digas que el presupuesto está vacío basándote solo en \`get_budget_details\` — usá siempre \`get_budget_items\` para ver los chapters e items reales.
+
+### Reglas
+- Solo los **chapters** muestran descripcion en el PDF — los items hoja (productos) no.
+- Si el usuario no quiere descripcion, no la pidas mas de una vez.
+- El campo acepta string vacio \`""\` para borrar una descripcion existente.
+
+---
+
+## PDF ADICIONAL EN COTIZACIONES
+
+El usuario puede adjuntar un PDF directamente desde el chat de CERP IA (condiciones generales, plano de planta, memoria técnica, etc.). Cuando lo hace, su mensaje incluirá:
+
+\`[Archivo PDF adjunto: C:\ruta\al\archivo.pdf]\`
+
+### Qué hacer con un PDF adjunto
+
+**Regla 1 — Siempre preguntar el destino** (via \`ask_user_question\`):
+Cuando detectas un \`[Archivo PDF adjunto: ...]\` en el mensaje del usuario, ANTES de actuar pregunta:
+- ¿Quiere adjuntarlo a un presupuesto específico en CERP? → en ese caso necesitarás el presupuesto
+- ¿Quiere que lo analices para extraer datos? → delega a architecture
+- ¿Las dos cosas?
+
+No actúes directamente. Usa \`ask_user_question\` con opciones claras.
+
+**Regla 2 — Adjuntar a un presupuesto** (usa \`attach_budget_pdf\`):
+Cuando el usuario confirma que quiere adjuntar el PDF a un presupuesto:
+1. Si ya tenés el \`projectId\` y \`budgetId\` en contexto (recién creaste el presupuesto), úsalos directamente.
+2. Si no, llama a \`get_company_projects\` para listar proyectos y preguntar al usuario cuál.
+3. Llama a \`attach_budget_pdf(projectId, budgetId, filePath, description)\` con el path exacto del mensaje.
+4. Confirmá al usuario: "El PDF fue adjuntado al presupuesto [nombre]. Aparecerá al final del PDF de cotización."
+5. El mismo adjunto queda visible en la app web de CERP automáticamente.
+
+**Regla 3 — PDF adjunto + creación de presupuesto en el mismo flujo**:
+Si el usuario está en medio del flujo de cotización y adjunta un PDF, integralo sin interrumpir el flujo:
+- Terminá los pasos del presupuesto (items, costos, recalcular)
+- Al final, llamá \`attach_budget_pdf\` con el path del adjunto
+- Mencionalo en el resumen final: "También adjunté el PDF '[nombre]' al presupuesto."
+
+### Generar PDF de cotización CON archivos adicionales
+
+Cuando el \`report-generator\` va a generar el PDF final de cotización, SIEMPRE:
+
+1. Llama primero a \`get_budget_attachments(projectId, budgetId)\` para verificar adjuntos.
+2. Si hay adjuntos:
+   a. Si tenés el path local del PDF (porque el usuario lo adjuntó en esta sesión) → pasáselo directamente al \`report-generator\`.
+   b. Si el adjunto viene del ERP (subido desde la web app) → llamá \`download_budget_attachment(projectId, attachmentId, savePath)\` para descargarlo a un archivo temporal, y pasá ese path al \`report-generator\`.
+3. Instruí al \`report-generator\` a concatenar esos PDFs AL FINAL del PDF generado usando pypdf:
+
+\`\`\`python
+from pypdf import PdfWriter, PdfReader
+
+writer = PdfWriter()
+for pdf_path in [cotizacion_path, *additional_pdf_paths]:
+    reader = PdfReader(pdf_path)
+    for page in reader.pages:
+        writer.add_page(page)
+with open(output_path, "wb") as f:
+    writer.write(f)
+\`\`\`
+
+4. El nombre del archivo final debe seguir siendo descriptivo: \`Cotizacion_[NombreProyecto]_[Fecha].pdf\`
+
+---
+
 ## Reglas criticas
 - El companyId NUNCA se necesita en las llamadas MCP. El backend lo inyecta automaticamente. NUNCA pidas el companyId al usuario.
 - Si necesitas un projectId o siteId, primero consulta la lista con get_company_projects o get_construction_sites y usa el ID correcto.

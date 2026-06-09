@@ -209,14 +209,21 @@ export const toolSchemas: Record<string, ToolDef> = {
   // BUDGETS — Read & Write
   // ============================================================
   get_budgets: {
-    description: 'Presupuestos de construccion con capitulos, costos directos y totales.',
+    description: 'Lista proyectos/presupuestos de la empresa (en CERP los presupuestos son proyectos con status "budget"). Devuelve el projectId de cada uno. Para obtener el Budget document ID (necesario para items/chapters), usar get_budget_by_project(projectId) con el projectId devuelto aqui.',
     schema: z.object({
-      projectId: z.string().optional(),
-      status: z.enum(['draft', 'approved', 'locked']).optional(),
+      status: z.enum(['budget', 'planning', 'execution', 'monitoring', 'closed']).optional().describe('Filtrar por estado. Para presupuestos en borrador usar "budget"'),
       limit: z.number().min(1).max(50).optional(),
     }),
     method: 'GET',
-    endpoint: '/budgets',
+    endpoint: '/projects',
+  },
+  get_budget_by_project: {
+    description: 'Obtiene el presupuesto (Budget document) de un proyecto dado su projectId. USAR SIEMPRE para obtener el budgetId real despues de encontrar el proyecto con get_budgets o get_company_projects. Devuelve el Budget con su _id, name, status, capitulos y totales. El _id de la respuesta es el budgetId que se usa en get_budget_items, update_budget_item, add_budget_chapter, etc.',
+    schema: z.object({
+      projectId: z.string().describe('ID del proyecto (obtenido de get_budgets o get_company_projects)'),
+    }),
+    method: 'GET',
+    endpoint: '/budgets/project/:projectId',
   },
   get_budget_details: {
     description: 'Detalle de un presupuesto con items y capitulos.',
@@ -245,14 +252,26 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets',
   },
   add_budget_chapter: {
-    description: 'Agrega un capitulo (agrupacion) al presupuesto.',
+    description: 'Agrega un capitulo (agrupacion) al presupuesto. Para guardar la descripcion del capitulo, siempre llamar a update_budget_item despues con el ID devuelto.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       name: z.string().describe('Nombre del capitulo'),
-      description: z.string().optional(),
     }),
     method: 'POST',
     endpoint: '/budgets/:budgetId/chapters',
+  },
+  update_budget_item: {
+    description: 'Actualiza campos de un item o chapter de presupuesto ya creado. Usar principalmente para agregar o editar la descripcion de un rubro (chapter) despues de crearlo, ya que el POST de creacion no acepta description. Tambien sirve para renombrar o cambiar cantidad.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      itemId: z.string().describe('ID del item o chapter a actualizar (obtenido de la respuesta de add_budget_chapter o add_budget_items_batch)'),
+      description: z.string().optional().describe('Descripcion libre del rubro. Aparece impresa en el PDF bajo el nombre del capitulo. Solo se renderiza en chapters (no en items hoja). Pasar string vacio "" para borrar.'),
+      name: z.string().optional().describe('Nuevo nombre del item/chapter (para renombrar)'),
+      quantity: z.number().optional().describe('Nueva cantidad'),
+      overheadOverride: z.number().optional().describe('Override % gastos generales'),
+    }),
+    method: 'PUT',
+    endpoint: '/budgets/:budgetId/items/:itemId',
   },
   add_budget_item: {
     description: 'Agrega un item/partida al presupuesto. REQUIERE un productId del catalogo de materiales de la empresa. Primero busca el producto con search_materials, y si no existe, crealo con create_material.',
@@ -834,6 +853,28 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'POST',
     endpoint: '/quotes/:id/files',
   },
+  // ============================================================
+  // BUDGET ATTACHMENTS — Archivos adicionales del presupuesto
+  // ============================================================
+  get_budget_attachments: {
+    description: 'Lista los archivos PDF adicionales adjuntos a un presupuesto. Llamar antes de generar el PDF de cotizacion para saber si hay PDFs que concatenar al final.',
+    schema: z.object({
+      projectId: z.string().describe('ID del proyecto'),
+      budgetId: z.string().describe('ID del presupuesto'),
+    }),
+    method: 'GET',
+    endpoint: '/projects/:projectId/attachments',
+  },
+  delete_budget_attachment: {
+    description: 'Elimina un archivo PDF adjunto de un presupuesto.',
+    schema: z.object({
+      projectId: z.string().describe('ID del proyecto'),
+      attachmentId: z.string().describe('ID del adjunto a eliminar'),
+    }),
+    method: 'DELETE',
+    endpoint: '/projects/:projectId/attachments/:attachmentId',
+  },
+
   quote_mark_synced: {
     description: 'Marca la cotización como sincronizada a un Budget del SaaS. Llamar después de crear el Budget en CERP via create_budget.',
     schema: z.object({

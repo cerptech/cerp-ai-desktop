@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
 
   // Files
   SELECT_FOLDER: 'dialog:select-folder',
+  SELECT_PDF: 'dialog:select-pdf',
 
   // Custom agents/contexts
   CUSTOM_CONTEXTS_LIST: 'custom:contexts:list',

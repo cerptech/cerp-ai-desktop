@@ -5,6 +5,21 @@ import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
 
+// ── attach_budget_pdf Zod schema ─────────────────────────────────────────────
+
+const AttachBudgetPdfSchema = z.object({
+  projectId: z.string().describe('ID del proyecto al que pertenece el presupuesto.'),
+  budgetId: z.string().describe('ID del presupuesto al que se adjunta el PDF.'),
+  filePath: z.string().describe('Ruta absoluta del PDF en el disco local del usuario.'),
+  description: z.string().optional().describe('Descripcion breve del archivo (ej: "Condiciones generales", "Plano de planta").'),
+})
+
+const DownloadBudgetAttachmentSchema = z.object({
+  projectId: z.string().describe('ID del proyecto.'),
+  attachmentId: z.string().describe('ID del adjunto a descargar (obtenido de get_budget_attachments).'),
+  savePath: z.string().describe('Ruta absoluta local donde guardar el PDF descargado.'),
+})
+
 // ── ask_user_question Zod schema ──────────────────────────────────────────────
 
 const AskUserQuestionOptionSchema = z.object({
@@ -36,6 +51,74 @@ const AskUserQuestionSchema = z.object({
  * companyId is injected automatically into write operations.
  */
 export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null, userId: string | null) {
+  // ── attach_budget_pdf tool ────────────────────────────────────────────────
+  // Reads a local PDF and uploads it to CERP via multipart. The PDF will appear
+  // at the end of the printed cotización in both CERP IA and the ERP web app.
+  const attachBudgetPdfTool = tool(
+    'attach_budget_pdf',
+    'Adjunta un PDF local como archivo adicional de un presupuesto CERP. El PDF aparecerá al final del PDF de cotización generado y también en la app web de CERP. Usar cuando el usuario quiere agregar un documento adicional (condiciones generales, plano, anexo) a una cotización.',
+    AttachBudgetPdfSchema as any,
+    async (args: Record<string, unknown>) => {
+      try {
+        const parsed = AttachBudgetPdfSchema.parse(args)
+        const { readFileSync, existsSync } = require('fs') as typeof import('fs')
+        const { basename } = require('path') as typeof import('path')
+
+        if (!existsSync(parsed.filePath)) {
+          throw new Error(`Archivo no encontrado: ${parsed.filePath}`)
+        }
+
+        const buffer = readFileSync(parsed.filePath)
+        const filename = basename(parsed.filePath)
+
+        const formData = new FormData()
+        formData.append('file', new Blob([buffer], { type: 'application/pdf' }), filename)
+        formData.append('budgetId', parsed.budgetId)
+        if (parsed.description) formData.append('description', parsed.description)
+
+        const result = await httpClient.uploadFile(
+          `/projects/${parsed.projectId}/attachments/upload`,
+          formData,
+        )
+
+        logger.info(`attach_budget_pdf OK: "${filename}" → project ${parsed.projectId} / budget ${parsed.budgetId}`)
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        logger.error(`attach_budget_pdf FAILED: ${message}`)
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true }
+      }
+    },
+    { annotations: { readOnlyHint: false, destructiveHint: false } },
+  )
+
+  // ── download_budget_attachment tool ───────────────────────────────────────
+  // Downloads a PDF from GridFS and saves it locally so the report-generator
+  // can concatenate it to the cotización PDF using Python.
+  const downloadBudgetAttachmentTool = tool(
+    'download_budget_attachment',
+    'Descarga un archivo PDF adjunto de un presupuesto desde CERP y lo guarda localmente. Usar cuando necesitas el PDF físicamente en disco para concatenarlo al PDF de cotización.',
+    DownloadBudgetAttachmentSchema as any,
+    async (args: Record<string, unknown>) => {
+      try {
+        const parsed = DownloadBudgetAttachmentSchema.parse(args)
+
+        await httpClient.downloadFile(
+          `/projects/${parsed.projectId}/attachments/${parsed.attachmentId}/download`,
+          parsed.savePath,
+        )
+
+        logger.info(`download_budget_attachment OK: attachment ${parsed.attachmentId} → ${parsed.savePath}`)
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ savedTo: parsed.savePath }) }] }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        logger.error(`download_budget_attachment FAILED: ${message}`)
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true }
+      }
+    },
+    { annotations: { readOnlyHint: false, destructiveHint: false } },
+  )
+
   // ── ask_user_question tool ────────────────────────────────────────────────
   // Suspends agent execution and shows a structured question widget in the UI.
   const askUserTool = tool(
@@ -129,7 +212,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
   return createSdkMcpServer({
     name: 'cerp',
     version: '2.0.0',
-    tools: [askUserTool, ...cerpApiTools],
+    tools: [askUserTool, attachBudgetPdfTool, downloadBudgetAttachmentTool, ...cerpApiTools],
   })
 }
 
