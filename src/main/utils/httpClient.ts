@@ -5,6 +5,7 @@ function getApiBaseUrl(): string {
 export class HttpClient {
   private getToken: () => string | null
   private onTokenExpired?: () => Promise<void>
+  private isRefreshing = false
 
   constructor(getToken: () => string | null, onTokenExpired?: () => Promise<void>) {
     this.getToken = getToken
@@ -23,6 +24,72 @@ export class HttpClient {
     return this.request('DELETE', path) as Promise<T>
   }
 
+  async uploadFile<T = unknown>(path: string, formData: FormData, retried = false): Promise<T> {
+    const token = this.getToken()
+    if (!token) throw new Error('No auth token available')
+
+    const url = `${getApiBaseUrl()}${path}`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-CERP-Desktop': '1',
+        // Do NOT set Content-Type — fetch sets it automatically with the multipart boundary
+      },
+      body: formData,
+    })
+
+    if (res.status === 401 && !retried && this.onTokenExpired && !this.isRefreshing) {
+      this.isRefreshing = true
+      try {
+        await this.onTokenExpired()
+        return this.uploadFile(path, formData, true)
+      } catch { /* fall through */ } finally {
+        this.isRefreshing = false
+      }
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`API error ${res.status}: ${body}`)
+    }
+
+    return res.json() as Promise<T>
+  }
+
+  async downloadFile(path: string, savePath: string, retried = false): Promise<void> {
+    const token = this.getToken()
+    if (!token) throw new Error('No auth token available')
+
+    const url = `${getApiBaseUrl()}${path}`
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-CERP-Desktop': '1',
+      },
+    })
+
+    if (res.status === 401 && !retried && this.onTokenExpired && !this.isRefreshing) {
+      this.isRefreshing = true
+      try {
+        await this.onTokenExpired()
+        return this.downloadFile(path, savePath, true)
+      } catch { /* fall through */ } finally {
+        this.isRefreshing = false
+      }
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`API error ${res.status}: ${body}`)
+    }
+
+    const { writeFileSync } = require('fs')
+    const buffer = Buffer.from(await res.arrayBuffer())
+    writeFileSync(savePath, buffer)
+  }
+
   async request<T = unknown>(method: string, path: string, data?: unknown, retried = false): Promise<T> {
     const token = this.getToken()
     if (!token) throw new Error('No auth token available')
@@ -38,13 +105,18 @@ export class HttpClient {
       body: data ? JSON.stringify(data) : undefined,
     })
 
-    // Retry once on 401 — token may have expired during a long session
-    if (res.status === 401 && !retried && this.onTokenExpired) {
+    // Retry once on 401 — token may have expired during a long session.
+    // isRefreshing guard prevents re-entry: fetchApiKey also calls request(),
+    // which would otherwise trigger onTokenExpired recursively on a repeated 401.
+    if (res.status === 401 && !retried && this.onTokenExpired && !this.isRefreshing) {
+      this.isRefreshing = true
       try {
         await this.onTokenExpired()
         return this.request(method, path, data, true)
       } catch {
-        // Refresh failed — throw original error
+        // Refresh failed — fall through to throw original error
+      } finally {
+        this.isRefreshing = false
       }
     }
 
