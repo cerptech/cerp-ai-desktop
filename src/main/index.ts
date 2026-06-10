@@ -9,7 +9,7 @@ config({ path: resolve(__dirname, '..', '.env') })
 // Auth0 defaults — these are public client IDs, not secrets
 if (!process.env.AUTH0_DOMAIN) process.env.AUTH0_DOMAIN = 'dev-dg6vz8aqjb8sy36a.us.auth0.com'
 if (!process.env.AUTH0_CLIENT_ID) process.env.AUTH0_CLIENT_ID = 'VWC79LAXocZa4YgLXB9cLabqj1kHJWVb'
-if (!process.env.AUTH0_AUDIENCE) process.env.AUTH0_AUDIENCE = 'https://dev-dg6vz8aqjb8sy36a.us.auth0.com/api/v2/'
+if (!process.env.AUTH0_AUDIENCE) process.env.AUTH0_AUDIENCE = 'https://api.cerp.es'
 
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
