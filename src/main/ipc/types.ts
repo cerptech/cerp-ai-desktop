@@ -6,6 +6,12 @@ export interface ConversationHistoryEntry {
 export interface SendPromptPayload {
   prompt: string
   sessionId?: string
+  /**
+   * Conversación a la que pertenece este prompt. El main mantiene una sesión del
+   * SDK por conversationId, de modo que varias conversaciones corren en paralelo
+   * sin pisarse. Si falta, cae en una sesión por defecto (comportamiento legacy).
+   */
+  conversationId?: string
   cwd?: string
   maxTurns?: number
   maxBudgetUsd?: number

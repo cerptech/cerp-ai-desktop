@@ -109,17 +109,17 @@ interface CerpAPI {
   login(): Promise<AuthState>
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
-  sendPrompt(payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }>
-  abortAgent(): Promise<void>
-  resetSession(): Promise<void>
+  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }>
+  abortAgent(conversationId?: string): Promise<void>
+  resetSession(conversationId?: string): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>
   getPlanMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
-  onAskUserQuestion(callback: (questions: AskUserQuestionItem[]) => void): () => void
-  submitUserAnswers(answers: UserAnswerPayload): Promise<void>
-  onAgentMessage(callback: (event: AgentStreamEvent) => void): () => void
-  onAgentDone(callback: () => void): () => void
-  onAgentError(callback: (err: { message: string }) => void): () => void
+  onAskUserQuestion(callback: (questions: AskUserQuestionItem[], conversationId: string) => void): () => void
+  submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
+  onAgentMessage(callback: (event: AgentStreamEvent, conversationId: string) => void): () => void
+  onAgentDone(callback: (conversationId: string) => void): () => void
+  onAgentError(callback: (err: { message: string }, conversationId?: string) => void): () => void
   listCustomContexts(): Promise<CustomContext[]>
   createCustomContext(ctx: Omit<CustomContext, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomContext>
   updateCustomContext(id: string, updates: Partial<CustomContext>): Promise<CustomContext | null>

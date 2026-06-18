@@ -84,14 +84,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     },
   )
 
-  // Agent: Interrupt (graceful stop)
-  ipcMain.handle(IPC_CHANNELS.AGENT_ABORT, async (): Promise<void> => {
-    await interruptAgent()
+  // Agent: Interrupt (graceful stop) — per conversation
+  ipcMain.handle(IPC_CHANNELS.AGENT_ABORT, async (_event, conversationId?: string): Promise<void> => {
+    await interruptAgent(conversationId)
   })
 
-  // Agent: Reset session (new conversation)
-  ipcMain.handle(IPC_CHANNELS.AGENT_RESET_SESSION, async (): Promise<void> => {
-    resetSession()
+  // Agent: Reset session. With a conversationId → close that one; without → close all (logout).
+  ipcMain.handle(IPC_CHANNELS.AGENT_RESET_SESSION, async (_event, conversationId?: string): Promise<void> => {
+    resetSession(conversationId)
   })
 
   // Agent: Set plan mode
@@ -252,9 +252,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
   })
 
-  // ask_user_question: renderer sends back the user's answers
-  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, answers: UserAnswerPayload): Promise<void> => {
-    resolveAnswer(answers)
+  // ask_user_question: renderer sends back the user's answers (for a given conversation)
+  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, { conversationId, answers }: { conversationId?: string; answers: UserAnswerPayload }): Promise<void> => {
+    resolveAnswer(conversationId || '__default__', answers)
   })
 
   // App: Get version

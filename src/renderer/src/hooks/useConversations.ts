@@ -160,6 +160,12 @@ export function useConversations() {
     setActiveConversationId(null)
   }, [])
 
+  /** Marca una conversación como activa SIN recargarla de la DB (para conversaciones
+   *  que ya están vivas en el store corriendo en segundo plano). */
+  const setActiveConversation = useCallback((id: string | null) => {
+    setActiveConversationId(id)
+  }, [])
+
   return {
     conversations,
     activeConversationId,
@@ -170,5 +176,6 @@ export function useConversations() {
     loadConversation,
     deleteConversation,
     clearActiveConversation,
+    setActiveConversation,
   }
 }

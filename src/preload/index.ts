@@ -124,10 +124,10 @@ const api = {
   getAuthStatus: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_GET_STATUS),
 
   // Agent
-  sendPrompt: (payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }> =>
+  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
-  abortAgent: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT),
-  resetSession: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION),
+  abortAgent: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT, conversationId),
+  resetSession: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION, conversationId),
   setPlanMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_PLAN_MODE, enabled),
   getPlanMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_PLAN_MODE),
 
@@ -135,29 +135,30 @@ const api = {
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
   selectPdf: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_PDF),
 
-  // ask_user_question: listener for incoming questions + sender for user answers
-  onAskUserQuestion: (callback: (questions: AskUserQuestionItem[]) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { questions: AskUserQuestionItem[] }): void =>
-      callback(data.questions)
+  // ask_user_question: listener for incoming questions + sender for user answers.
+  // Both carry conversationId so each conversation routes to its own widget.
+  onAskUserQuestion: (callback: (questions: AskUserQuestionItem[], conversationId: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId: string; questions: AskUserQuestionItem[] }): void =>
+      callback(data.questions, data.conversationId)
     ipcRenderer.on(IPC.AGENT_ASK_USER_QUESTION, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_ASK_USER_QUESTION, handler)
   },
-  submitUserAnswers: (answers: UserAnswerPayload): Promise<void> =>
-    ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, answers),
+  submitUserAnswers: (conversationId: string, answers: UserAnswerPayload): Promise<void> =>
+    ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, { conversationId, answers }),
 
-  // Stream listeners
-  onAgentMessage: (callback: (event: AgentStreamEvent) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: AgentStreamEvent): void => callback(data)
+  // Stream listeners — every event is tagged with the conversationId it belongs to.
+  onAgentMessage: (callback: (event: AgentStreamEvent, conversationId: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId: string; event: AgentStreamEvent }): void => callback(data.event, data.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_MESSAGE, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_MESSAGE, handler)
   },
-  onAgentDone: (callback: () => void): (() => void) => {
-    const handler = (): void => callback()
+  onAgentDone: (callback: (conversationId: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId: string }): void => callback(data?.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_DONE, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_DONE, handler)
   },
-  onAgentError: (callback: (err: { message: string }) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { message: string }): void => callback(data)
+  onAgentError: (callback: (err: { message: string }, conversationId?: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId?: string; message: string }): void => callback({ message: data.message }, data.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_ERROR, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_ERROR, handler)
   },
