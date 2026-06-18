@@ -5,6 +5,7 @@ import { createCerpMcpServer } from './mcpServer'
 import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
+import { initUsageReporter, reportExecutionUsage } from './usageReporter'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
@@ -255,6 +256,10 @@ async function startSession(
   if (turbo) {
     logger.info(`Turbo Mode ON — model=${effectiveModel}, effort=${effort}, workflows enabled`)
   }
+
+  // Reporte de consumo de tokens por ejecución (rentabilidad por cliente).
+  // Fija el cliente HTTP + el modelo efectivo; mapMessage reporta en cada `result`.
+  initUsageReporter(httpClient, effectiveModel)
 
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
   const contextPrompt = await buildContextPrompt(httpClient)
@@ -881,6 +886,17 @@ function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStrea
     const cacheCreation = usage.cache_creation_input_tokens || 0
     const cacheRead = usage.cache_read_input_tokens || 0
     logger.info(`[USAGE] cost=$${cost?.toFixed(4) || '?'} | turns=${turns} | input=${inputTokens} | output=${outputTokens} | cache_create=${cacheCreation} | cache_read=${cacheRead}`)
+    // Persistir el consumo de esta ejecución (fire-and-forget; no bloquea el stream).
+    reportExecutionUsage({
+      inputTokens,
+      outputTokens,
+      cacheCreationTokens: cacheCreation,
+      cacheReadTokens: cacheRead,
+      costUsd: cost,
+      turns,
+      turbo: turboModeEnabled,
+      contextId: sessionContextId,
+    })
     return { type: 'done', cost, turns, tokensIn: inputTokens, tokensOut: outputTokens }
   }
 
