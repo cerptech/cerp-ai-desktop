@@ -70,6 +70,18 @@ export function useConversations() {
     const convId = conversationId || activeConversationId
     if (!convId) return
 
+    // No persistir turnos de assistant vacios: si el stream se corta antes del
+    // primer token (idle timeout, error), queda un mensaje {role:'assistant',
+    // content:''} sin tools. Guardarlo ensucia el historial con burbujas en
+    // blanco. Un turno solo-herramienta (sin texto pero con tools) SI se guarda.
+    if (
+      message.role === 'assistant' &&
+      !message.content?.trim() &&
+      !(message.tools && message.tools.length > 0)
+    ) {
+      return
+    }
+
     // Fire-and-forget: don't block UI
     const msgPayload = {
       role: message.role,

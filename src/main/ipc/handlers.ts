@@ -4,6 +4,7 @@ import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Cli
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
+import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
@@ -264,7 +265,6 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   // Auto-update: user accepted the "restart to update" prompt
   ipcMain.handle(IPC_CHANNELS.UPDATE_QUIT_AND_INSTALL, async (): Promise<void> => {
-    const { quitAndInstallUpdate } = await import('../updater')
     quitAndInstallUpdate()
   })
 
