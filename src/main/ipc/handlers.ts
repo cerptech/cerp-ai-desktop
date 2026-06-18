@@ -4,6 +4,7 @@ import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Cli
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
+import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
@@ -83,14 +84,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     },
   )
 
-  // Agent: Interrupt (graceful stop)
-  ipcMain.handle(IPC_CHANNELS.AGENT_ABORT, async (): Promise<void> => {
-    await interruptAgent()
+  // Agent: Interrupt (graceful stop) — per conversation
+  ipcMain.handle(IPC_CHANNELS.AGENT_ABORT, async (_event, conversationId?: string): Promise<void> => {
+    await interruptAgent(conversationId)
   })
 
-  // Agent: Reset session (new conversation)
-  ipcMain.handle(IPC_CHANNELS.AGENT_RESET_SESSION, async (): Promise<void> => {
-    resetSession()
+  // Agent: Reset session. With a conversationId → close that one; without → close all (logout).
+  ipcMain.handle(IPC_CHANNELS.AGENT_RESET_SESSION, async (_event, conversationId?: string): Promise<void> => {
+    resetSession(conversationId)
   })
 
   // Agent: Set plan mode
@@ -281,15 +282,20 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
   })
 
-  // ask_user_question: renderer sends back the user's answers
-  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, answers: UserAnswerPayload): Promise<void> => {
-    resolveAnswer(answers)
+  // ask_user_question: renderer sends back the user's answers (for a given conversation)
+  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, { conversationId, answers }: { conversationId?: string; answers: UserAnswerPayload }): Promise<void> => {
+    resolveAnswer(conversationId || '__default__', answers)
   })
 
   // App: Get version
   ipcMain.handle(IPC_CHANNELS.APP_GET_VERSION, async (): Promise<string> => {
     const { app } = await import('electron')
     return app.getVersion()
+  })
+
+  // Auto-update: user accepted the "restart to update" prompt
+  ipcMain.handle(IPC_CHANNELS.UPDATE_QUIT_AND_INSTALL, async (): Promise<void> => {
+    quitAndInstallUpdate()
   })
 
   // Python: Check

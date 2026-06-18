@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
-import { ChatContainer, type ChatStateSnapshot } from '@/components/chat/ChatContainer'
+import { ChatContainer } from '@/components/chat/ChatContainer'
 import { ConversationPanel } from '@/components/conversations/ConversationPanel'
 import { CustomAgentModal } from '@/components/settings/CustomAgentModal'
 import { ContextModal } from '@/components/settings/ContextModal'
@@ -9,8 +9,8 @@ import { useCustomAgents } from '@/hooks/useCustomAgents'
 import { useConversations } from '@/hooks/useConversations'
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
+import { getRuntime, restoreMessages as storeRestore, clearRuntime, setPersistHandler } from '@/stores/agentRuntimeStore'
 import type { CustomAgent, CustomContext } from '../../../preload/index'
-import type { ChatMessage } from '@/hooks/useAgent'
 
 interface ChatPageProps {
   userName?: string
@@ -44,12 +44,9 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     loadConversation,
     deleteConversation: deleteConv,
     clearActiveConversation,
+    setActiveConversation,
   } = useConversations()
 
-  // Ref to pass restoreMessages from ChatContainer
-  const restoreMessagesRef = useRef<((msgs: ChatMessage[]) => void) | null>(null)
-  const clearMessagesRef = useRef<(() => void) | null>(null)
-  const chatStateRef = useRef<ChatStateSnapshot | null>(null)
   // Ref for the sidebar search input — used by Ctrl/Cmd+K shortcut in ChatContainer
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   // Refs the onboarding wizard uses to wire its steps to the real chat.
@@ -78,6 +75,15 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     setInputRef.current?.(text)
   }, [])
 
+  // El store persiste TODOS los mensajes (incluidas conversaciones de fondo) vía
+  // appendMessage. Registramos el handler una vez.
+  useEffect(() => {
+    setPersistHandler((conversationId, message) => {
+      appendMessage(message, undefined, conversationId)
+    })
+    return () => setPersistHandler(null)
+  }, [appendMessage])
+
   const handleAgentActivity = (agentName: string, status: 'active' | 'done' | 'idle') => {
     if (status === 'active') {
       setActiveAgents((prev) => [...new Set([...prev, agentName])])
@@ -94,49 +100,36 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   const handleNewConversation = useCallback(() => {
     setActiveAgents([])
     setDoneAgents([])
+    // active=null muestra la pantalla nueva vacía. Las otras conversaciones
+    // siguen corriendo en el store; NO se cierra ninguna sesión.
     clearActiveConversation()
-    clearMessagesRef.current?.()
   }, [clearActiveConversation])
 
   const handleSelectConversation = useCallback(async (id: string) => {
-    // If AI is streaming, abort and persist partial response to current conversation before switching
-    const state = chatStateRef.current
-    if (state?.isStreaming && activeConversationId) {
-      await state.abort()
-      const lastMsg = state.messages[state.messages.length - 1]
-      if (lastMsg?.role === 'assistant' && lastMsg.content) {
-        appendMessage(lastMsg)
-      }
+    setActiveAgents([])
+    setDoneAgents([])
+    // Si la conversación ya está viva en el store (corriendo o ya cargada), solo
+    // la mostramos — NO la recargamos de la DB para no pisar su estado en vivo.
+    const rt = getRuntime(id)
+    if (rt.messages.length > 0 || rt.isStreaming) {
+      setActiveConversation(id)
+      return
     }
-
-    const messages = await loadConversation(id)
-    if (messages) {
-      restoreMessagesRef.current?.(messages)
-      setActiveAgents([])
-      setDoneAgents([])
-    }
-  }, [loadConversation, activeConversationId, appendMessage])
+    // Primera vez que se abre en esta sesión: cargar de la DB y sembrar el runtime.
+    const messages = await loadConversation(id) // setea active + devuelve mensajes
+    if (messages) storeRestore(id, messages)
+  }, [loadConversation, setActiveConversation])
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     await deleteConv(id)
-    if (activeConversationId === id) {
-      clearMessagesRef.current?.()
-    }
-  }, [deleteConv, activeConversationId])
+    clearRuntime(id)
+  }, [deleteConv])
 
-  // Callback for when a message is completed (user or assistant)
-  const handleMessageComplete = useCallback(async (message: ChatMessage) => {
-    if (!activeConversationId) {
-      const title = message.content.substring(0, 50) || 'Nueva conversacion'
-      const convId = await createConversation(title, 'orchestrator')
-      if (convId) {
-        // Pass explicit convId because activeConversationId state hasn't updated yet
-        appendMessage(message, undefined, convId)
-      }
-    } else {
-      appendMessage(message)
-    }
-  }, [activeConversationId, createConversation, appendMessage])
+  // Crea una conversación si no hay activa, devolviendo su id real para enviar.
+  const ensureConversation = useCallback(async (title: string): Promise<string | null> => {
+    if (activeConversationId) return activeConversationId
+    return await createConversation(title, 'orchestrator') // setea active
+  }, [activeConversationId, createConversation])
 
   const handleAddCustom = () => setShowAddMenu(true)
 
@@ -209,12 +202,10 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
         <ChatContainer
           userName={userName}
           activeContextId={activeContextId}
+          activeConversationId={activeConversationId}
+          ensureConversation={ensureConversation}
           onAgentActivity={handleAgentActivity}
           onNewConversation={handleNewConversation}
-          onMessageComplete={handleMessageComplete}
-          restoreMessagesRef={restoreMessagesRef}
-          clearMessagesRef={clearMessagesRef}
-          chatStateRef={chatStateRef}
           searchInputRef={searchInputRef}
           onSessionActiveChange={setSessionActive}
           setCwdRef={setCwdRef}

@@ -38,6 +38,10 @@ const IPC = {
   ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
   ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
   APP_GET_VERSION: 'app:get-version',
+  UPDATE_AVAILABLE: 'update:available',
+  UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
+  UPDATE_DOWNLOADED: 'update:downloaded',
+  UPDATE_QUIT_AND_INSTALL: 'update:quit-and-install',
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
   PYTHON_INSTALL_PROGRESS: 'python:install:progress',
@@ -198,10 +202,10 @@ const api = {
   getAuthStatus: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_GET_STATUS),
 
   // Agent
-  sendPrompt: (payload: { prompt: string; sessionId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }> =>
+  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
-  abortAgent: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT),
-  resetSession: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION),
+  abortAgent: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT, conversationId),
+  resetSession: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION, conversationId),
   setPlanMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_PLAN_MODE, enabled),
   getPlanMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_PLAN_MODE),
   setTurboMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_TURBO_MODE, enabled),
@@ -211,15 +215,16 @@ const api = {
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
   selectPdf: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_PDF),
 
-  // ask_user_question: listener for incoming questions + sender for user answers
-  onAskUserQuestion: (callback: (questions: AskUserQuestionItem[]) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { questions: AskUserQuestionItem[] }): void =>
-      callback(data.questions)
+  // ask_user_question: listener for incoming questions + sender for user answers.
+  // Both carry conversationId so each conversation routes to its own widget.
+  onAskUserQuestion: (callback: (questions: AskUserQuestionItem[], conversationId: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId: string; questions: AskUserQuestionItem[] }): void =>
+      callback(data.questions, data.conversationId)
     ipcRenderer.on(IPC.AGENT_ASK_USER_QUESTION, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_ASK_USER_QUESTION, handler)
   },
-  submitUserAnswers: (answers: UserAnswerPayload): Promise<void> =>
-    ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, answers),
+  submitUserAnswers: (conversationId: string, answers: UserAnswerPayload): Promise<void> =>
+    ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, { conversationId, answers }),
 
   // Cortafuegos de cotización: estado en vivo (reserva/commit/rollback)
   onQuoteFirewallEvent: (callback: (event: QuoteFirewallEvent) => void): (() => void) => {
@@ -228,19 +233,19 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.QUOTE_FIREWALL_EVENT, handler)
   },
 
-  // Stream listeners
-  onAgentMessage: (callback: (event: AgentStreamEvent) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: AgentStreamEvent): void => callback(data)
+  // Stream listeners — every event is tagged with the conversationId it belongs to.
+  onAgentMessage: (callback: (event: AgentStreamEvent, conversationId: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId: string; event: AgentStreamEvent }): void => callback(data.event, data.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_MESSAGE, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_MESSAGE, handler)
   },
-  onAgentDone: (callback: () => void): (() => void) => {
-    const handler = (): void => callback()
+  onAgentDone: (callback: (conversationId: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId: string }): void => callback(data?.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_DONE, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_DONE, handler)
   },
-  onAgentError: (callback: (err: { message: string }) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { message: string }): void => callback(data)
+  onAgentError: (callback: (err: { message: string }, conversationId?: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId?: string; message: string }): void => callback({ message: data.message }, data.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_ERROR, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_ERROR, handler)
   },
@@ -302,6 +307,24 @@ const api = {
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
+
+  // Auto-update
+  onUpdateAvailable: (callback: (data: { version: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { version: string }): void => callback(data)
+    ipcRenderer.on(IPC.UPDATE_AVAILABLE, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_AVAILABLE, handler)
+  },
+  onUpdateDownloadProgress: (callback: (data: { percent: number }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { percent: number }): void => callback(data)
+    ipcRenderer.on(IPC.UPDATE_DOWNLOAD_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOAD_PROGRESS, handler)
+  },
+  onUpdateDownloaded: (callback: (data: { version: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { version: string }): void => callback(data)
+    ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler)
+  },
+  quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke(IPC.UPDATE_QUIT_AND_INSTALL),
 
   // Setup (Python + Git)
   checkPython: (): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }> =>

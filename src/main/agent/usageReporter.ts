@@ -13,6 +13,7 @@ import { logger } from '../utils/logger'
 
 let httpClientRef: HttpClient | null = null
 let sessionModel = 'unknown'
+let sessionContextId: string | null = null
 
 export interface ExecutionUsage {
   inputTokens: number
@@ -22,13 +23,13 @@ export interface ExecutionUsage {
   costUsd?: number
   turns?: number
   turbo?: boolean
-  contextId?: string | null
 }
 
-/** Fija el cliente HTTP y el modelo efectivo de la sesión activa. */
-export function initUsageReporter(httpClient: HttpClient, model: string): void {
+/** Fija el cliente HTTP, el modelo efectivo y el contexto de la sesión activa. */
+export function initUsageReporter(httpClient: HttpClient, model: string, contextId: string | null = null): void {
   httpClientRef = httpClient
   sessionModel = model || 'unknown'
+  sessionContextId = contextId
 }
 
 /** Persiste el consumo de una ejecución. No lanza: loguea y sigue. */
@@ -45,7 +46,7 @@ export function reportExecutionUsage(usage: ExecutionUsage): void {
     costUsd: usage.costUsd ?? 0,
     turns: usage.turns ?? 0,
     turbo: usage.turbo ?? false,
-    contextId: usage.contextId ?? undefined,
+    contextId: sessionContextId ?? undefined,
   }
 
   httpClient.post('/usage', body).catch((err) => {

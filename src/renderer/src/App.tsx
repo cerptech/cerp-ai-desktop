@@ -6,6 +6,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ToastProvider } from '@/hooks/useToast'
 import { ToastContainer } from '@/components/ui/ToastContainer'
+import { UpdateBanner } from '@/components/ui/UpdateBanner'
 
 export default function App() {
   const { isAuthenticated, user, loading, login, logout } = useAuth()
@@ -43,6 +44,7 @@ export default function App() {
     <ToastProvider>
       <ChatPage userName={user?.name} onLogout={logout} />
       <ToastContainer />
+      <UpdateBanner />
     </ToastProvider>
   )
 }

@@ -62,6 +62,12 @@ export const IPC_CHANNELS = {
   // App
   APP_GET_VERSION: 'app:get-version',
 
+  // Auto-update (main → renderer events + renderer → main action)
+  UPDATE_AVAILABLE: 'update:available',
+  UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
+  UPDATE_DOWNLOADED: 'update:downloaded',
+  UPDATE_QUIT_AND_INSTALL: 'update:quit-and-install',
+
   // Setup (Python + Git)
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
