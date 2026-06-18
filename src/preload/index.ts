@@ -33,6 +33,10 @@ const IPC = {
   QUOTES_LIST: 'quotes:list',
   QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
   APP_GET_VERSION: 'app:get-version',
+  UPDATE_AVAILABLE: 'update:available',
+  UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
+  UPDATE_DOWNLOADED: 'update:downloaded',
+  UPDATE_QUIT_AND_INSTALL: 'update:quit-and-install',
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
   PYTHON_INSTALL_PROGRESS: 'python:install:progress',
@@ -209,6 +213,24 @@ const api = {
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
+
+  // Auto-update
+  onUpdateAvailable: (callback: (data: { version: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { version: string }): void => callback(data)
+    ipcRenderer.on(IPC.UPDATE_AVAILABLE, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_AVAILABLE, handler)
+  },
+  onUpdateDownloadProgress: (callback: (data: { percent: number }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { percent: number }): void => callback(data)
+    ipcRenderer.on(IPC.UPDATE_DOWNLOAD_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOAD_PROGRESS, handler)
+  },
+  onUpdateDownloaded: (callback: (data: { version: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { version: string }): void => callback(data)
+    ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler)
+  },
+  quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke(IPC.UPDATE_QUIT_AND_INSTALL),
 
   // Setup (Python + Git)
   checkPython: (): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }> =>

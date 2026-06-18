@@ -262,6 +262,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return app.getVersion()
   })
 
+  // Auto-update: user accepted the "restart to update" prompt
+  ipcMain.handle(IPC_CHANNELS.UPDATE_QUIT_AND_INSTALL, async (): Promise<void> => {
+    const { quitAndInstallUpdate } = await import('../updater')
+    quitAndInstallUpdate()
+  })
+
   // Python: Check
   ipcMain.handle(IPC_CHANNELS.PYTHON_CHECK, async () => {
     const { checkPython } = await import('../utils/pythonSetup')

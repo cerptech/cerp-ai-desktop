@@ -152,6 +152,10 @@ interface CerpAPI {
     total: number
   }>
   getVersion(): Promise<string>
+  onUpdateAvailable(callback: (data: { version: string }) => void): () => void
+  onUpdateDownloadProgress(callback: (data: { percent: number }) => void): () => void
+  onUpdateDownloaded(callback: (data: { version: string }) => void): () => void
+  quitAndInstallUpdate(): Promise<void>
   checkPython(): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }>
   installPython(): Promise<boolean>
   onPythonProgress(callback: (data: { message: string; percent: number }) => void): () => void
