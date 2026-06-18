@@ -9,8 +9,11 @@ const IPC = {
   AGENT_RESET_SESSION: 'agent:reset-session',
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
   AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
+  AGENT_SET_TURBO_MODE: 'agent:set-turbo-mode',
+  AGENT_GET_TURBO_MODE: 'agent:get-turbo-mode',
   AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
   AGENT_USER_ANSWER: 'agent:user_answer',
+  QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
   AGENT_STREAM_MESSAGE: 'agent:stream:message',
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
@@ -32,6 +35,8 @@ const IPC = {
   QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
   QUOTES_LIST: 'quotes:list',
   QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
+  ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
+  ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
   APP_GET_VERSION: 'app:get-version',
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
@@ -40,6 +45,31 @@ const IPC = {
   GIT_INSTALL: 'git:install',
   GIT_INSTALL_PROGRESS: 'git:install:progress',
 } as const
+
+/** Progress of the Desktop guided tutorial (Idea 1). */
+export interface OnboardingProgress {
+  currentStep: number
+  completedSteps: number[]
+  skipped: boolean
+  completedAt: string | null
+  lastSeenAt: string
+  version: number
+  totalSteps: number
+  isCompleted: boolean
+}
+
+/** Backend response wrapper for onboarding progress (null on failure). */
+export type OnboardingProgressResponse = { success: boolean; data: OnboardingProgress } | null
+
+/** Partial update sent to PATCH /onboarding/desktop-progress. */
+export interface OnboardingProgressUpdate {
+  viewStep?: number
+  completeStep?: number
+  currentStep?: number
+  skipped?: boolean
+  completed?: boolean
+  relaunch?: boolean
+}
 
 export interface AskUserQuestionOption {
   label: string
@@ -55,6 +85,12 @@ export interface AskUserQuestionItem {
 
 /** Map of question text → chosen label or "Otro: <free text>" (or array for multiSelect) */
 export type UserAnswerPayload = Record<string, string | string[]>
+
+/** Cortafuegos de cotización (Idea 2) — eventos de estado main → renderer. */
+export type QuoteFirewallEvent =
+  | { kind: 'reserved'; quoteId: string; source: string; requiresAction: boolean }
+  | { kind: 'committed'; quoteId: string }
+  | { kind: 'rolled_back'; quoteId: string; reason: string; message: string; failures: string[] }
 
 // Tool lifecycle is keyed by `toolUseId` (never by name). SDK 0.3.x delivers tool
 // results as `type:'user'` messages with tool_result content blocks carrying tool_use_id.
@@ -113,6 +149,48 @@ export interface CustomAgent {
   updatedAt: string
 }
 
+export interface ConversationSummary {
+  _id: string
+  title: string
+  agentName: string
+  updatedAt: string
+  messageCount: number
+}
+
+export interface ConversationFull extends ConversationSummary {
+  sessionId?: string
+  activeContextId?: string
+  messages: Array<{
+    role: 'user' | 'assistant'
+    content: string
+    agentContext?: string
+    tools?: Array<{
+      name: string
+      input?: string
+      output?: string
+      status: string
+      startTime: number
+      endTime?: number
+      agentName?: string
+      subagentSteps?: Array<{
+        name: string
+        input?: string
+        output?: string
+        status: 'running' | 'done' | 'error'
+        startTime: number
+        endTime?: number
+      }>
+      subagentText?: string
+    }>
+    timestamp: number
+  }>
+  metadata?: {
+    cwd?: string
+    totalCostUsd?: number
+    totalTurns?: number
+  }
+}
+
 const api = {
   // Auth
   login: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_LOGIN),
@@ -126,6 +204,8 @@ const api = {
   resetSession: (): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION),
   setPlanMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_PLAN_MODE, enabled),
   getPlanMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_PLAN_MODE),
+  setTurboMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_TURBO_MODE, enabled),
+  getTurboMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_TURBO_MODE),
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
@@ -140,6 +220,13 @@ const api = {
   },
   submitUserAnswers: (answers: UserAnswerPayload): Promise<void> =>
     ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, answers),
+
+  // Cortafuegos de cotización: estado en vivo (reserva/commit/rollback)
+  onQuoteFirewallEvent: (callback: (event: QuoteFirewallEvent) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: QuoteFirewallEvent): void => callback(data)
+    ipcRenderer.on(IPC.QUOTE_FIREWALL_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC.QUOTE_FIREWALL_EVENT, handler)
+  },
 
   // Stream listeners
   onAgentMessage: (callback: (event: AgentStreamEvent) => void): (() => void) => {
@@ -206,6 +293,12 @@ const api = {
     pageSize: number
     total: number
   }> => ipcRenderer.invoke(IPC.QUOTES_LIST, { page, pageSize }),
+
+  // Onboarding (Desktop guided tutorial — Idea 1)
+  getOnboardingProgress: (): Promise<OnboardingProgressResponse> =>
+    ipcRenderer.invoke(IPC.ONBOARDING_GET_PROGRESS),
+  updateOnboardingProgress: (payload: OnboardingProgressUpdate): Promise<OnboardingProgressResponse> =>
+    ipcRenderer.invoke(IPC.ONBOARDING_PATCH_PROGRESS, payload),
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),

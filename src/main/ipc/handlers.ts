@@ -3,7 +3,7 @@ import { IPC_CHANNELS } from './channels'
 import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
-import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
+import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient } from '../utils/httpClient'
@@ -101,6 +101,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Agent: Get plan mode (so the renderer can hydrate on startup)
   ipcMain.handle(IPC_CHANNELS.AGENT_GET_PLAN_MODE, async (): Promise<boolean> => {
     return getPlanMode()
+  })
+
+  // Agent: Set turbo mode (Idea 3 — cotización exhaustiva)
+  ipcMain.handle(IPC_CHANNELS.AGENT_SET_TURBO_MODE, async (_event, enabled: boolean): Promise<void> => {
+    setTurboMode(enabled)
+  })
+
+  // Agent: Get turbo mode (hydrate the toggle on startup)
+  ipcMain.handle(IPC_CHANNELS.AGENT_GET_TURBO_MODE, async (): Promise<boolean> => {
+    return getTurboMode()
   })
 
   // Dialog: Select PDF file
@@ -248,6 +258,26 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     } catch (err) {
       logger.error('Failed to list quotes:', err)
       return { items: [], page: 1, pageSize: 20, total: 0 }
+    }
+  })
+
+  // Onboarding: get Desktop guided-tutorial progress
+  ipcMain.handle(IPC_CHANNELS.ONBOARDING_GET_PROGRESS, async () => {
+    try {
+      return await httpClient.get('/onboarding/desktop-progress')
+    } catch (err) {
+      logger.error('Failed to fetch onboarding progress:', err)
+      return null
+    }
+  })
+
+  // Onboarding: update Desktop guided-tutorial progress
+  ipcMain.handle(IPC_CHANNELS.ONBOARDING_PATCH_PROGRESS, async (_event, payload: Record<string, unknown> = {}) => {
+    try {
+      return await httpClient.patch('/onboarding/desktop-progress', payload)
+    } catch (err) {
+      logger.error('Failed to update onboarding progress:', err)
+      return null
     }
   })
 

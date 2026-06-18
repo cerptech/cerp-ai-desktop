@@ -20,6 +20,10 @@ export class HttpClient {
     return this.request('POST', path, data) as Promise<T>
   }
 
+  async patch<T = unknown>(path: string, data?: unknown): Promise<T> {
+    return this.request('PATCH', path, data) as Promise<T>
+  }
+
   async delete<T = unknown>(path: string): Promise<T> {
     return this.request('DELETE', path) as Promise<T>
   }

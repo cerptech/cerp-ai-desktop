@@ -3,6 +3,8 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
 import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
+import { stopQuoteHeartbeat } from './quoteHeartbeat'
+import { setQuoteEventWindow } from './quoteEventsBridge'
 import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
@@ -77,8 +79,38 @@ const activeDelegations = new Map<string, string>()
 // write operations. The user reviews the plan and resumes in normal mode.
 let planModeEnabled = false
 
+// Turbo Mode (Idea 3, MVP conservador) — when true, complex quotes run with the
+// Opus xhigh-capable model + effort 'xhigh' + the Workflow tool / dynamic-workflow
+// orchestration. Opt-in (off by default): xhigh worsens the silent-pause "frozen UI"
+// effect and costs more, so it's only for big licitaciones, not chat. NOT ultracode
+// (that's the gated Full path — needs the prod account's Workflows entitlement).
+let turboModeEnabled = false
+
+// xhigh-capable Opus model used when Turbo is ON. Pinning a known xhigh-capable
+// model avoids the SDK's silent xhigh→high downgrade (which only happens on
+// non-capable models). If the prod key lacks Opus access, the query fails loudly.
+const TURBO_MODEL = 'claude-opus-4-8'
+
 export function getPlanMode(): boolean {
   return planModeEnabled
+}
+
+export function getTurboMode(): boolean {
+  return turboModeEnabled
+}
+
+/**
+ * Enable or disable Turbo Mode. Like Plan Mode, the active session is closed so the
+ * next runAgent applies the new model/effort/tools (Turbo settings are baked into
+ * the SDK query options at startSession and don't change mid-session).
+ */
+export function setTurboMode(enabled: boolean): void {
+  if (turboModeEnabled === enabled) return
+  turboModeEnabled = enabled
+  logger.info(`Turbo Mode ${enabled ? 'enabled' : 'disabled'}`)
+  if (activeQuery) {
+    closeSession()
+  }
 }
 
 /**
@@ -124,6 +156,9 @@ export async function interruptAgent(): Promise<void> {
 export function closeSession(): void {
   // Cancel any pending ask_user_question so the MCP promise doesn't hang
   cancelPendingQuestion()
+  // Stop the credit reservation heartbeat — if a quote was mid-flight, the backend
+  // watchdog will refund it on heartbeat timeout (no credit lost to an aborted run).
+  stopQuoteHeartbeat()
   if (messageQueue) {
     messageQueue.close()
     messageQueue = null
@@ -164,6 +199,7 @@ export async function runAgent(
 ): Promise<void> {
   mainWindowRef = mainWindow
   setAskUserWindow(mainWindow)
+  setQuoteEventWindow(mainWindow)
   const cwd = payload.cwd || app.getPath('home')
   const contextId = payload.activeContextId || null
 
@@ -211,6 +247,15 @@ async function startSession(
   }
   logger.info(`CompanyId: ${companyId}, UserId: ${userId}`)
 
+  // Turbo Mode (Idea 3 MVP): raise execution rigor for complex quotes. Pin the
+  // xhigh-capable Opus model + xhigh effort + the Workflow tool. Off by default.
+  const turbo = turboModeEnabled
+  const effectiveModel = turbo ? TURBO_MODEL : model
+  const effort = turbo ? 'xhigh' : 'medium'
+  if (turbo) {
+    logger.info(`Turbo Mode ON — model=${effectiveModel}, effort=${effort}, workflows enabled`)
+  }
+
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
   const contextPrompt = await buildContextPrompt(httpClient)
   const fullSystemPrompt = buildFullSystemPrompt(
@@ -219,6 +264,7 @@ async function startSession(
     payload.activeContextId,
     planModeEnabled,
     payload.conversationHistory,
+    turbo,
   )
 
   // Build subagent definitions (with model overrides for cost optimization)
@@ -258,7 +304,7 @@ async function startSession(
   logger.info(`Electron execPath: ${process.execPath}`)
 
   const options: Record<string, unknown> = {
-    model,
+    model: effectiveModel,
     systemPrompt: fullSystemPrompt,
     cwd,
     pathToClaudeCodeExecutable: sdkCliPath,
@@ -313,7 +359,13 @@ async function startSession(
       cerp: cerpMcpServer,
     },
     agents: [...builtInAgents, ...customSdkAgents],
-    allowedTools: ['Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*', 'mcp__cerp__ask_user_question'],
+    allowedTools: [
+      'Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*', 'mcp__cerp__ask_user_question',
+      // Turbo: habilita la orquestación de workflows dinámicos para cotizaciones grandes.
+      ...(turbo ? ['Workflow'] : []),
+    ],
+    // Turbo: orquestación de workflows dinámicos (MVP conservador, sin ultracode).
+    enableWorkflows: turbo,
     // NOTE: we never use permissionMode:'plan' because the SDK then auto-injects
     // the ExitPlanMode tool, which conflicts with our ask_user_question flow.
     // Instead, when planModeEnabled is true we inject a strict directive into
@@ -321,12 +373,15 @@ async function startSession(
     // buildFullSystemPrompt). The user controls the toggle from the UI.
     permissionMode: 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
-    maxBudgetUsd: payload.maxBudgetUsd ?? 10.0,
+    // Turbo gasta más (Opus + xhigh + workflows): subimos el techo de forma consciente.
+    maxBudgetUsd: payload.maxBudgetUsd ?? (turbo ? 25.0 : 10.0),
     includePartialMessages: true,
     promptSuggestions: true,
     // 'medium' keeps the agent responsive: 'high' triggers long extended-reasoning
     // pauses with no visible output, which reads as "frozen" in a live desktop UI.
-    effort: 'medium',
+    // Turbo opts INTO that trade-off ('xhigh') for complex quotes — the heartbeat
+    // below mitigates the silent pauses.
+    effort,
     // Fase 2: forward subagent text/reasoning deltas so we can render them
     // inside the delegation card in real-time. Requires SDK >= 0.2.119.
     // When true, assistant messages from subagents (parent_tool_use_id set)
@@ -539,6 +594,7 @@ function buildFullSystemPrompt(
   activeContextId?: string,
   planModeEnabled = false,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  turboModeEnabled = false,
 ): string {
   let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
 
@@ -591,6 +647,21 @@ Estas reglas TIENEN PRIORIDAD sobre cualquier instruccion contraria en el resto 
 `
   }
 
+
+  // Turbo Mode (Idea 3) — directiva de ejecución exhaustiva para cotizaciones complejas.
+  if (turboModeEnabled) {
+    fullSystemPrompt += `
+
+## MODO TURBO ACTIVADO — Cotización exhaustiva
+
+El usuario activó **Modo Turbo** para esta cotización compleja. Trabajás con máximo rigor:
+
+1. **Planificá ANTES de escribir.** Mapeá el árbol completo capítulo → ítem → APU del pliego/mediciones antes de crear nada en CERP. No empieces a crear chapters sueltos sin saber qué ítems va a tener cada uno.
+2. **Repartí el trabajo en subagentes.** Para licitaciones grandes, delegá la construcción de capítulos/APUs en subagentes especialistas (tool Agent) y coordiná; no intentes todo en un solo hilo lineal.
+3. **Auto-verificá contra el CONTRATO DE COMPLETITUD (abajo) antes de cerrar.** No declares terminada la cotización hasta que CADA capítulo tenga al menos un ítem real y CADA ítem tenga su APU con cantidades y precios. Si algo quedó vacío, completalo o avisá explícitamente qué falta — NUNCA entregues capítulos vacíos.
+4. Turbo tarda más y consume más recursos: está bien tomarte el tiempo, pero mantené al usuario informado del avance (no quedes en silencio largo).
+`
+  }
 
   const customAgentDefs = customAgentStore.getAgents()
   if (customAgentDefs.length > 0) {

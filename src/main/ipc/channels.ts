@@ -40,13 +40,24 @@ export const IPC_CHANNELS = {
   QUOTES_LIST: 'quotes:list',
   QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
 
+  // Onboarding (Desktop guided tutorial — Idea 1)
+  ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
+  ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
+
   // Plan Mode
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
   AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
 
+  // Turbo Mode (Idea 3 — cotización exhaustiva)
+  AGENT_SET_TURBO_MODE: 'agent:set-turbo-mode',
+  AGENT_GET_TURBO_MODE: 'agent:get-turbo-mode',
+
   // ask_user_question tool — structured clarification widget
   AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
   AGENT_USER_ANSWER: 'agent:user_answer',
+
+  // Cortafuegos de cotización (Idea 2) — eventos de estado main → renderer
+  QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
 
   // App
   APP_GET_VERSION: 'app:get-version',

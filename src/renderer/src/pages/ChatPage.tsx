@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ChatContainer, type ChatStateSnapshot } from '@/components/chat/ChatContainer'
 import { ConversationPanel } from '@/components/conversations/ConversationPanel'
@@ -7,6 +7,8 @@ import { ContextModal } from '@/components/settings/ContextModal'
 import { AddCustomMenu } from '@/components/settings/AddCustomMenu'
 import { useCustomAgents } from '@/hooks/useCustomAgents'
 import { useConversations } from '@/hooks/useConversations'
+import { useOnboarding } from '@/hooks/useOnboarding'
+import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import type { CustomAgent, CustomContext } from '../../../preload/index'
 import type { ChatMessage } from '@/hooks/useAgent'
 
@@ -50,6 +52,31 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   const chatStateRef = useRef<ChatStateSnapshot | null>(null)
   // Ref for the sidebar search input — used by Ctrl/Cmd+K shortcut in ChatContainer
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  // Refs the onboarding wizard uses to wire its steps to the real chat.
+  const setCwdRef = useRef<((path: string) => void) | null>(null)
+  const setInputRef = useRef<((text: string) => void) | null>(null)
+
+  // Onboarding guided tutorial (Idea 1)
+  const { progress: onboardingProgress, shouldAutoShow, viewStep, completeStep, skip: skipOnboarding, complete: completeOnboarding } = useOnboarding()
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const onboardingAutoOpened = useRef(false)
+
+  useEffect(() => {
+    if (shouldAutoShow && !onboardingAutoOpened.current) {
+      onboardingAutoOpened.current = true
+      setShowOnboarding(true)
+    }
+  }, [shouldAutoShow])
+
+  const handleConnectFolderFromWizard = useCallback(async (): Promise<string | null> => {
+    const path = await window.cerpAPI.selectFolder()
+    if (path) setCwdRef.current?.(path)
+    return path
+  }, [])
+
+  const handleUsePromptFromWizard = useCallback((text: string) => {
+    setInputRef.current?.(text)
+  }, [])
 
   const handleAgentActivity = (agentName: string, status: 'active' | 'done' | 'idle') => {
     if (status === 'active') {
@@ -165,6 +192,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
       userName={userName}
       onLogout={onLogout}
       sessionActive={sessionActive}
+      onShowOnboarding={() => setShowOnboarding(true)}
     >
       <div className="flex h-full">
         <ConversationPanel
@@ -189,8 +217,24 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           chatStateRef={chatStateRef}
           searchInputRef={searchInputRef}
           onSessionActiveChange={setSessionActive}
+          setCwdRef={setCwdRef}
+          setInputRef={setInputRef}
         />
       </div>
+
+      {/* Onboarding guided tutorial (Idea 1) */}
+      {showOnboarding && (
+        <OnboardingWizard
+          progress={onboardingProgress}
+          onClose={() => setShowOnboarding(false)}
+          onViewStep={viewStep}
+          onCompleteStep={completeStep}
+          onSkip={skipOnboarding}
+          onComplete={completeOnboarding}
+          onConnectFolder={handleConnectFolderFromWizard}
+          onUsePrompt={handleUsePromptFromWizard}
+        />
+      )}
 
       {/* Add custom menu */}
       {showAddMenu && (

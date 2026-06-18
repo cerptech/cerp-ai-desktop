@@ -4,6 +4,8 @@ import { toolSchemas } from './toolDefinitions'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
+import { startQuoteHeartbeat, stopQuoteHeartbeat } from './quoteHeartbeat'
+import { emitQuoteFirewallEvent } from './quoteEventsBridge'
 
 // ── attach_budget_pdf Zod schema ─────────────────────────────────────────────
 
@@ -128,7 +130,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       'y hay opciones discretas claramente definidas. ' +
       'NO usar para preguntas abiertas — para eso, escribir texto libre en el chat. ' +
       'El sistema agrega automaticamente una opcion "Otro..." al final de cada pregunta.',
-    AskUserQuestionSchema,
+    AskUserQuestionSchema as any,
     async (args: Record<string, unknown>) => {
       try {
         const parsed = AskUserQuestionSchema.parse(args)
@@ -155,7 +157,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
     tool(
       name,
       def.description,
-      def.schema,
+      def.schema as any,
       async (args: Record<string, unknown>) => {
         try {
           const { url, body } = buildRequest(def.endpoint, def.method, args)
@@ -193,6 +195,48 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
             case 'DELETE':
               data = await httpClient.request('DELETE', url)
               break
+          }
+
+          // Cortafuegos: el heartbeat acompaña la vida de la reserva. Arranca al
+          // reservar (extrae el quoteId de la respuesta) y se detiene al commitear
+          // o refundar — el watchdog del backend cubre cualquier corte abrupto.
+          if (name === 'quote_reserve') {
+            const r = data as { quoteId?: string; source?: string; requiresAction?: boolean } | null
+            if (r?.quoteId) {
+              startQuoteHeartbeat(String(r.quoteId), httpClient)
+              emitQuoteFirewallEvent({
+                kind: 'reserved',
+                quoteId: String(r.quoteId),
+                source: String(r.source ?? ''),
+                requiresAction: Boolean(r.requiresAction),
+              })
+            }
+          } else if (name === 'quote_commit') {
+            stopQuoteHeartbeat()
+            const c = data as
+              | { committed?: boolean; validation?: { message?: string; failures?: string[] } }
+              | null
+            const quoteId = String((args as { id?: string }).id ?? '')
+            if (c?.committed) {
+              emitQuoteFirewallEvent({ kind: 'committed', quoteId })
+            } else {
+              emitQuoteFirewallEvent({
+                kind: 'rolled_back',
+                quoteId,
+                reason: 'post_flight_fail',
+                message: c?.validation?.message ?? 'La cotización no superó la validación.',
+                failures: c?.validation?.failures ?? [],
+              })
+            }
+          } else if (name === 'quote_refund') {
+            stopQuoteHeartbeat()
+            emitQuoteFirewallEvent({
+              kind: 'rolled_back',
+              quoteId: String((args as { id?: string }).id ?? ''),
+              reason: String((data as { refundReason?: string } | null)?.refundReason ?? 'user_aborted'),
+              message: 'La cotización se canceló antes de finalizar.',
+              failures: [],
+            })
           }
 
           const text = JSON.stringify(data, null, 2)
