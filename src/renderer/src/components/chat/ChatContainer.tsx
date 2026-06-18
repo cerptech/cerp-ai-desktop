@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
 import { useAgent, type ChatMessage } from '@/hooks/useAgent'
+import { sendPrompt as storeSendPrompt } from '@/stores/agentRuntimeStore'
 import { MessageBubble } from './MessageBubble'
 import { AskUserQuestion } from './AskUserQuestion'
 import { QuickActions } from './QuickActions'
@@ -20,20 +21,22 @@ export interface ChatStateSnapshot {
 interface ChatContainerProps {
   userName?: string
   activeContextId?: string | null
+  /** Conversación activa cuyo runtime se muestra. null = pantalla nueva (aún sin id). */
+  activeConversationId?: string | null
+  /** Garantiza que exista una conversación para enviar; crea una si no hay activa. */
+  ensureConversation: (title: string) => Promise<string | null>
   onAgentActivity: (agentName: string, status: 'active' | 'done' | 'idle') => void
   onNewConversation: () => void
-  onMessageComplete?: (message: ChatMessage) => void
-  restoreMessagesRef?: MutableRefObject<((msgs: ChatMessage[]) => void) | null>
-  clearMessagesRef?: MutableRefObject<(() => void) | null>
-  chatStateRef?: MutableRefObject<ChatStateSnapshot | null>
   /** Ref to the sidebar search input — used by Ctrl/Cmd+K to focus it */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
   /** Notifies the parent when the agent session goes active/idle (for the header badge). */
   onSessionActiveChange?: (active: boolean) => void
 }
 
-export function ChatContainer({ userName, activeContextId, onAgentActivity, onNewConversation, onMessageComplete, restoreMessagesRef, clearMessagesRef, chatStateRef, searchInputRef, onSessionActiveChange }: ChatContainerProps) {
-  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, pendingQuestions, isSubmittingAnswers, sendPrompt, abort, submitAnswers, clearMessages, restoreMessages } = useAgent()
+export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onAgentActivity, onNewConversation, searchInputRef, onSessionActiveChange }: ChatContainerProps) {
+  // La hook selecciona el runtime de la conversación activa; las demás siguen
+  // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const [input, setInput] = useState('')
@@ -44,6 +47,19 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
   const [appVersion, setAppVersion] = useState('...')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // cwd en un ref para que doSend (callback estable) lea el valor actual sin recrearse.
+  const cwdRef = useRef<string | null>(cwd)
+  useEffect(() => { cwdRef.current = cwd }, [cwd])
+
+  // Envío con "crear-antes-de-enviar": si no hay conversación activa, la creamos
+  // para tener un id real (cada conversación necesita su propia sesión en el main).
+  const doSend = useCallback(async (fullPrompt: string): Promise<void> => {
+    let id = activeConversationId
+    if (!id) id = await ensureConversation(fullPrompt.slice(0, 50) || 'Nueva conversacion')
+    if (!id) return
+    storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined)
+  }, [activeConversationId, ensureConversation, activeContextId])
 
   useEffect(() => {
     window.cerpAPI.getVersion().then(setAppVersion).catch(() => setAppVersion('1.0.0'))
@@ -62,60 +78,14 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, activeTool, pendingQuestions])
 
-  // ── Conversation persistence (fire-and-forget) ──────────────────────────
-  // Track already-persisted messages by a STABLE key (timestamp+role), not by a
-  // length counter. A counter desyncs across conversation switches/clears and
-  // silently drops new messages (the "my messages disappear" bug). A key set
-  // never desyncs: each message is persisted exactly once, ever.
-  const persistedKeysRef = useRef<Set<string>>(new Set())
-  const msgKey = (m: ChatMessage): string => `${m.timestamp}:${m.role}`
-
-  // Expose restoreMessages and clearMessages to parent via refs.
-  // On restore, the loaded messages are ALREADY in the backend → seed the set so
-  // they're never re-persisted. On clear, reset so the next conversation is fresh.
-  useEffect(() => {
-    if (restoreMessagesRef) {
-      restoreMessagesRef.current = (msgs: ChatMessage[]) => {
-        restoreMessages(msgs)
-        persistedKeysRef.current = new Set(msgs.map(msgKey))
-      }
-    }
-    if (clearMessagesRef) {
-      clearMessagesRef.current = () => {
-        clearMessages()
-        persistedKeysRef.current = new Set()
-      }
-    }
-  }, [restoreMessages, clearMessages, restoreMessagesRef, clearMessagesRef])
-
-  // Expose current chat state for parent to read before conversation switch
-  useEffect(() => {
-    if (chatStateRef) {
-      chatStateRef.current = { isStreaming, isPending, messages, abort }
-    }
-  })
+  // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la
+  // restauración/limpieza de runtimes las maneja agentRuntimeStore — ya no viven
+  // acá. Esta vista solo lee el runtime de la conversación activa.
 
   // Notify parent when the session goes active/idle — drives the header badge.
   useEffect(() => {
     onSessionActiveChange?.(isStreaming || isPending || !!pendingQuestions)
   }, [isStreaming, isPending, pendingQuestions, onSessionActiveChange])
-
-  // Persist each message exactly once: user messages immediately, assistant
-  // messages once streaming stops (so we store the final content + tools).
-  useEffect(() => {
-    if (!onMessageComplete) return
-    for (const msg of messages) {
-      const key = msgKey(msg)
-      if (persistedKeysRef.current.has(key)) continue
-      if (msg.role === 'user') {
-        persistedKeysRef.current.add(key)
-        onMessageComplete(msg)
-      } else if (msg.role === 'assistant' && !isStreaming && (msg.content || msg.tools?.length)) {
-        persistedKeysRef.current.add(key)
-        onMessageComplete(msg)
-      }
-    }
-  }, [messages, isStreaming, onMessageComplete])
 
   // Track agent activity from delegation events
   useEffect(() => {
@@ -161,7 +131,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
 
     setInput('')
     setAttachedPdf(null)
-    sendPrompt(fullPrompt, cwd || undefined, activeContextId || undefined)
+    doSend(fullPrompt)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -196,7 +166,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     const fullPrompt = cwd
       ? `${prompt}\n\nMi carpeta de trabajo es: ${cwd}`
       : prompt
-    sendPrompt(fullPrompt, cwd || undefined, activeContextId || undefined)
+    doSend(fullPrompt)
   }
 
   const handleSelectFolder = async () => {
@@ -204,12 +174,13 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
     if (folder) setCwd(folder)
   }
 
-  const handleNewConversation = useCallback(async () => {
-    await window.cerpAPI.resetSession()
-    clearMessages()
+  // "Nueva conversación" ya NO resetea ninguna sesión: las demás conversaciones
+  // siguen corriendo en el store. Solo limpia la vista (el padre pone active=null,
+  // que muestra una pantalla nueva vacía).
+  const handleNewConversation = useCallback(() => {
     setCwd(null)
     onNewConversation()
-  }, [clearMessages, onNewConversation])
+  }, [onNewConversation])
 
   // --- Global keyboard shortcuts (Ctrl/Cmd+N, Ctrl/Cmd+K) ---
   // Must come after handleNewConversation so the stable callback reference is ready.
@@ -385,7 +356,7 @@ export function ChatContainer({ userName, activeContextId, onAgentActivity, onNe
               key={i}
               onClick={() => {
                 setInput('')
-                sendPrompt(suggestion, cwd || undefined, activeContextId || undefined)
+                doSend(suggestion)
               }}
               className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-full text-slate-600 hover:border-brand-orange/40 hover:text-brand-orange transition-colors truncate max-w-[250px]"
             >

@@ -50,7 +50,7 @@ const AskUserQuestionSchema = z.object({
  * Creates an in-process MCP server with all CERP tools.
  * companyId is injected automatically into write operations.
  */
-export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null, userId: string | null) {
+export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null, userId: string | null, conversationId = '__default__') {
   // ── attach_budget_pdf tool ────────────────────────────────────────────────
   // Reads a local PDF and uploads it to CERP via multipart. The PDF will appear
   // at the end of the printed cotización in both CERP IA and the ERP web app.
@@ -132,7 +132,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
     async (args: Record<string, unknown>) => {
       try {
         const parsed = AskUserQuestionSchema.parse(args)
-        const answers = await waitForAnswer({ questions: parsed.questions })
+        const answers = await waitForAnswer(conversationId, { questions: parsed.questions })
         const answerText = Object.entries(answers)
           .map(([q, a]) => `${q}: ${Array.isArray(a) ? a.join(', ') : a}`)
           .join('\n')

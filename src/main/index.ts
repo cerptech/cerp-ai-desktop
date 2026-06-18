@@ -14,6 +14,7 @@ if (!process.env.AUTH0_AUDIENCE) process.env.AUTH0_AUDIENCE = 'https://api.cerp.
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { registerIpcHandlers, handleCallback } from './ipc/handlers'
+import { initAutoUpdate } from './updater'
 import { logger } from './utils/logger'
 
 let mainWindow: BrowserWindow | null = null
@@ -54,6 +55,10 @@ if (!gotTheLock) {
     registerIpcHandlers(() => mainWindow)
 
     createWindow()
+
+    // Al entrar a CERP IA: chequear si hay una versión nueva y descargarla.
+    // No bloquea el arranque; el aviso de "reiniciá para actualizar" llega por IPC.
+    initAutoUpdate(() => mainWindow)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

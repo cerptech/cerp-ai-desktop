@@ -58,23 +58,34 @@ class MessageQueue {
 }
 
 // ============================================================
-// Persistent Streaming Session
+// Persistent Streaming Sessions — one per conversation
 // ============================================================
-let activeQuery: any = null
-let messageQueue: MessageQueue | null = null
-let sessionCwd: string | null = null
-let sessionContextId: string | null = null
+// CERP IA admite varias conversaciones corriendo en paralelo: cada una tiene su
+// propia sesión del SDK (query + cola de mensajes + estado de turno). Antes esto
+// eran variables de módulo (una sola sesión global); ahora viven en un Map keyed
+// por conversationId. Una conversación que corre NO se mata al cambiar de pestaña.
+interface AgentSession {
+  conversationId: string
+  query: any
+  messageQueue: MessageQueue
+  cwd: string
+  contextId: string | null
+  processingTurn: boolean
+  // Registro de delegaciones activas: Agent/Task tool_use_id → agentName. Por-sesión
+  // para que los eventos internos de subagentes resuelvan el nombre correcto.
+  activeDelegations: Map<string, string>
+  heartbeat: ReturnType<typeof setInterval> | null
+}
+
+const sessions = new Map<string, AgentSession>()
 let mainWindowRef: BrowserWindow | null = null
-let processingTurn = false
 
-// Active delegation registry: Agent/Task tool_use_id → agentName
-// Populated when the orchestrator emits an Agent tool_use block; used to
-// attach a human-readable label to every inner event the subagent emits
-// (which carry parent_tool_use_id = that tool_use_id).
-const activeDelegations = new Map<string, string>()
+// Conversaciones que arrancan antes de tener id real (legacy / primer mensaje)
+// usan esta clave efímera.
+const DEFAULT_CONV = '__default__'
 
-// Plan Mode — when true the agent uses permissionMode:'plan' and cannot execute
-// write operations. The user reviews the plan and resumes in normal mode.
+// Plan Mode — global (es un toggle de UI, no por-conversación). When true the
+// agent cannot execute write operations; the user reviews the plan and resumes.
 let planModeEnabled = false
 
 export function getPlanMode(): boolean {
@@ -83,77 +94,77 @@ export function getPlanMode(): boolean {
 
 /**
  * Enable or disable Plan Mode.
- * If a session is already open, close it so the next runAgent call applies the new mode.
+ * Plan Mode es global, así que al cambiarlo cerramos TODAS las sesiones abiertas
+ * para que el próximo mensaje de cada conversación arranque con el modo nuevo.
  */
 export function setPlanMode(enabled: boolean): void {
   if (planModeEnabled === enabled) return
   planModeEnabled = enabled
   logger.info(`Plan Mode ${enabled ? 'enabled' : 'disabled'}`)
-  // Close the current session — the next message will start a fresh one with the updated mode
-  if (activeQuery) {
-    closeSession()
-  }
+  for (const id of [...sessions.keys()]) closeSession(id)
 }
 
 export function isAgentRunning(): boolean {
-  return processingTurn
+  for (const s of sessions.values()) if (s.processingTurn) return true
+  return false
 }
 
 export function hasActiveSession(): boolean {
-  return activeQuery !== null
+  return sessions.size > 0
 }
 
 /**
- * Interrupt current turn gracefully (agent can finish current thought)
+ * Interrupt a conversation's current turn gracefully (agent can finish current thought).
  */
-export async function interruptAgent(): Promise<void> {
-  if (activeQuery) {
-    try {
-      await activeQuery.interrupt()
-      logger.info('Agent interrupted')
-    } catch (err) {
-      logger.warn(`Interrupt failed, closing session: ${err}`)
-      closeSession()
-    }
+export async function interruptAgent(conversationId: string = DEFAULT_CONV): Promise<void> {
+  const session = sessions.get(conversationId)
+  if (!session) return
+  try {
+    await session.query.interrupt()
+    logger.info(`Agent interrupted (${conversationId})`)
+  } catch (err) {
+    logger.warn(`Interrupt failed, closing session (${conversationId}): ${err}`)
+    closeSession(conversationId)
   }
 }
 
 /**
- * Close the session entirely and clean up
+ * Close one conversation's session entirely and clean up.
  */
-export function closeSession(): void {
-  // Cancel any pending ask_user_question so the MCP promise doesn't hang
-  cancelPendingQuestion()
-  if (messageQueue) {
-    messageQueue.close()
-    messageQueue = null
-  }
-  if (activeQuery) {
-    try {
-      activeQuery.close()
-    } catch { /* ignore */ }
-    activeQuery = null
-  }
-  sessionCwd = null
-  sessionContextId = null
-  processingTurn = false
+export function closeSession(conversationId: string = DEFAULT_CONV): void {
+  const session = sessions.get(conversationId)
+  if (!session) return
+  // Cancel any pending ask_user_question for THIS conversation so the MCP promise doesn't hang
+  cancelPendingQuestion(conversationId)
+  try { session.messageQueue.close() } catch { /* ignore */ }
+  try { session.query.close() } catch { /* ignore */ }
+  if (session.heartbeat) clearInterval(session.heartbeat)
+  session.activeDelegations.clear()
+  sessions.delete(conversationId)
+  logger.info(`Session closed (${conversationId})`)
+}
+
+/** Close every active session (logout / global reset). */
+export function closeAllSessions(): void {
+  for (const id of [...sessions.keys()]) closeSession(id)
   cachedContextPrompt = null
-  activeDelegations.clear()
   setAskUserWindow(null)
-  logger.info('Session closed')
+  logger.info('All sessions closed')
 }
 
-// Alias for IPC compatibility
-export function resetSession(): void {
-  closeSession()
+// Alias for IPC compatibility. Sin id → cierra todo (logout). Con id → esa conversación.
+export function resetSession(conversationId?: string): void {
+  if (conversationId) closeSession(conversationId)
+  else closeAllSessions()
 }
 
-export function abortAgent(): void {
-  interruptAgent()
+export function abortAgent(conversationId: string = DEFAULT_CONV): void {
+  interruptAgent(conversationId)
 }
 
 /**
- * Send a message to the agent. Starts a new session if needed.
+ * Send a message to a conversation's agent. Starts a new session if needed.
+ * Each conversationId has its own SDK session; sending to one never disturbs others.
  */
 export async function runAgent(
   payload: SendPromptPayload,
@@ -164,20 +175,24 @@ export async function runAgent(
 ): Promise<void> {
   mainWindowRef = mainWindow
   setAskUserWindow(mainWindow)
+  const conversationId = payload.conversationId || DEFAULT_CONV
   const cwd = payload.cwd || app.getPath('home')
   const contextId = payload.activeContextId || null
 
-  // If session exists but cwd or context changed, close and restart
-  if (activeQuery && (cwd !== sessionCwd || contextId !== sessionContextId)) {
-    logger.info('Session options changed, closing current session')
-    closeSession()
+  let session = sessions.get(conversationId)
+
+  // If THIS conversation's session exists but cwd/context changed, restart only it.
+  // Other conversations' sessions are untouched — that's the point of concurrency.
+  if (session && (cwd !== session.cwd || contextId !== session.contextId)) {
+    logger.info(`Session options changed, restarting session (${conversationId})`)
+    closeSession(conversationId)
+    session = undefined
   }
 
-  if (!activeQuery) {
-    await startSession(payload, apiKey, model, httpClient, mainWindow, cwd, contextId)
+  if (!session) {
+    await startSession(conversationId, payload, apiKey, model, httpClient, mainWindow, cwd, contextId)
   } else {
-    // Send follow-up message to existing session
-    sendFollowUp(payload.prompt)
+    sendFollowUp(session, payload.prompt)
   }
 }
 
@@ -186,6 +201,7 @@ export async function runAgent(
 // ============================================================
 
 async function startSession(
+  conversationId: string,
   payload: SendPromptPayload,
   apiKey: string,
   model: string,
@@ -194,9 +210,6 @@ async function startSession(
   cwd: string,
   contextId: string | null,
 ): Promise<void> {
-  sessionCwd = cwd
-  sessionContextId = contextId
-
   // Get companyId + userId
   let companyId = getCompanyId()
   let userId = getUserId()
@@ -211,7 +224,7 @@ async function startSession(
   }
   logger.info(`CompanyId: ${companyId}, UserId: ${userId}`)
 
-  const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId)
+  const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId, conversationId)
   const contextPrompt = await buildContextPrompt(httpClient)
   const fullSystemPrompt = buildFullSystemPrompt(
     contextPrompt,
@@ -334,46 +347,57 @@ async function startSession(
     forwardSubagentText: true,
   }
 
-  logger.info(`Starting session: "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd}, planMode: ${planModeEnabled})`)
+  logger.info(`Starting session (${conversationId}): "${payload.prompt.slice(0, 80)}..." (cwd: ${cwd}, planMode: ${planModeEnabled})`)
 
   // Create persistent message queue — keeps the session alive between turns
-  messageQueue = new MessageQueue()
+  const messageQueue = new MessageQueue()
   messageQueue.push(payload.prompt)
 
-  activeQuery = query({
+  const activeQuery = query({
     prompt: messageQueue as any,
     options: options as any,
   })
 
+  const session: AgentSession = {
+    conversationId,
+    query: activeQuery,
+    messageQueue,
+    cwd,
+    contextId,
+    processingTurn: false,
+    activeDelegations: new Map(),
+    heartbeat: null,
+  }
+  sessions.set(conversationId, session)
+
   // Process stream in background
-  processStreamLoop()
+  processStreamLoop(session)
 }
 
-function sendFollowUp(prompt: string): void {
-  if (!messageQueue) {
-    logger.error('No active message queue — cannot send follow-up')
-    return
-  }
-  logger.info(`Sending follow-up: "${prompt.slice(0, 80)}..."`)
-  messageQueue.push(prompt)
+function sendFollowUp(session: AgentSession, prompt: string): void {
+  logger.info(`Sending follow-up (${session.conversationId}): "${prompt.slice(0, 80)}..."`)
+  session.messageQueue.push(prompt)
 }
 
 // ============================================================
 // Stream processing (runs in background)
 // ============================================================
 
-async function processStreamLoop(): Promise<void> {
-  if (!activeQuery || !mainWindowRef) return
+async function processStreamLoop(session: AgentSession): Promise<void> {
+  if (!mainWindowRef) return
+  const conversationId = session.conversationId
 
+  // Every IPC event is tagged with conversationId so the renderer routes it to the
+  // right conversation — that's what lets background conversations keep streaming.
   const sendEvent = (event: AgentStreamEvent): void => {
     if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, event)
+      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, { conversationId, event })
     }
   }
 
   const sendDone = (): void => {
     if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, {})
+      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
     }
   }
 
@@ -385,30 +409,30 @@ async function processStreamLoop(): Promise<void> {
   // forwarded and the renderer's safety timer would flip the badge to inactive even though
   // the agent is actively working. A standalone interval forwards a lightweight stream_start
   // every 5s WHILE actively processing — a background task is running (`activeTaskCount > 0`)
-  // OR a turn is in progress (`processingTurn`). It stops emitting on its own once the turn
-  // completes (processingTurn=false, activeTaskCount=0) and is cleared in `finally`.
-  const heartbeat = setInterval(() => {
+  // OR a turn is in progress (`session.processingTurn`). It stops emitting on its own once the
+  // turn completes and is cleared in `finally`.
+  session.heartbeat = setInterval(() => {
     if (!mainWindowRef || mainWindowRef.isDestroyed()) return
-    if (activeTaskCount > 0 || processingTurn) {
+    if (activeTaskCount > 0 || session.processingTurn) {
       sendEvent({ type: 'stream_start' })
     }
   }, 5000)
 
   try {
-    for await (const msg of activeQuery) {
+    for await (const msg of session.query) {
       if (!mainWindowRef || mainWindowRef.isDestroyed()) break
 
       const msgObj = msg as Record<string, unknown>
       const msgType = msgObj.type as string
       const msgSubtype = msgObj.subtype as string | undefined
 
-      logger.debug(`Stream: type=${msgType} subtype=${msgSubtype || '-'} tasks=${activeTaskCount}`)
+      logger.debug(`Stream[${conversationId}]: type=${msgType} subtype=${msgSubtype || '-'} tasks=${activeTaskCount}`)
 
       // Track background tasks and system events
       if (msgType === 'system') {
         if (msgSubtype === 'task_started') {
           activeTaskCount++
-          processingTurn = true
+          session.processingTurn = true
           // Bug #2 fix: send an explicit stream_start event so the renderer
           // badge flips to "activa" immediately, regardless of whether
           // isStreaming was reset by a stale done event from a prior turn.
@@ -426,7 +450,7 @@ async function processStreamLoop(): Promise<void> {
 
       // Track turn state (the heartbeat interval handles keep-alive during silent gaps)
       if (msgType === 'assistant' || msgType === 'stream_event') {
-        processingTurn = true
+        session.processingTurn = true
       }
 
       // ── Subagent inner activity routing ──────────────────────────────────
@@ -435,7 +459,7 @@ async function processStreamLoop(): Promise<void> {
       // events instead of discarding them.
       const parentToolUseId = (msgObj as any).parent_tool_use_id as string | null | undefined
       if (parentToolUseId) {
-        const agentName = activeDelegations.get(parentToolUseId) ?? 'agente'
+        const agentName = session.activeDelegations.get(parentToolUseId) ?? 'agente'
 
         if (msgType === 'assistant') {
           // The subagent is making tool calls and/or writing text.
@@ -485,12 +509,12 @@ async function processStreamLoop(): Promise<void> {
       }
 
       // Map and forward events
-      const events = mapMessage(msgObj)
+      const events = mapMessage(msgObj, session.activeDelegations)
       if (events) {
         const arr = Array.isArray(events) ? events : [events]
         for (const event of arr) {
           if (event.type === 'done') {
-            logger.info(`Turn complete (cost=$${(event as any).cost?.toFixed(4) || '?'}, tasks=${activeTaskCount})`)
+            logger.info(`Turn complete [${conversationId}] (cost=$${(event as any).cost?.toFixed(4) || '?'}, tasks=${activeTaskCount})`)
             if (activeTaskCount > 0) {
               // Background tasks still running — don't signal done to UI yet
               logger.info(`Holding done: ${activeTaskCount} tasks still active`)
@@ -500,7 +524,7 @@ async function processStreamLoop(): Promise<void> {
             // Session stays alive (MessageQueue keeps the query running)
             sendEvent(event)
             sendDone()
-            processingTurn = false
+            session.processingTurn = false
             continue
           }
           sendEvent(event)
@@ -511,21 +535,23 @@ async function processStreamLoop(): Promise<void> {
     const message = err instanceof Error ? err.message : String(err)
 
     if (message.includes('aborted') || message.includes('interrupt')) {
-      logger.info('Session interrupted/aborted')
+      logger.info(`Session interrupted/aborted (${conversationId})`)
       sendEvent({ type: 'done' })
     } else {
-      logger.error(`Stream error: ${message}`)
+      logger.error(`Stream error (${conversationId}): ${message}`)
       sendEvent({ type: 'error', message })
     }
     sendDone()
   } finally {
-    clearInterval(heartbeat)
-    processingTurn = false
-    activeQuery = null
+    if (session.heartbeat) { clearInterval(session.heartbeat); session.heartbeat = null }
+    session.processingTurn = false
+    // The for-await loop only ends when the message queue closes (closeSession) or the
+    // stream errors — the session is truly over, so drop it from the registry.
+    sessions.delete(conversationId)
     // Always ensure UI resets — covers budget exceeded, errors, etc.
     sendEvent({ type: 'done' })
     sendDone()
-    logger.info('Stream loop ended')
+    logger.info(`Stream loop ended (${conversationId})`)
   }
 }
 
@@ -717,7 +743,7 @@ function extractToolResultOutput(content: unknown): string {
   return ''
 }
 
-function mapMessage(msg: Record<string, unknown>): AgentStreamEvent | AgentStreamEvent[] | null {
+function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string, string>): AgentStreamEvent | AgentStreamEvent[] | null {
   const type = msg.type as string
   const subtype = msg.subtype as string | undefined
 
