@@ -12,6 +12,11 @@ export interface AskUserQuestionItem {
 
 export type UserAnswerPayload = Record<string, string | string[]>
 
+export type QuoteFirewallEvent =
+  | { kind: 'reserved'; quoteId: string; source: string; requiresAction: boolean }
+  | { kind: 'committed'; quoteId: string }
+  | { kind: 'rolled_back'; quoteId: string; reason: string; message: string; failures: string[] }
+
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_start'; toolUseId: string; name: string; input?: string }
@@ -105,6 +110,28 @@ export interface ConversationFull extends ConversationSummary {
   }
 }
 
+export interface OnboardingProgress {
+  currentStep: number
+  completedSteps: number[]
+  skipped: boolean
+  completedAt: string | null
+  lastSeenAt: string
+  version: number
+  totalSteps: number
+  isCompleted: boolean
+}
+
+export type OnboardingProgressResponse = { success: boolean; data: OnboardingProgress } | null
+
+export interface OnboardingProgressUpdate {
+  viewStep?: number
+  completeStep?: number
+  currentStep?: number
+  skipped?: boolean
+  completed?: boolean
+  relaunch?: boolean
+}
+
 interface CerpAPI {
   login(): Promise<AuthState>
   logout(): Promise<void>
@@ -114,9 +141,13 @@ interface CerpAPI {
   resetSession(conversationId?: string): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>
   getPlanMode(): Promise<boolean>
+  setTurboMode(enabled: boolean): Promise<void>
+  getTurboMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
+  selectPdf(): Promise<string | null>
   onAskUserQuestion(callback: (questions: AskUserQuestionItem[], conversationId: string) => void): () => void
   submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
+  onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void
   onAgentMessage(callback: (event: AgentStreamEvent, conversationId: string) => void): () => void
   onAgentDone(callback: (conversationId: string) => void): () => void
   onAgentError(callback: (err: { message: string }, conversationId?: string) => void): () => void
@@ -151,6 +182,8 @@ interface CerpAPI {
     pageSize: number
     total: number
   }>
+  getOnboardingProgress(): Promise<OnboardingProgressResponse>
+  updateOnboardingProgress(payload: OnboardingProgressUpdate): Promise<OnboardingProgressResponse>
   getVersion(): Promise<string>
   onUpdateAvailable(callback: (data: { version: string }) => void): () => void
   onUpdateDownloadProgress(callback: (data: { percent: number }) => void): () => void

@@ -833,6 +833,38 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'POST',
     endpoint: '/quotes/purchase-extra',
   },
+  quote_reserve: {
+    description:
+      'CORTAFUEGOS — Reserva un crédito para la cotización SIN cobrar ni consumir (deja un hold). Llamar UNA SOLA VEZ al arrancar el flujo de cotización, después de quote_eligibility y de la confirmación del usuario. El backend decide la fuente automáticamente (ilimitado → gratis → crédito prepago → pago €19,99 con autorización retenida). Devuelve { quoteId, source, lifecycle:"reserved", requiresAction }. Guardá el quoteId: lo usás en quote_commit al final. El cobro/consumo real recién ocurre en quote_commit, y SOLO si el entregable es válido.',
+    schema: z.object({}),
+    method: 'POST',
+    endpoint: '/quotes/reserve',
+  },
+  quote_commit: {
+    description:
+      'CORTAFUEGOS — Finaliza la cotización: el backend valida el entregable contra el presupuesto persistido en CERP y, solo si es válido, consume/cobra el crédito. Llamar al FINAL, OBLIGATORIAMENTE después de recalculate_budget (los totales se leen tal cual quedaron). Devuelve { committed, validation }. Si committed=true: el crédito se aplicó correctamente. Si committed=false: el entregable no pasó la validación (validation.message explica el motivo), NO se cobró nada, el crédito quedó liberado y el presupuesto parcial se descartó — comunicá al usuario usando validation.message y ofrecé reintentar.',
+    schema: z.object({
+      id: z.string().describe('quoteId devuelto por quote_reserve'),
+      budgetId: z
+        .string()
+        .describe('ID del ConstructionBudget generado (el budgetId real de create_budget / get_budget_by_project)'),
+    }),
+    method: 'POST',
+    endpoint: '/quotes/:id/commit',
+  },
+  quote_refund: {
+    description:
+      'CORTAFUEGOS — Libera una reserva sin cobrar (ej: el usuario cancela el flujo antes de terminar). Devuelve el crédito al pool y descarta el presupuesto parcial. Usar SOLO si abandonás la cotización antes de quote_commit.',
+    schema: z.object({
+      id: z.string().describe('quoteId devuelto por quote_reserve'),
+      reason: z
+        .enum(['user_aborted', 'preflight_fail', 'error'])
+        .optional()
+        .describe('Motivo del refund (default user_aborted)'),
+    }),
+    method: 'POST',
+    endpoint: '/quotes/:id/refund',
+  },
   quote_register_files: {
     description: 'OBLIGATORIO al terminar de generar la cotización. Registra los paths locales del Excel y/o PDF generados, y opcionalmente metadata (projectName, totalAmount, lineItems).',
     schema: z.object({

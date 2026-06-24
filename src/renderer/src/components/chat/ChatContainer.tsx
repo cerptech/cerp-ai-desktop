@@ -9,6 +9,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
 import { useToast } from '@/hooks/useToast'
 import { usePlanMode } from '@/hooks/usePlanMode'
+import { useTurboMode } from '@/hooks/useTurboMode'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 
 export interface ChatStateSnapshot {
@@ -31,14 +32,19 @@ interface ChatContainerProps {
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
   /** Notifies the parent when the agent session goes active/idle (for the header badge). */
   onSessionActiveChange?: (active: boolean) => void
+  /** Exposes a setter so the onboarding wizard can wire the working folder. */
+  setCwdRef?: MutableRefObject<((path: string) => void) | null>
+  /** Exposes a setter so the onboarding wizard can inject a pre-armed prompt. */
+  setInputRef?: MutableRefObject<((text: string) => void) | null>
 }
 
-export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onAgentActivity, onNewConversation, searchInputRef, onSessionActiveChange }: ChatContainerProps) {
+export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onAgentActivity, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
   const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
+  const { turboMode, toggleTurboMode } = useTurboMode()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
   const [attachedPdf, setAttachedPdf] = useState<string | null>(null)
@@ -114,6 +120,25 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       inputRef.current.style.height = 'auto'
     }
   }, [input])
+
+  // Expose folder + input setters so the onboarding wizard can wire step 3
+  // (connect folder) and step 4 (inject a pre-armed prompt) to the real chat.
+  useEffect(() => {
+    if (setCwdRef) setCwdRef.current = (path: string) => setCwd(path)
+    if (setInputRef) {
+      setInputRef.current = (text: string) => {
+        setInput(text)
+        // Defer so the textarea has the new value before we resize/focus it.
+        requestAnimationFrame(() => {
+          const el = inputRef.current
+          if (el) {
+            adjustTextareaHeight(el)
+            el.focus()
+          }
+        })
+      }
+    }
+  }, [setCwdRef, setInputRef, adjustTextareaHeight])
 
   const handleSelectPdf = async () => {
     const path = await window.cerpAPI.selectPdf()
@@ -234,6 +259,17 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
           </svg>
           <span className="font-medium">Modo plan activo</span>
           <span className="text-amber-500">— el agente planificara sin ejecutar acciones de escritura. Desactivalo para continuar con la ejecucion.</span>
+        </div>
+      )}
+
+      {/* Turbo Mode banner — shown at the top when active (Idea 3) */}
+      {turboMode && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-violet-50 border-b border-violet-200 text-xs text-violet-700">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <span className="font-medium">Modo Turbo activo</span>
+          <span className="text-violet-500">— esta cotización usa más recursos y tarda más, a cambio de mayor precisión en licitaciones complejas.</span>
         </div>
       )}
 
@@ -433,6 +469,28 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
             <span>Modo plan{planMode ? ' · ON' : ''}</span>
+          </button>
+
+          {/* Turbo Mode toggle — cotización exhaustiva (Idea 3) */}
+          <button
+            type="button"
+            onClick={toggleTurboMode}
+            aria-pressed={turboMode}
+            className={`h-11 inline-flex items-center gap-1.5 px-3 rounded-lg border text-sm font-medium transition-all ${
+              turboMode
+                ? 'border-violet-500 bg-violet-100 text-violet-800 ring-2 ring-violet-300 shadow-sm'
+                : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+            }`}
+            title={
+              turboMode
+                ? 'Modo Turbo ACTIVO — máxima precisión para cotizaciones complejas. Usa más recursos y tarda más. Click para desactivar.'
+                : 'Activar Modo Turbo — para licitaciones grandes: el agente planifica el presupuesto completo con mayor rigor. Usa más recursos y tarda más, a cambio de mayor precisión.'
+            }
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
+            <span>Turbo{turboMode ? ' · ON' : ''}</span>
           </button>
 
           {isStreaming ? (
