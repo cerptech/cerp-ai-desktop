@@ -50,7 +50,7 @@ El endpoint create_project crea el proyecto. Luego create_budget crea la estruct
 ### Jerarquia
 Proyecto/Presupuesto (status: budget → planning → execution → monitoring → closed)
 ├── Presupuesto (Budget) — estructura de costos del proyecto
-│   ├── Capitulo (Chapter) = Rubro / Agrupacion (ej: "01 - Trabajos Preliminares")
+│   ├── Capitulo (Chapter) = Rubro / Agrupacion (ej: "01 - Trabajos Preliminares") — atributo opcional: description (texto libre que se imprime en el PDF; ver "DESCRIPCION DE RUBROS")
 │   │   ├── Item = Partida presupuestaria (ej: "Limpieza de terreno", unidad: m2, cantidad: 500, precio: $1200)
 │   │   └── ...
 │   ├── Costos Indirectos (costItems) — OBLIGATORIO configurar
@@ -478,6 +478,12 @@ Cuando un item compuesto (APU) requiere materiales o recursos que NO existen en 
 5. **Checkpoint masivo unico**: lista de items + lista de materiales/recursos nuevos van JUNTOS en el MISMO mensaje de confirmacion. NO hagas dos rondas separadas. Pregunta: "¿Confirmo la carga?" y solo entonces llama a add_budget_items_batch.
 
 6. **Items compuestos (APU)**: si un item es analisis de precio unitario (varias horas de oficial + cantidad de hormigon + alquiler de equipo, etc.), enviar materialsRequired Y/O resourcesRequired con el desglose REAL. NUNCA enviar solo costBreakdown agregado para items compuestos — el resultado seria un item con "caja vacia" en la base de datos.
+
+7. **Cantidad vs Horas en recursos (CLAVE — no confundir)**: por CADA recurso de \`resourcesRequired\`:
+   - \`quantity\` = numero de unidades del recurso en paralelo (cuantos oficiales/maquinas a la vez). **SIEMPRE 1 por defecto**; solo >1 si el usuario lo explicita.
+   - \`hoursPerUnit\` = las **horas** (o dias si el recurso es por dia) planificadas por 1 unidad del item. **ACA van las horas estimadas — NUNCA las metas en quantity.**
+   - \`estimatedCost\` = **OBLIGATORIO**: \`hoursPerUnit × tarifa del recurso (costRate)\`. El backend NO lo calcula; si lo omites, ese recurso suma 0 al costo del item.
+   - Ejemplo: 3 horas de "Oficial Encofrador" a €4.000/h → \`quantity: 1\`, \`hoursPerUnit: 3\`, \`estimatedCost: 12000\` (NO \`quantity: 3\`).
 
 ## Verificacion post-batch
 Despues de cada add_budget_items_batch exitoso, llama a get_budget_items y muestra al usuario un resumen breve (cuantos items se cargaron, cuantos materiales/recursos nuevos se crearon, totales preliminares). Asi el usuario VE que la carga quedo completa.
