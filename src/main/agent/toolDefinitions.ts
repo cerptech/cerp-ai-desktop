@@ -241,6 +241,25 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/budgets/:budgetId/items',
   },
+  get_budget_pdf_settings: {
+    description: 'Obtiene la configuracion de impresion del PDF de presupuestos de la empresa (es GLOBAL, una sola para toda la empresa). Devuelve pdfFields (que columnas se muestran: quantity=Cantidad, unit=Unidad, total=Total) y showIndirectCosts (si se imprime la seccion Coeficiente K - Costos Indirectos). Usar para consultar el estado actual antes de cambiar algo.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/module-settings/budget',
+  },
+  update_budget_pdf_settings: {
+    description: 'Activa o desactiva campos del PDF de presupuestos. IMPORTANTE: la config es GLOBAL de la empresa y afecta a TODOS los presupuestos, tanto en la app web como en CERP-IA (no es solo para el PDF actual). Enviar SOLO los campos que se quieren cambiar; los demas se mantienen. pdfFields controla las columnas Cantidad/Unidad/Total; showIndirectCosts controla la seccion Coeficiente K - Costos Indirectos. Requiere permiso de edicion de ajustes.',
+    schema: z.object({
+      pdfFields: z.object({
+        quantity: z.boolean().optional().describe('Mostrar columna Cantidad'),
+        unit: z.boolean().optional().describe('Mostrar columna Unidad'),
+        total: z.boolean().optional().describe('Mostrar columna Total (importe de la partida)'),
+      }).optional().describe('Columnas a mostrar. Incluir solo las que se quieren cambiar.'),
+      showIndirectCosts: z.boolean().optional().describe('Mostrar la seccion Coeficiente K - Costos Indirectos en el PDF'),
+    }),
+    method: 'PUT',
+    endpoint: '/module-settings/budget',
+  },
   create_budget: {
     description: 'Crea un nuevo presupuesto de construccion para un proyecto.',
     schema: z.object({
