@@ -41,6 +41,63 @@ COL_W    = [w * mm for w in COL_MM]
 COL_HDR  = ['#', 'Descripcion', 'Codigo', 'Cant.', 'Ud.',
             'Material', 'Mano de Obra', 'Equipos', 'Subcontratado', 'Gastos gen.', 'Total']
 
+# Column descriptors: (key, header, width_mm, opt_flag). 'opt' marks a toggleable
+# column driven by the company's PDF printing settings; None = always shown.
+# The 'idx' of each column into the fixed 11-length cell list is its position here.
+COL_DEFS = [
+    ('num',           '#',             8,  None),
+    ('desc',          'Descripcion',   27, None),
+    ('code',          'Codigo',        13, None),
+    ('qty',           'Cant.',         10, 'quantity'),
+    ('unit',          'Ud.',           8,  'unit'),
+    ('material',      'Material',      19, None),
+    ('labor',         'Mano de Obra',  19, None),
+    ('equipment',     'Equipos',       17, None),
+    ('subcontracted', 'Subcontratado', 19, None),
+    ('overhead',      'Gastos gen.',   17, None),
+    ('total',         'Total',         23, 'total'),
+]
+# Right-aligned monetary columns (used across chapter/item rows).
+VALUE_KEYS = {'material', 'labor', 'equipment', 'subcontracted', 'overhead', 'total'}
+
+
+def resolve_pdf_settings(data):
+    """Read PDF printing config embedded by the backend (get_budget_details).
+    Falls back to showing everything when absent (backward compatible)."""
+    budget = data.get('budget') or {}
+    ps = budget.get('pdfSettings') or data.get('pdfSettings') or {}
+    fields = ps.get('pdfFields') or {}
+    pdf_fields = {
+        'quantity': fields.get('quantity', True),
+        'unit':     fields.get('unit', True),
+        'total':    fields.get('total', True),
+    }
+    show_indirect = ps.get('showIndirectCosts', True)
+    return pdf_fields, show_indirect
+
+
+def build_active_cols(pdf_fields):
+    """Filter toggleable columns and redistribute freed width to 'Descripcion'
+    so the table keeps its 180mm total. Keeps each column's original cell index."""
+    freed = 0.0
+    active = []
+    for idx, (key, hdr, mmw, opt) in enumerate(COL_DEFS):
+        if opt is not None and not pdf_fields.get(opt, True):
+            freed += mmw
+        else:
+            active.append({'key': key, 'hdr': hdr, 'mm': mmw, 'idx': idx})
+    for col in active:
+        if col['key'] == 'desc':
+            col['mm'] += freed
+            break
+    for col in active:
+        col['w'] = col['mm'] * mm
+    return active
+
+
+# Active columns for the current render (set by BudgetPDFGen before drawing).
+_COLS = build_active_cols({'quantity': True, 'unit': True, 'total': True})
+
 ROW_H_HDR  = 7  * mm
 ROW_H_CH   = 6  * mm
 ROW_H_ITEM = 5.5* mm
@@ -392,8 +449,9 @@ def draw_tbl_header_row(c, y):
     c.setFont('Helvetica-Bold', 6)
     c.setFillColor(C_WHITE)
     cx = ML
-    for hdr, w in zip(COL_HDR, COL_W):
-        txt = clip(c, hdr, 'Helvetica-Bold', 6, w - 3 * mm)
+    for col in _COLS:
+        w = col['w']
+        txt = clip(c, col['hdr'], 'Helvetica-Bold', 6, w - 3 * mm)
         c.drawString(cx + 1.5 * mm, y_rl(y + ROW_H_HDR / 2 + 0.5 * mm), txt)
         cx += w
     return y + ROW_H_HDR
@@ -402,18 +460,21 @@ def draw_chapter_row(c, cells, depth, y):
     bg = C_CH0 if depth == 0 else C_CH1
     fill_rect(c, ML, y, CW, ROW_H_CH, bg)
     cx = ML
-    for i, (cell, w) in enumerate(zip(cells, COL_W)):
-        cell = str(cell)
-        if i == 0:
+    for col in _COLS:
+        w   = col['w']
+        key = col['key']
+        cell = str(cells[col['idx']])
+        if key == 'num':
             txt = clip(c, cell, 'Helvetica-Bold', 7, w - 3 * mm)
             text_mid(c, cx + 1.5 * mm, y, ROW_H_CH, txt, 'Helvetica-Bold', 7, C_DARK)
-        elif i == 1:
+        elif key == 'desc':
             indent = 1.5 * mm + depth * 2 * mm
             txt = clip(c, cell, 'Helvetica-Bold', 7, w - indent - 2 * mm)
             text_mid(c, cx + indent, y, ROW_H_CH, txt, 'Helvetica-Bold', 7, C_DARK)
-        elif i >= 5:
+        elif key in VALUE_KEYS:
             txt = clip(c, cell, 'Helvetica-Bold', 7, w - 3 * mm)
             text_mid(c, cx, y, ROW_H_CH, txt, 'Helvetica-Bold', 7, C_DARK, align='right', x2=cx + w - 1.5 * mm)
+        # code/qty/unit are blank on chapter rows → nothing to draw
         cx += w
     return y + ROW_H_CH
 
@@ -452,22 +513,21 @@ def draw_item_row(c, cells, depth, item_idx, y):
     if item_idx % 2 == 0:
         fill_rect(c, ML, y, CW, ROW_H_ITEM, C_LIGHT)
     cx = ML
-    for i, (cell, w) in enumerate(zip(cells, COL_W)):
-        cell = str(cell)
-        if i == 0:
+    for col in _COLS:
+        w   = col['w']
+        key = col['key']
+        cell = str(cells[col['idx']])
+        if key == 'num':
             txt = clip(c, cell, 'Helvetica', 6, w - 3 * mm)
             text_mid(c, cx + 1.5 * mm, y, ROW_H_ITEM, txt, 'Helvetica', 6, C_DARK)
-        elif i == 1:
+        elif key == 'desc':
             indent = 1.5 * mm + depth * 2 * mm
             txt = clip(c, cell, 'Helvetica', 6, w - indent - 2 * mm)
             text_mid(c, cx + indent, y, ROW_H_ITEM, txt, 'Helvetica', 6, C_DARK)
-        elif i == 2:
+        elif key == 'code':
             txt = clip(c, cell, 'Helvetica', 5.5, w - 3 * mm)
             text_mid(c, cx + 1.5 * mm, y, ROW_H_ITEM, txt, 'Helvetica', 5.5, C_GRAY)
-        elif i in (3, 4):
-            txt = clip(c, cell, 'Helvetica', 6, w - 3 * mm)
-            text_mid(c, cx, y, ROW_H_ITEM, txt, 'Helvetica', 6, C_DARK, align='right', x2=cx + w - 1.5 * mm)
-        else:
+        else:  # qty, unit and monetary columns → right aligned
             txt = clip(c, cell, 'Helvetica', 6, w - 3 * mm)
             text_mid(c, cx, y, ROW_H_ITEM, txt, 'Helvetica', 6, C_DARK, align='right', x2=cx + w - 1.5 * mm)
         cx += w
@@ -500,6 +560,10 @@ class BudgetPDFGen:
         self.company      = get_company(data)
         self.sym          = data.get('currencySymbol') or '$'
         self.total_pages  = total_pages
+
+        # PDF printing config (columns + indirect costs) from company settings.
+        self.pdf_fields, self.show_indirect = resolve_pdf_settings(data)
+        self._cols = build_active_cols(self.pdf_fields)
 
         self.items_by_id  = {it['_id']: it for it in self.items if it.get('_id')}
         self.leaves       = [i for i in self.items if i.get('type') == 'item']
@@ -715,10 +779,11 @@ class BudgetPDFGen:
 
         rows = [
             {'lbl': 'Costos Directos',   'val': fmt_money(self.direct, self.sym),   'bold': False, 'clr': None},
-            {'lbl': 'Costos Indirectos', 'val': fmt_money(indirect, self.sym),       'bold': False, 'clr': None},
-            {'lbl': 'Coeficiente K',     'val': f'K = {k_val:.4f}',                'bold': False, 'clr': C_PRIMARY},
-            {'lbl': 'Presupuesto total', 'val': fmt_money(self.grand, self.sym),     'bold': True,  'clr': None},
         ]
+        if self.show_indirect:
+            rows.append({'lbl': 'Costos Indirectos', 'val': fmt_money(indirect, self.sym), 'bold': False, 'clr': None})
+            rows.append({'lbl': 'Coeficiente K',     'val': f'K = {k_val:.4f}',           'bold': False, 'clr': C_PRIMARY})
+        rows.append({'lbl': 'Presupuesto total', 'val': fmt_money(self.grand, self.sym), 'bold': True, 'clr': None})
 
         for i, row in enumerate(rows):
             rh = ROW_H + 2 * mm if row['bold'] else ROW_H
@@ -782,10 +847,14 @@ class BudgetPDFGen:
 
     # ── Two-pass generate ─────────────────────────────────────────────────────
     def _full_render(self):
+        # Activate this instance's column layout for the module-level row drawers.
+        global _COLS
+        _COLS = self._cols
         y = self._new_page()
         y = self._draw_resumen_capitulos(y)
         y = self._draw_detail_table(y)
-        y = self._draw_coeff_k(y)
+        if self.show_indirect:
+            y = self._draw_coeff_k(y)
         y = self._draw_summary(y)
         # Condiciones on a new page
         self._new_page()

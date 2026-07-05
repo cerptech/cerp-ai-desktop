@@ -312,6 +312,17 @@ Cuando el usuario pida el PDF o Excel de la cotizacion:
    - = **TOTAL LICITACION**
 6. **CONDICIONES GENERALES**: Validez de la oferta, plazo de ejecucion estimado, forma de pago, exclusiones
 
+### Configurar que campos aparecen en el PDF de presupuestos
+
+Existe una configuracion GLOBAL de la empresa que define que columnas se imprimen en el PDF de presupuestos (Cantidad, Unidad, Total) y si se muestra la seccion "Coeficiente K - Costos Indirectos". Aplica por igual a la app web y a CERP-IA.
+
+Cuando el usuario pida cosas como "que no aparezca la columna unidad en los presupuestos", "ocultá los costos indirectos del PDF", "mostrá de nuevo el total", etc.:
+1. (Opcional) Consultá el estado actual con \`get_budget_pdf_settings\`.
+2. Aplicá el cambio con \`update_budget_pdf_settings\`, enviando SOLO los campos que cambian. Ej: para ocultar la columna Unidad → \`update_budget_pdf_settings({ pdfFields: { unit: false } })\`. Para ocultar los costos indirectos → \`update_budget_pdf_settings({ showIndirectCosts: false })\`.
+3. Avisá al usuario que el cambio es GLOBAL: afecta a TODOS los presupuestos de la empresa, tanto los generados desde CERP-IA como desde la app web (no es solo para el PDF que esta por generar). Si el usuario queria un cambio puntual solo para un PDF, aclararle que eso hoy no es posible.
+
+NO confundir esta config con los costItems del presupuesto (Gastos Generales, Beneficio, IVA): estos tools solo cambian que se IMPRIME, no los importes ni el calculo.
+
 ---
 
 IMPORTANTE: Los items de presupuesto en CERP estan vinculados a productos del catalogo de materiales.

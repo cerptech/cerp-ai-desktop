@@ -211,6 +211,8 @@ Guarda un archivo temporal (ej: /tmp/budget_data.json o C:/Temp/budget_data.json
 
 IMPORTANTE: el campo \`tree\` debe ser jerarquico (no plano). Cada nodo de capitulo tiene \`children\` con sus subcapitulos e items directos.
 
+IMPORTANTE: el objeto \`budget\` de \`get_budget_details\` incluye un campo \`pdfSettings\` (configuracion de impresion de PDF de la empresa: \`pdfFields\` con quantity/unit/total y \`showIndirectCosts\`). Copialo tal cual dentro de \`budget\` en el JSON de entrada — NO lo elimines ni lo modifiques. El script lo usa para ocultar columnas y la seccion de Costos Indirectos segun la config. Si por algun motivo no viene, el script asume todo visible.
+
 **Paso 3 — Ejecutar el script**
 
 \`\`\`bash
