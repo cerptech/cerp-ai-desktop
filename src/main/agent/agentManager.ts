@@ -78,6 +78,11 @@ interface AgentSession {
   // para que los eventos internos de subagentes resuelvan el nombre correcto.
   activeDelegations: Map<string, string>
   heartbeat: ReturnType<typeof setInterval> | null
+  // total_cost_usd y num_turns del SDK son ACUMULADOS de la sesión: para reportar
+  // consumo por ejecución hay que restar lo ya reportado (si no, el summary del
+  // backend suma acumulados y multiplica el gasto real).
+  lastReportedCostUsd: number
+  lastReportedTurns: number
 }
 
 const sessions = new Map<string, AgentSession>()
@@ -427,6 +432,8 @@ async function startSession(
     processingTurn: false,
     activeDelegations: new Map(),
     heartbeat: null,
+    lastReportedCostUsd: 0,
+    lastReportedTurns: 0,
   }
   sessions.set(conversationId, session)
 
@@ -569,7 +576,7 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
       }
 
       // Map and forward events
-      const events = mapMessage(msgObj, session.activeDelegations)
+      const events = mapMessage(msgObj, session.activeDelegations, session)
       if (events) {
         const arr = Array.isArray(events) ? events : [events]
         for (const event of arr) {
@@ -819,7 +826,7 @@ function extractToolResultOutput(content: unknown): string {
   return ''
 }
 
-function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string, string>): AgentStreamEvent | AgentStreamEvent[] | null {
+function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string, string>, session?: AgentSession): AgentStreamEvent | AgentStreamEvent[] | null {
   const type = msg.type as string
   const subtype = msg.subtype as string | undefined
 
@@ -911,17 +918,40 @@ function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string,
     const outputTokens = usage.output_tokens || 0
     const cacheCreation = usage.cache_creation_input_tokens || 0
     const cacheRead = usage.cache_read_input_tokens || 0
-    logger.info(`[USAGE] cost=$${cost?.toFixed(4) || '?'} | turns=${turns} | input=${inputTokens} | output=${outputTokens} | cache_create=${cacheCreation} | cache_read=${cacheRead}`)
+
+    // total_cost_usd / num_turns vienen ACUMULADOS por sesión SDK — al backend se
+    // reporta solo el DELTA de esta ejecución. Si el acumulado retrocede (sesión
+    // nueva reusando el objeto), el valor entero es el delta.
+    let costDelta = cost ?? 0
+    let turnsDelta = turns ?? 0
+    if (session) {
+      if (typeof cost === 'number') {
+        costDelta = cost >= session.lastReportedCostUsd ? cost - session.lastReportedCostUsd : cost
+        session.lastReportedCostUsd = cost
+      }
+      if (typeof turns === 'number') {
+        turnsDelta = turns >= session.lastReportedTurns ? turns - session.lastReportedTurns : turns
+        session.lastReportedTurns = turns
+      }
+    }
+
+    logger.info(`[USAGE] cost=$${cost?.toFixed(4) || '?'} (delta=$${costDelta.toFixed(4)}) | turns=${turns} | input=${inputTokens} | output=${outputTokens} | cache_create=${cacheCreation} | cache_read=${cacheRead}`)
+
     // Persistir el consumo de esta ejecución (fire-and-forget; no bloquea el stream).
-    reportExecutionUsage({
-      inputTokens,
-      outputTokens,
-      cacheCreationTokens: cacheCreation,
-      cacheReadTokens: cacheRead,
-      costUsd: cost,
-      turns,
-      turbo: turboModeEnabled,
-    })
+    // Los result vacíos de reconexión (0 tokens y delta 0) son ruido: no se reportan.
+    const hasTokens = inputTokens + outputTokens + cacheCreation + cacheRead > 0
+    if (hasTokens || costDelta > 0) {
+      reportExecutionUsage({
+        inputTokens,
+        outputTokens,
+        cacheCreationTokens: cacheCreation,
+        cacheReadTokens: cacheRead,
+        costUsd: costDelta,
+        turns: turnsDelta,
+        turbo: turboModeEnabled,
+      })
+    }
+    // El evento al renderer conserva el costo ACUMULADO (footer de costo de la sesión).
     return { type: 'done', cost, turns, tokensIn: inputTokens, tokensOut: outputTokens }
   }
 

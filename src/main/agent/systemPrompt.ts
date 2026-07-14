@@ -333,6 +333,26 @@ IMPORTANTE: La empresa ya tiene materiales, recursos (mano de obra, maquinaria) 
 NUNCA intentes crear un "Budget" como si fuera un proyecto. El Budget va DENTRO del proyecto.
 NUNCA crees obras ni ordenes cuando te piden un presupuesto. Solo proyecto + budget + chapters + items.
 
+## PLANIFICACION Y CRONOGRAMA DE TAREAS
+
+Al aprobar un presupuesto, CERP crea automaticamente las tareas del proyecto (una por capitulo/subrubro). El usuario suele pedir despues cargar el CRONOGRAMA (fechas de inicio/fin por tarea, tipicamente desde un plan de trabajo o Gantt).
+
+**Como cargar un cronograma:**
+1. Obtener las tareas existentes con \`get_project_tasks\` (devuelve la jerarquia con IDs).
+2. Por cada tarea, llamar \`update_task\` con \`startDate\` y \`endDate\` (ISO 8601). Tambien acepta \`status\`, \`priority\` y \`progress\`.
+3. Para tareas que no existen, usar \`create_task\` — requiere OBLIGATORIAMENTE \`name\`, \`startDate\`, \`endDate\` y \`status\` (usar "planning" para cronograma futuro).
+4. Para eliminar tareas usar \`delete_task\` (confirmar antes con el usuario).
+5. Estados validos de tarea: planning, pending, execution, paused, completed, cancelled.
+6. Si son muchas tareas (>20), procesa por capitulo mostrando avance ("Cargando fechas del rubro 3/10...").
+
+**Edicion de presupuestos YA cargados** (correcciones post-carga, muy comun en licitaciones):
+- \`delete_budget_item\` elimina un item o capitulo CON TODOS sus descendientes y recalcula totales. SIEMPRE confirmar antes indicando cuantos items se borran.
+- \`reorder_budget_items\` reordena hermanos dentro del mismo capitulo padre.
+- \`replace_budget_item_product\` reemplaza el producto/APU de un item por uno nuevo con composicion completa (materiales + recursos) — usar cuando hay que corregir o completar el desglose de un item existente, porque \`update_budget_item\` NO edita la composicion.
+- Despues de editar, llamar \`recalculate_budget\`.
+
+**REGLA — verificar antes de prometer**: antes de comprometerte a una operacion de escritura ("ahora cargo las fechas", "te lo elimino"), verifica que la herramienta disponible cubre EXACTAMENTE los campos necesarios. Si la herramienta no lo soporta, decilo ANTES de intentarlo y ofrece la alternativa (ej: generar un Excel para carga manual) — nunca despues de varios intentos fallidos.
+
 ## BUSCAR UN PRESUPUESTO POR NOMBRE
 
 Cuando el usuario menciona un presupuesto por nombre, seguí SIEMPRE este flujo de dos pasos:

@@ -11,6 +11,12 @@ export interface ToolDef {
   schema: z.ZodType
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   endpoint: string
+  /**
+   * Renombra campos top-level del body antes de enviarlos al API (schema key → API key).
+   * El API de CERP mezcla camelCase y snake_case según el endpoint; las tools exponen
+   * SIEMPRE camelCase al modelo y este mapa absorbe la diferencia.
+   */
+  fieldMap?: Record<string, string>
 }
 
 export const toolSchemas: Record<string, ToolDef> = {
@@ -292,6 +298,54 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'PUT',
     endpoint: '/budgets/:budgetId/items/:itemId',
   },
+  delete_budget_item: {
+    description: 'Elimina un item o capitulo del presupuesto (borrado logico) JUNTO CON TODOS SUS DESCENDIENTES (subcapitulos e items hijos). Recalcula automaticamente la numeracion jerarquica y los totales del presupuesto. IRREVERSIBLE desde la IA: confirmar SIEMPRE con el usuario antes, indicando cuantos items se van a borrar.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      itemId: z.string().describe('ID del item o capitulo a eliminar (con sus descendientes)'),
+    }),
+    method: 'DELETE',
+    endpoint: '/budgets/:budgetId/items/:itemId',
+  },
+  reorder_budget_items: {
+    description: 'Reordena los items/capitulos hijos de un mismo padre dentro del presupuesto. Sirve para mover un item de posicion dentro de su capitulo o reordenar capitulos. IMPORTANTE: solo reordena hermanos bajo el MISMO padre — enviar la lista COMPLETA de IDs de los hijos de ese padre en el orden final deseado. Para mover un item a OTRO capitulo, usar delete_budget_item + add_budget_item en el capitulo destino.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      parentItemId: z.string().optional().describe('ID del capitulo padre cuyos hijos se reordenan. Omitir para reordenar los capitulos raiz del presupuesto'),
+      orderedItemIds: z.array(z.string()).min(1).describe('TODOS los IDs de los hijos directos de ese padre, en el orden final deseado'),
+    }),
+    method: 'PUT',
+    endpoint: '/budgets/:budgetId/items/reorder',
+  },
+  replace_budget_item_product: {
+    description: 'Reemplaza el producto/APU de un item de presupuesto existente por uno NUEVO con composicion completa (materiales + recursos). Usar cuando hay que corregir o completar el desglose (BOM) de un item ya cargado — por ejemplo agregar materiales que faltaron — ya que update_budget_item NO permite editar la composicion. Crea un producto nuevo en el catalogo (el code debe ser unico), lo vincula al item y recalcula costos y totales. Los materiales y recursos referenciados deben existir en el catalogo (usar search_materials / search_resources / create_material antes).',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      itemId: z.string().describe('ID del item de presupuesto cuyo producto se reemplaza (debe ser un item hoja con producto vinculado, no un capitulo)'),
+      name: z.string().describe('Nombre del nuevo producto/APU'),
+      code: z.string().describe('Codigo UNICO del nuevo producto (ej: "PART-7.1.8-V2"). Si el original era MAT-0042, usar un sufijo tipo MAT-0042-B'),
+      unit: z.string().describe('Unidad de medida (m2, m3, u, gl, etc.)'),
+      description: z.string().optional().describe('Descripcion del producto. Si se omite se conserva la del producto original'),
+      classification: z.string().optional().describe('ID classification product_type. Si se omite se conserva la del original'),
+      materialsRequired: z.array(z.object({
+        material_id: z.string().describe('ID del material existente en el catalogo'),
+        quantity_needed: z.number().describe('Cantidad del material por 1 unidad del item'),
+        unitCost: z.number().optional().describe('Costo unitario especifico para esta receta. Si se omite se usa el defaultCost del material'),
+      })).optional().describe('BOM de materiales del nuevo producto'),
+      resourcesRequired: z.array(z.object({
+        resourceId: z.string().describe('ID del recurso existente (mano de obra o maquinaria)'),
+        resourceName: z.string().optional().describe('Nombre del recurso (informativo)'),
+        quantity: z.number().describe('Unidades del recurso en paralelo. DEFAULT 1 — NUNCA poner aca las horas'),
+        hoursPerUnit: z.number().optional().describe('Horas (o dias si costRateType="daily") planificadas por 1 unidad del item'),
+        costRate: z.number().optional().describe('Tarifa del recurso'),
+        costRateType: z.enum(['hourly', 'daily', 'fixed', 'unit', 'm2', 'm3']).optional(),
+        estimatedCost: z.number().describe('Costo del recurso en este APU: hoursPerUnit x costRate. OBLIGATORIO, el backend no lo calcula'),
+      })).optional().describe('BOM de recursos del nuevo producto'),
+    }),
+    method: 'POST',
+    endpoint: '/budgets/:budgetId/items/:itemId/replace-product',
+    fieldMap: { materialsRequired: 'materials_required', resourcesRequired: 'resources_required' },
+  },
   add_budget_item: {
     description: 'Agrega un item/partida al presupuesto. REQUIERE un productId del catalogo de materiales de la empresa. Primero busca el producto con search_materials, y si no existe, crealo con create_material.',
     schema: z.object({
@@ -421,28 +475,42 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/projects/:projectId/tasks-with-subtasks',
   },
   create_task: {
-    description: 'Crea una nueva tarea dentro de un proyecto.',
+    description: 'Crea una nueva tarea dentro de un proyecto. Los campos name, startDate, endDate y status son OBLIGATORIOS (el API los exige). Para el cronograma de obra: crear las tareas con sus fechas reales de inicio y fin.',
     schema: z.object({
       projectId: z.string().describe('ID del proyecto'),
       name: z.string().describe('Nombre de la tarea'),
+      startDate: z.string().describe('Fecha de inicio ISO 8601 (ej: "2026-07-01"). OBLIGATORIO'),
+      endDate: z.string().describe('Fecha de fin ISO 8601. OBLIGATORIO'),
+      status: z.enum(['planning', 'pending', 'execution', 'paused', 'completed', 'cancelled']).describe('Estado inicial. OBLIGATORIO. Usar "planning" para tareas de cronograma futuro, "pending" si esta lista para arrancar'),
       description: z.string().optional(),
       parentTaskId: z.string().optional().describe('ID de tarea padre (para subtareas)'),
-      startDate: z.string().optional(),
-      endDate: z.string().optional(),
     }),
     method: 'POST',
     endpoint: '/projects/:projectId/tasks',
+    fieldMap: { parentTaskId: 'parent_task_id' },
   },
   update_task: {
-    description: 'Actualiza una tarea. NOTA: si tiene subtareas, el progreso se calcula automaticamente.',
+    description: 'Actualiza una tarea existente: nombre, descripcion, estado, fechas de inicio/fin, prioridad y avance. Usar para cargar o corregir el cronograma (fechas) de tareas ya creadas. NOTA: si la tarea tiene subtareas, el progreso se calcula automaticamente y no se puede setear a mano.',
     schema: z.object({
       taskId: z.string().describe('ID de la tarea'),
       name: z.string().optional(),
       description: z.string().optional(),
-      status: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).optional(),
-      progress: z.number().min(0).max(100).optional(),
+      status: z.enum(['planning', 'pending', 'execution', 'paused', 'completed', 'cancelled']).optional(),
+      startDate: z.string().optional().describe('Nueva fecha de inicio ISO 8601'),
+      endDate: z.string().optional().describe('Nueva fecha de fin ISO 8601'),
+      priority: z.enum(['None', 'Low', 'Medium', 'High']).optional().describe('Prioridad de la tarea'),
+      progress: z.number().min(0).max(100).optional().describe('Porcentaje de avance (0-100). Solo en tareas SIN subtareas'),
     }),
     method: 'PUT',
+    endpoint: '/tasks/:taskId',
+    fieldMap: { startDate: 'start_date', endDate: 'end_date', progress: 'percent_complete' },
+  },
+  delete_task: {
+    description: 'Elimina una tarea del proyecto (borrado logico). Usar con cuidado: confirmar con el usuario antes de borrar.',
+    schema: z.object({
+      taskId: z.string().describe('ID de la tarea a eliminar'),
+    }),
+    method: 'DELETE',
     endpoint: '/tasks/:taskId',
   },
 
