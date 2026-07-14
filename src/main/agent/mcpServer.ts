@@ -160,7 +160,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       def.schema as any,
       async (args: Record<string, unknown>) => {
         try {
-          const { url, body } = buildRequest(def.endpoint, def.method, args)
+          const { url, body } = buildRequest(def.endpoint, def.method, args, def.fieldMap)
           logger.info(`MCP ${def.method} ${name} → ${url}`)
 
           // Auto-inject companyId into all operations
@@ -264,6 +264,7 @@ function buildRequest(
   endpoint: string,
   method: string,
   args: Record<string, unknown>,
+  fieldMap?: Record<string, string>,
 ): { url: string; body?: Record<string, unknown> } {
   const remaining: Record<string, unknown> = {}
   let path = endpoint
@@ -275,7 +276,7 @@ function buildRequest(
     if (path.includes(placeholder)) {
       path = path.replace(placeholder, String(value))
     } else {
-      remaining[key] = value
+      remaining[fieldMap?.[key] ?? key] = value
     }
   }
 
