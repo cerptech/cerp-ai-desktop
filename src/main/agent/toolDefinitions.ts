@@ -19,6 +19,40 @@ export interface ToolDef {
   fieldMap?: Record<string, string>
 }
 
+// ============================================================
+// "PDF editables con IA" — catalogo de fieldIds de plantillas de documento.
+// Mirror de cerp-server/src/constants/documentTemplateCatalog.ts (BUDGET_FIELDS).
+// Mantener en sync a mano: agregar/quitar un campo del catalogo del backend
+// requiere el mismo cambio aca para que el schema Zod de update_budget_pdf_settings
+// acepte/valide los fieldIds correctos.
+// ============================================================
+const BUDGET_HEADER_FIELD_IDS = [
+  'header.companyLogo',
+  'header.companyName',
+  'header.clientName',
+  'header.clientAddress',
+  'header.clientCity',
+  'header.clientCountry',
+  'header.budgetNumber',
+  'header.budgetRevision',
+  'header.issueDate',
+  'header.expiryDate',
+] as const
+
+const BUDGET_LINE_FIELD_IDS = [
+  'lines.num',
+  'lines.desc',
+  'lines.code',
+  'lines.qty',
+  'lines.unit',
+  'lines.material',
+  'lines.labor',
+  'lines.equipment',
+  'lines.subcontracted',
+  'lines.overhead',
+  'lines.total',
+] as const
+
 export const toolSchemas: Record<string, ToolDef> = {
   // ============================================================
   // PROJECTS — Read & Write
@@ -247,24 +281,49 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/budgets/:budgetId/items',
   },
+  // ------------------------------------------------------------
+  // PDF editables con IA: reemplaza la vieja config GLOBAL de
+  // ModuleSettings.budget.pdfFields (PUT /module-settings/budget fue
+  // ELIMINADO del backend). Ahora cada empresa puede tener HASTA 3
+  // PLANTILLAS de documento por docType (hoy solo 'BUDGET'), una marcada
+  // como predeterminada (isDefault). Catalogo completo de campos en
+  // cerp-server/src/constants/documentTemplateCatalog.ts.
+  // ------------------------------------------------------------
   get_budget_pdf_settings: {
-    description: 'Obtiene la configuracion de impresion del PDF de presupuestos de la empresa (es GLOBAL, una sola para toda la empresa). Devuelve pdfFields (que columnas se muestran: quantity=Cantidad, unit=Unidad, total=Total) y showIndirectCosts (si se imprime la seccion Coeficiente K - Costos Indirectos). Usar para consultar el estado actual antes de cambiar algo.',
+    description: 'Lista las plantillas de PDF de presupuestos de la empresa (hasta 3, docType BUDGET). Cada plantilla trae su config COMPLETA: header (10 campos: logo empresa, nombre empresa, nombre/direccion/localidad/pais del cliente, numero/revision/fecha emision/fecha validez del presupuesto), lines (11 columnas de la tabla de partidas), sections (1 campo: Coeficiente K - Costos Indirectos) y footer (texto libre con {{variables}}). Cada plantilla tiene isDefault (la que se usa para generar/imprimir PDFs si no se elige otra explicitamente) e isSystem (plantilla de fabrica: solo se le puede cambiar isDefault, todo lo demas es de solo lectura). Llamar SIEMPRE antes de update_budget_pdf_settings para: (1) obtener el templateId de la plantilla a editar (normalmente la que tiene isDefault:true), (2) revisar si esa plantilla es isSystem — si lo es, avisar al usuario ANTES de intentar editarla (ver la description de update_budget_pdf_settings), (3) usar su config actual como base, porque el PUT reemplaza cada grupo (header/lines/sections/footer) por completo, sin merge parcial.',
     schema: z.object({}),
     method: 'GET',
-    endpoint: '/module-settings/budget',
+    endpoint: '/document-templates?docType=BUDGET',
   },
   update_budget_pdf_settings: {
-    description: 'Activa o desactiva campos del PDF de presupuestos. IMPORTANTE: la config es GLOBAL de la empresa y afecta a TODOS los presupuestos, tanto en la app web como en CERP-IA (no es solo para el PDF actual). Enviar SOLO los campos que se quieren cambiar; los demas se mantienen. pdfFields controla las columnas Cantidad/Unidad/Total; showIndirectCosts controla la seccion Coeficiente K - Costos Indirectos. Requiere permiso de edicion de ajustes.',
+    description: 'Edita UNA plantilla puntual de PDF de presupuestos (columnas visibles/orden de la tabla, campos de cabecera visibles/orden, seccion de Coeficiente K, texto de pie de pagina) o la marca como predeterminada de la empresa. YA NO es una config global unica: hay hasta 3 plantillas por empresa (docType BUDGET) y esta tool opera sobre UNA via su templateId (obtenido de get_budget_pdf_settings). REGLA CRITICA — el backend REEMPLAZA cada grupo enviado por completo, no hace merge: si se manda "config", hay que incluir los 4 grupos completos (header con sus 10 fieldIds, lines con sus 11, sections con su 1, y footer) — omitir un grupo o mandar solo algunos fieldIds de un grupo hace que el PUT falle o borre el resto de esa lista. Flujo correcto: leer la config actual completa con get_budget_pdf_settings, modificar SOLO la entrada (visible y/o order) del campo pedido, y reenviar TODO el resto identico. Campos mandatory (header.clientName, header.budgetNumber, header.issueDate, lines.desc, lines.total) no se pueden ocultar (visible:false) — el backend lo rechaza. Maximo 7 columnas de "lines" con visible:true simultaneamente. BLOQUEO DE PLANTILLA DE SISTEMA: si la plantilla es isSystem:true (caso comun: la default de una empresa que nunca personalizo nada), esta tool SOLO puede cambiar isDefault — cualquier otro campo (name, config) es rechazado por el backend con code SYSTEM_TEMPLATE_LOCKED. CERP-IA hoy NO puede duplicar plantillas: si el usuario pide personalizar el PDF y la plantilla default es isSystem, explicale que debe duplicarla primero desde la app web (Ajustes > Presupuestos > Plantillas de PDF), marcar la copia como predeterminada, y volver a pedir el cambio desde ahi — no intentes el PUT igual, va a fallar. Requiere permiso de edicion de ajustes (settings:edit + feature edit_pdf_templates).',
     schema: z.object({
-      pdfFields: z.object({
-        quantity: z.boolean().optional().describe('Mostrar columna Cantidad'),
-        unit: z.boolean().optional().describe('Mostrar columna Unidad'),
-        total: z.boolean().optional().describe('Mostrar columna Total (importe de la partida)'),
-      }).optional().describe('Columnas a mostrar. Incluir solo las que se quieren cambiar.'),
-      showIndirectCosts: z.boolean().optional().describe('Mostrar la seccion Coeficiente K - Costos Indirectos en el PDF'),
+      templateId: z.string().describe('ID de la plantilla a editar (obtenido de get_budget_pdf_settings; normalmente la que tiene isDefault:true)'),
+      name: z.string().optional().describe('Nuevo nombre de la plantilla, para renombrarla. Rechazado por el backend si la plantilla es isSystem.'),
+      isDefault: z.boolean().optional().describe('Marca esta plantilla como la predeterminada de la empresa para BUDGET (desmarca automaticamente la anterior default). Es el UNICO campo modificable en una plantilla isSystem.'),
+      config: z.object({
+        header: z.array(z.object({
+          fieldId: z.enum(BUDGET_HEADER_FIELD_IDS).describe('ID del campo de cabecera del catalogo'),
+          visible: z.boolean().describe('Mostrar u ocultar el campo. header.clientName, header.budgetNumber y header.issueDate son obligatorios: no se pueden poner en false.'),
+          order: z.number().int().min(0).describe('Posicion del campo dentro de su columna (Datos del Cliente o Datos del Presupuesto)'),
+        })).optional().describe('Los 10 fieldIds de header del catalogo, TODOS, no solo el que cambia. Requerido si se manda "config".'),
+        lines: z.array(z.object({
+          fieldId: z.enum(BUDGET_LINE_FIELD_IDS).describe('ID de columna de la tabla de partidas del catalogo'),
+          visible: z.boolean().describe('Mostrar u ocultar la columna. lines.desc y lines.total son obligatorias: no se pueden poner en false.'),
+          order: z.number().int().min(0).describe('Posicion de la columna en la tabla, de izquierda a derecha'),
+        })).optional().describe('Los 11 fieldIds de lines del catalogo (#, Descripcion, Codigo, Cantidad, Unidad, Material, Mano de Obra, Equipos, Subcontratado, Gastos generales, Total), TODOS, no solo el que cambia. Maximo 7 con visible:true. Requerido si se manda "config".'),
+        sections: z.array(z.object({
+          fieldId: z.literal('section.indirectCosts').describe('Unica seccion configurable hoy'),
+          visible: z.boolean().describe('Mostrar/ocultar la seccion completa de Coeficiente K - Costos Indirectos (tambien oculta las filas relacionadas dentro del Resumen del presupuesto)'),
+          order: z.number().int().min(0),
+        })).optional().describe('Array de 1 elemento (section.indirectCosts). Requerido si se manda "config".'),
+        footer: z.object({
+          text: z.string().max(2000).describe('Texto libre del pie de pagina. Variables permitidas: {{company.name}}, {{company.taxId}}, {{company.address}}, {{company.phone}}, {{company.email}}, {{budget.number}}, {{budget.issueDate}}, {{budget.expiryDate}}, {{client.name}}. Cualquier otra variable es rechazada por el backend.'),
+        }).optional().describe('Texto completo del pie de pagina (reemplaza el anterior). Requerido si se manda "config".'),
+      }).optional().describe('Config a reemplazar, COMPLETA: si se envia este campo, header/lines/sections/footer deben venir los 4 juntos y cada array con TODOS sus fieldIds del catalogo (no un subconjunto). Omitir "config" entero si solo se quiere cambiar name o isDefault.'),
     }),
     method: 'PUT',
-    endpoint: '/module-settings/budget',
+    endpoint: '/document-templates/:templateId',
   },
   create_budget: {
     description: 'Crea un nuevo presupuesto de construccion para un proyecto.',

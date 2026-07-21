@@ -205,13 +205,16 @@ Guarda un archivo temporal (ej: /tmp/budget_data.json o C:/Temp/budget_data.json
   ],
   "company": { /* objeto empresa tal como viene de get_company_info */ },
   "projectName": "Nombre del Proyecto",
-  "currencySymbol": "$"
+  "currencySymbol": "$",
+  "contactLanguage": "es"
 }
 \`\`\`
 
 IMPORTANTE: el campo \`tree\` debe ser jerarquico (no plano). Cada nodo de capitulo tiene \`children\` con sus subcapitulos e items directos.
 
-IMPORTANTE: el objeto \`budget\` de \`get_budget_details\` incluye un campo \`pdfSettings\` (configuracion de impresion de PDF de la empresa: \`pdfFields\` con quantity/unit/total y \`showIndirectCosts\`). Copialo tal cual dentro de \`budget\` en el JSON de entrada — NO lo elimines ni lo modifiques. El script lo usa para ocultar columnas y la seccion de Costos Indirectos segun la config. Si por algun motivo no viene, el script asume todo visible.
+IMPORTANTE — plantilla de PDF ("PDF editables con IA"): el objeto \`budget\` de \`get_budget_details\` incluye un campo \`documentTemplateConfig\` (la plantilla de PDF resuelta para este presupuesto: columnas visibles/orden, campos de cabecera visibles/orden, seccion de Coeficiente K, texto de pie de pagina — ver \`get_budget_pdf_settings\`/\`update_budget_pdf_settings\` si el usuario quiere cambiarla). Copialo TAL CUAL dentro de \`budget\` en el JSON de entrada — NO lo elimines ni lo modifiques, el script lo usa para decidir que columnas/campos imprimir y en que orden. \`budget\` tambien puede traer el campo legacy \`pdfSettings\` (quantity/unit/total + showIndirectCosts) por retrocompatibilidad — copialo tambien tal cual si viene, el script lo usa como fallback cuando \`documentTemplateConfig\` no esta presente. Si NINGUNO de los dos viene (JSON armado a mano, o \`get_budget_details\` desactualizado), el script asume todo visible — nunca falla por esto.
+
+IMPORTANTE — idioma del PDF: el campo opcional \`contactLanguage\` en la raiz del JSON controla el idioma (es/en) de las etiquetas impresas (columnas, secciones, pie de pagina). Sale de \`Contact.preferences.language\` del cliente del presupuesto, NO del idioma de la conversacion. Para obtenerlo: si \`budget.contactId\` trae un nombre, llamá a \`search_contacts({ searchTerm: <ese nombre> })\` y tomá \`preferences.language\` del contacto encontrado. Es un campo de texto libre (ej: "es", "en", "es-ES", "English") — pasalo tal cual, el script lo normaliza (cualquier valor que empiece con "en" → ingles, todo lo demas → español). Si no podés resolverlo (no hay contactId, la búsqueda no encuentra nada, o no tiene preferencia cargada), omití \`contactLanguage\` del JSON: el script cae solo a \`budget.contactSnapshot.language\` (que el backend completa en todos los presupuestos) y, si tampoco está, imprime en español. Por eso NO inventes un valor — omitirlo da mejor resultado que adivinar, porque un \`contactLanguage\` incorrecto pisa al snapshot.
 
 **Paso 3 — Ejecutar el script**
 
