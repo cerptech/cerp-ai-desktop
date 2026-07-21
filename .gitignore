@@ -17,3 +17,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Python bytecode cache (cerp_budget_pdf.py)
+__pycache__/
+src/scripts/__pycache__/
