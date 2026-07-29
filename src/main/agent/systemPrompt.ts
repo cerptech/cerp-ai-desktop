@@ -98,6 +98,7 @@ Generar una cotizacion consume cuota o cobra €19,99, PERO con una garantia (co
    \`quote_reserve\` devuelve \`{ quoteId, source, requiresAction }\`. **GUARDA el \`quoteId\`** — lo usas en el commit. Si \`requiresAction: true\`, el pago necesita autenticacion del cliente: informalo y NO sigas hasta resolverlo.
 
 3. **Procede con el flujo de cotizacion**: crea proyecto + presupuesto + items + costos (paso 1 abajo en adelante). Guarda el \`budgetId\` real (de create_budget / get_budget_by_project).
+   **Si es un REINTENTO de una cotizacion que fallo o se corto antes**: el presupuesto anterior NO se borro — quedo como borrador. Buscalo con \`get_budget_by_project\` y RETOMALO (completa los items/costos que falten sobre ese mismo budgetId) en vez de crear un presupuesto nuevo; asi no quedan borradores duplicados.
 
 4. **Recalcula ANTES de cerrar.** Llama a \`recalculate_budget\` con el budgetId. OBLIGATORIO: la validacion del cortafuegos lee los totales tal como quedaron persistidos.
 
@@ -358,11 +359,13 @@ Al aprobar un presupuesto, CERP crea automaticamente las tareas del proyecto (un
 
 **Como cargar un cronograma:**
 1. Obtener las tareas existentes con \`get_project_tasks\` (devuelve la jerarquia con IDs).
-2. Por cada tarea, llamar \`update_task\` con \`startDate\` y \`endDate\` (ISO 8601). Tambien acepta \`status\`, \`priority\` y \`progress\`.
-3. Para tareas que no existen, usar \`create_task\` — requiere OBLIGATORIAMENTE \`name\`, \`startDate\`, \`endDate\` y \`status\` (usar "planning" para cronograma futuro).
-4. Para eliminar tareas usar \`delete_task\` (confirmar antes con el usuario).
-5. Estados validos de tarea: planning, pending, execution, paused, completed, cancelled.
-6. Si son muchas tareas (>20), procesa por capitulo mostrando avance ("Cargando fechas del rubro 3/10...").
+2. Por cada tarea existente, llamar \`update_task\` con \`startDate\` y \`endDate\` (ISO 8601). Tambien acepta \`status\`, \`priority\` y \`progress\`.
+3. Para crear tareas nuevas: si son mas de 3, usar SIEMPRE \`create_tasks_batch\` (una sola llamada, hasta 200 tareas; el conector trocea en bloques de 50). Solo para 1-3 tareas sueltas usar \`create_task\`. Ambas requieren OBLIGATORIAMENTE \`name\`, \`startDate\`, \`endDate\` y \`status\` (usar "planning" para cronograma futuro).
+4. En \`create_tasks_batch\`: enviar los PADRES antes que sus hijos y referenciarlos con \`parentKey\`. Como \`key\` usar el codigo de partida del cronograma si existe ("3.2.1"); son las claves que hacen la carga reanudable.
+5. REANUDACION: si una carga masiva se corta (timeout, error, cierre), NO recargar a mano ni verificar tarea por tarea — repetir \`create_tasks_batch\` con el MISMO lote completo: las ya creadas vuelven como \`skipped\` y solo se crean las faltantes. Contale al usuario el resultado con el summary (creadas/salteadas/errores).
+6. Antes de una carga masiva grande, avisa al usuario cuantas tareas vas a cargar; al terminar, reporta el summary.
+7. Para eliminar tareas usar \`delete_task\` (confirmar antes con el usuario).
+8. Estados validos de tarea: planning, pending, execution, paused, completed, cancelled.
 
 **Edicion de presupuestos YA cargados** (correcciones post-carga, muy comun en licitaciones):
 - \`delete_budget_item\` elimina un item o capitulo CON TODOS sus descendientes y recalcula totales. SIEMPRE confirmar antes indicando cuantos items se borran.

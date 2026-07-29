@@ -572,6 +572,44 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'DELETE',
     endpoint: '/tasks/:taskId',
   },
+  create_tasks_batch: {
+    description:
+      'Crea MULTIPLES tareas de cronograma en un proyecto en UNA sola llamada, de forma IDEMPOTENTE y reanudable. USAR SIEMPRE en vez de create_task cuando hay mas de 3 tareas (cronogramas, planes de obra). Enviar los PADRES ANTES que sus hijos en el array y referenciarlos con parentKey. REANUDACION: si la carga se corta (timeout, cierre de la app), REPETIR la misma llamada con el MISMO lote completo — las tareas ya creadas se saltan (skipped) y solo se crean las faltantes, sin duplicar. El conector trocea lotes grandes en bloques de 50 automaticamente. El resultado incluye summary {created, skipped, errors} y el detalle por tarea.',
+    schema: z.object({
+      projectId: z.string().describe('ID del proyecto'),
+      tasks: z
+        .array(
+          z.object({
+            key: z
+              .string()
+              .optional()
+              .describe(
+                'Clave ESTABLE y unica de la tarea dentro del proyecto (ej: el codigo de partida "3.2.1" o "cim-01"). Usarla siempre que el cronograma tenga codigos. Al reintentar una carga interrumpida, REUSAR exactamente las mismas claves: son lo que evita duplicados. Si se omite, el conector deriva una clave de nombre+fechas+padre'
+              ),
+            name: z.string().describe('Nombre de la tarea'),
+            startDate: z.string().describe('Fecha de inicio ISO 8601 (ej: "2026-08-01"). OBLIGATORIO'),
+            endDate: z.string().describe('Fecha de fin ISO 8601. OBLIGATORIO'),
+            status: z
+              .enum(['planning', 'pending', 'execution', 'paused', 'completed', 'cancelled'])
+              .describe('Estado inicial. Usar "planning" para cronograma futuro'),
+            description: z.string().optional(),
+            parentKey: z
+              .string()
+              .optional()
+              .describe('key de la tarea padre DE ESTE MISMO lote (el padre debe aparecer ANTES en el array). Excluyente con parentTaskId'),
+            parentTaskId: z
+              .string()
+              .optional()
+              .describe('ID de una tarea padre YA existente en el proyecto. Excluyente con parentKey'),
+          })
+        )
+        .min(1)
+        .max(200)
+        .describe('Tareas a crear, padres antes que hijos. Max 200 por llamada'),
+    }),
+    method: 'POST',
+    endpoint: '/projects/:projectId/tasks/batch',
+  },
 
   // ============================================================
   // FINANCE — Read & Write
@@ -1000,7 +1038,7 @@ export const toolSchemas: Record<string, ToolDef> = {
   },
   quote_refund: {
     description:
-      'CORTAFUEGOS — Libera una reserva sin cobrar (ej: el usuario cancela el flujo antes de terminar). Devuelve el crédito al pool y descarta el presupuesto parcial. Usar SOLO si abandonás la cotización antes de quote_commit.',
+      'CORTAFUEGOS — Libera una reserva sin cobrar (ej: el usuario cancela el flujo antes de terminar). Devuelve el crédito al pool; el presupuesto parcial queda guardado como borrador y se puede retomar despues. Usar SOLO si abandonás la cotización antes de quote_commit.',
     schema: z.object({
       id: z.string().describe('quoteId devuelto por quote_reserve'),
       reason: z
