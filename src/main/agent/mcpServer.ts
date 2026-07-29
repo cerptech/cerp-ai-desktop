@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { toolSchemas } from './toolDefinitions'
@@ -6,6 +7,126 @@ import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
 import { startQuoteHeartbeat, stopQuoteHeartbeat } from './quoteHeartbeat'
 import { emitQuoteFirewallEvent } from './quoteEventsBridge'
+
+// ── create_tasks_batch: chunking + claves idempotentes ───────────────────────
+
+interface BatchTaskArg {
+  key?: string
+  name: string
+  startDate: string
+  endDate: string
+  status: string
+  description?: string
+  parentKey?: string
+  parentTaskId?: string
+}
+
+const TASKS_BATCH_CHUNK_SIZE = 50
+
+/**
+ * Clave idempotente para una tarea sin key explícita: hash estable de los campos
+ * que la identifican. Determinística entre reintentos, siempre que el agente
+ * re-mande el lote con los mismos datos (por eso el schema pide reusar keys).
+ */
+function deriveTaskKey(t: BatchTaskArg): string {
+  const basis = [t.name, t.startDate, t.endDate, t.parentKey ?? t.parentTaskId ?? ''].join('|')
+  return 'k-' + createHash('sha1').update(basis).digest('hex').slice(0, 16)
+}
+
+/**
+ * Ejecuta la carga masiva contra el endpoint batch del backend, troceando en
+ * bloques de 50 (secuencial: la numeración jerárquica no tolera carreras) y
+ * mapeando key→clientKey / parentKey→parentClientKey. Reanudable: el backend
+ * saltea (skipped) las claves ya creadas, así que reintentar el MISMO lote
+ * retoma donde quedó sin duplicar.
+ */
+async function runTasksBatch(
+  args: { projectId: string; tasks: BatchTaskArg[] },
+  httpClient: HttpClient,
+  companyId: string | null,
+  userId: string | null
+): Promise<unknown> {
+  const { projectId, tasks } = args
+
+  // Clave definitiva: explícita o derivada; sufijo -2/-3… si colisiona dentro del
+  // lote. `used` garantiza unicidad del resultado FINAL (una key explícita "X-2"
+  // podría chocar con el sufijo generado para la segunda "X").
+  const used = new Set<string>()
+  const withKeys = tasks.map((t) => {
+    const base = (t.key && t.key.trim()) || deriveTaskKey(t)
+    let key = base
+    let n = 1
+    while (used.has(key)) {
+      n++
+      key = `${base}-${n}`
+    }
+    used.add(key)
+    return { ...t, key }
+  })
+
+  // Todo parentKey debe apuntar a una key definitiva del lote (los padres
+  // preexistentes van por parentTaskId, no por parentKey).
+  const finalKeys = new Set(withKeys.map((t) => t.key))
+  for (const t of withKeys) {
+    if (t.parentKey && !finalKeys.has(t.parentKey)) {
+      return {
+        error: `parentKey '${t.parentKey}' no coincide con ninguna key del lote. Los padres deben aparecer ANTES que sus hijos y conservar su key exacta.`,
+      }
+    }
+  }
+
+  const summary = { total: tasks.length, created: 0, skipped: 0, errors: 0 }
+  const results: unknown[] = []
+  const totalChunks = Math.ceil(withKeys.length / TASKS_BATCH_CHUNK_SIZE)
+
+  for (let i = 0; i < withKeys.length; i += TASKS_BATCH_CHUNK_SIZE) {
+    const chunk = withKeys.slice(i, i + TASKS_BATCH_CHUNK_SIZE)
+    const chunkNo = i / TASKS_BATCH_CHUNK_SIZE + 1
+    logger.info(`create_tasks_batch chunk ${chunkNo}/${totalChunks} (${chunk.length} tareas)`)
+    try {
+      const data = (await httpClient.post(`/projects/${projectId}/tasks/batch`, {
+        tasks: chunk.map((t) => ({
+          clientKey: t.key,
+          name: t.name,
+          startDate: t.startDate,
+          endDate: t.endDate,
+          status: t.status,
+          description: t.description,
+          parentClientKey: t.parentKey,
+          parentTaskId: t.parentTaskId,
+        })),
+        companyId: companyId ?? undefined,
+        user: userId ? { _id: userId } : undefined,
+      })) as { summary?: { created?: number; skipped?: number; errors?: number }; results?: unknown[] } | null
+      summary.created += data?.summary?.created ?? 0
+      summary.skipped += data?.summary?.skipped ?? 0
+      summary.errors += data?.summary?.errors ?? 0
+      if (Array.isArray(data?.results)) results.push(...data.results)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      // Backend sin el endpoint batch (deploy viejo): reintentar sería un loop
+      // infinito — indicar el fallback 1×1 en vez de la instrucción de reanudación.
+      if (/\b404\b/.test(message)) {
+        return {
+          summary,
+          results,
+          error:
+            'El servidor CERP de esta empresa todavía no soporta la carga masiva de tareas (endpoint no encontrado). ' +
+            'NO reintentes create_tasks_batch: crea las tareas restantes de a una con create_task.',
+        }
+      }
+      return {
+        summary,
+        results,
+        error:
+          `La carga se interrumpió en el bloque ${chunkNo}/${totalChunks}: ${message}. ` +
+          'Volvé a llamar create_tasks_batch con el MISMO lote completo para retomar: las tareas ya creadas se saltan solas (skipped).',
+      }
+    }
+  }
+
+  return { summary, results }
+}
 
 // ── attach_budget_pdf Zod schema ─────────────────────────────────────────────
 
@@ -160,6 +281,19 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       def.schema as any,
       async (args: Record<string, unknown>) => {
         try {
+          // Carga masiva de tareas: chunking + reanudación, no pasa por buildRequest.
+          if (name === 'create_tasks_batch') {
+            const result = await runTasksBatch(
+              args as unknown as { projectId: string; tasks: BatchTaskArg[] },
+              httpClient,
+              companyId,
+              userId
+            )
+            const text = JSON.stringify(result, null, 2)
+            logger.info(`MCP create_tasks_batch OK: ${text.substring(0, 200)}`)
+            return { content: [{ type: 'text' as const, text }] }
+          }
+
           const { url, body } = buildRequest(def.endpoint, def.method, args, def.fieldMap)
           logger.info(`MCP ${def.method} ${name} → ${url}`)
 
