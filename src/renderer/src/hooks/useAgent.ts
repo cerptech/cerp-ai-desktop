@@ -99,6 +99,7 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
     isPending: rt.isPending,
     activeTool: rt.activeTool,
     error: rt.error,
+    errorCode: rt.errorCode,
     activeAgentDelegation: rt.activeAgentDelegation,
     promptSuggestions: rt.promptSuggestions,
     statusMessage: rt.statusMessage,

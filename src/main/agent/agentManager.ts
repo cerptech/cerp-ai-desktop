@@ -6,7 +6,7 @@ import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo } from '../auth/apiKeyManager'
+import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -261,6 +261,22 @@ async function startSession(
       companyId = config.companyId || null
       userId = config.userId || null
     } catch (err) {
+      // Paywall (Modelo CERP): la empresa se quedó sin créditos entre el gate de
+      // handlers.ts y el arranque de esta sesión (p.ej. companyId/userId no estaban
+      // cacheados todavía). A diferencia de un fallo de red/config, esto NO es
+      // recuperable con datos parciales — cortamos acá con un evento distinguible
+      // en vez de arrancar una sesión rota.
+      if (err instanceof NoCreditsError) {
+        logger.warn(`startSession aborted (${conversationId}): no credits available`)
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
+            conversationId,
+            event: { type: 'error', message: err.message, code: 'NO_CREDITS' },
+          })
+          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
+        }
+        return
+      }
       logger.warn(`Could not fetch config: ${err}`)
     }
   }

@@ -35,6 +35,8 @@ const IPC = {
   QUOTES_GET_ELIGIBILITY: 'quotes:get-eligibility',
   QUOTES_LIST: 'quotes:list',
   QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
+  CREDITS_GET_BALANCE: 'credits:get-balance',
+  CREDITS_GET_LEDGER: 'credits:get-ledger',
   ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
   ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
   APP_GET_VERSION: 'app:get-version',
@@ -119,7 +121,9 @@ export type AgentStreamEvent =
   // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK >= 0.2.119).
   | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
-  | { type: 'error'; message: string }
+  // `code` distinguishes specific error causes the renderer needs to react to differently
+  // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
+  | { type: 'error'; message: string; code?: string }
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -195,6 +199,43 @@ export interface ConversationFull extends ConversationSummary {
   }
 }
 
+/** Modelo CERP — balance de créditos de IA de la empresa (GET /api/credits/balance). */
+export interface CreditsBalance {
+  mode: 'off' | 'shadow' | 'enforce'
+  plan: string
+  unlimited: boolean
+  planBalanceHundredths: number
+  topupBalanceHundredths: number
+  reservedHundredths: number
+  availableHundredths: number
+  monthlyCreditHundredths: number
+}
+
+export type CreditLedgerEntryType =
+  | 'grant_monthly'
+  | 'grant_trial'
+  | 'grant_topup'
+  | 'grant_admin'
+  | 'debit_usage'
+  | 'reserve'
+  | 'reserve_commit'
+  | 'reserve_release'
+  | 'adjustment'
+
+export interface CreditLedgerEntry {
+  id: string
+  type: CreditLedgerEntryType
+  amountHundredths: number
+  kind?: string
+  shadow?: boolean
+  createdAt: string
+  note?: string
+}
+
+export interface CreditsLedgerResponse {
+  entries: CreditLedgerEntry[]
+}
+
 const api = {
   // Auth
   login: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_LOGIN),
@@ -202,7 +243,7 @@ const api = {
   getAuthStatus: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_GET_STATUS),
 
   // Agent
-  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }> =>
+  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
   abortAgent: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT, conversationId),
   resetSession: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION, conversationId),
@@ -244,8 +285,8 @@ const api = {
     ipcRenderer.on(IPC.AGENT_STREAM_DONE, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_DONE, handler)
   },
-  onAgentError: (callback: (err: { message: string }, conversationId?: string) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { conversationId?: string; message: string }): void => callback({ message: data.message }, data.conversationId)
+  onAgentError: (callback: (err: { message: string; code?: string }, conversationId?: string) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { conversationId?: string; message: string; code?: string }): void => callback({ message: data.message, code: data.code }, data.conversationId)
     ipcRenderer.on(IPC.AGENT_STREAM_ERROR, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_STREAM_ERROR, handler)
   },
@@ -298,6 +339,10 @@ const api = {
     pageSize: number
     total: number
   }> => ipcRenderer.invoke(IPC.QUOTES_LIST, { page, pageSize }),
+
+  // Credits (Modelo CERP — créditos de IA)
+  getCreditsBalance: (): Promise<CreditsBalance | null> => ipcRenderer.invoke(IPC.CREDITS_GET_BALANCE),
+  getCreditsLedger: (limit?: number): Promise<CreditsLedgerResponse | null> => ipcRenderer.invoke(IPC.CREDITS_GET_LEDGER, { limit }),
 
   // Onboarding (Desktop guided tutorial — Idea 1)
   getOnboardingProgress: (): Promise<OnboardingProgressResponse> =>

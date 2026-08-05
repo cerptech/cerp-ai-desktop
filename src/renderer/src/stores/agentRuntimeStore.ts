@@ -24,6 +24,8 @@ export interface ConversationRuntime {
   isPending: boolean
   activeTool: string | null
   error: string | null
+  /** Distinguishes specific error causes (e.g. 'NO_CREDITS') so the UI can react differently. */
+  errorCode: string | null
   activeAgentDelegation: AgentDelegation | null
   promptSuggestions: string[]
   statusMessage: string | null
@@ -46,6 +48,7 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   isPending: false,
   activeTool: null,
   error: null,
+  errorCode: null,
   activeAgentDelegation: null,
   promptSuggestions: [],
   statusMessage: null,
@@ -303,6 +306,7 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       return {
         ...r,
         error: event.message,
+        errorCode: event.code ?? null,
         isStreaming: false,
         isPending: false,
         activeTool: null,
@@ -362,6 +366,7 @@ function ensureIpcWired(): void {
     update(id, (rt) => ({
       ...rt,
       error: err.message,
+      errorCode: err.code ?? null,
       isStreaming: false,
       isPending: false,
       activeTool: null,
@@ -412,6 +417,7 @@ export async function sendPrompt(
   update(conversationId, (rt) => ({
     ...rt,
     error: null,
+    errorCode: null,
     isStreaming: true,
     isPending: true,
     activeTool: null,
@@ -428,7 +434,13 @@ export async function sendPrompt(
 
   const result = await window.cerpAPI.sendPrompt({ prompt, conversationId, cwd, activeContextId, conversationHistory: history })
   if (!result.started) {
-    update(conversationId, (rt) => ({ ...rt, error: result.error || 'No se pudo iniciar la consulta', isStreaming: false, isPending: false }))
+    update(conversationId, (rt) => ({
+      ...rt,
+      error: result.error || 'No se pudo iniciar la consulta',
+      errorCode: result.code ?? null,
+      isStreaming: false,
+      isPending: false,
+    }))
   }
 }
 

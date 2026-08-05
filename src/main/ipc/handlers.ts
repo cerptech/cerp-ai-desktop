@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey } from '../auth/apiKeyManager'
+import { fetchApiKey, getApiKey, NoCreditsError } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
@@ -62,7 +62,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Agent: Send prompt
   ipcMain.handle(
     IPC_CHANNELS.AGENT_SEND_PROMPT,
-    async (_event, payload: SendPromptPayload): Promise<{ started: boolean; error?: string }> => {
+    async (_event, payload: SendPromptPayload): Promise<{ started: boolean; error?: string; code?: string }> => {
       const mainWindow = getMainWindow()
       if (!mainWindow) return { started: false, error: 'No window' }
 
@@ -71,7 +71,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         try {
           const config = await fetchApiKey(httpClient)
           apiKey = config.apiKey
-        } catch {
+        } catch (err) {
+          // Paywall (Modelo CERP): la empresa no tiene créditos — propagamos un código
+          // distinguible para que el renderer muestre el banner de recarga en vez del
+          // toast de error genérico.
+          if (err instanceof NoCreditsError) {
+            return { started: false, error: err.message, code: 'NO_CREDITS' }
+          }
           return { started: false, error: 'Could not retrieve API key. Please log in again.' }
         }
       }
@@ -259,6 +265,27 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     } catch (err) {
       logger.error('Failed to list quotes:', err)
       return { items: [], page: 1, pageSize: 20, total: 0 }
+    }
+  })
+
+  // Credits: get balance (Modelo CERP — badge del header)
+  ipcMain.handle(IPC_CHANNELS.CREDITS_GET_BALANCE, async () => {
+    try {
+      return await httpClient.get('/credits/balance')
+    } catch (err) {
+      logger.error('Failed to fetch credits balance:', err)
+      return null
+    }
+  })
+
+  // Credits: get ledger (extracto de movimientos — panel de historial)
+  ipcMain.handle(IPC_CHANNELS.CREDITS_GET_LEDGER, async (_event, { limit }: { limit?: number } = {}) => {
+    try {
+      const qs = limit ? `?limit=${limit}` : ''
+      return await httpClient.get(`/credits/ledger${qs}`)
+    } catch (err) {
+      logger.error('Failed to fetch credits ledger:', err)
+      return null
     }
   })
 

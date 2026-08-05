@@ -40,6 +40,10 @@ export const IPC_CHANNELS = {
   QUOTES_LIST: 'quotes:list',
   QUOTES_CONSUME_UNLIMITED: 'quotes:consume-unlimited',
 
+  // Credits (Modelo CERP — créditos de IA)
+  CREDITS_GET_BALANCE: 'credits:get-balance',
+  CREDITS_GET_LEDGER: 'credits:get-ledger',
+
   // Onboarding (Desktop guided tutorial — Idea 1)
   ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
   ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
