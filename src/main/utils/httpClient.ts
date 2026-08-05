@@ -2,6 +2,32 @@ function getApiBaseUrl(): string {
   return process.env.CERP_API_BASE_URL || 'https://production-cerp-server-1060273677691.europe-west1.run.app/api'
 }
 
+/**
+ * Error de API con el status HTTP y el body parseado (si es JSON) adjuntos.
+ * Permite a los callers distinguir casos específicos (p.ej. 402 NO_CREDITS)
+ * sin tener que parsear el mensaje de texto plano.
+ */
+export class HttpError extends Error {
+  readonly status: number
+  readonly body?: unknown
+
+  constructor(status: number, body: unknown, message: string) {
+    super(message)
+    this.name = 'HttpError'
+    this.status = status
+    this.body = body
+  }
+}
+
+function parseErrorBody(text: string): unknown {
+  if (!text) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
 export class HttpClient {
   private getToken: () => string | null
   private onTokenExpired?: () => Promise<void>
@@ -125,8 +151,8 @@ export class HttpClient {
     }
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`API error ${res.status}: ${body}`)
+      const text = await res.text().catch(() => '')
+      throw new HttpError(res.status, parseErrorBody(text), `API error ${res.status}: ${text}`)
     }
 
     return res.json() as Promise<T>
