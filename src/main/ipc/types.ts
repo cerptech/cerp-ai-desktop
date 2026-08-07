@@ -72,6 +72,14 @@ export interface DesktopConfig {
   userId: string
   maxBudgetPerQuery: number
   model: string
+  /**
+   * Techo de coste por sesión según el plan de la empresa (Modelo CERP / créditos).
+   * Puede faltar si el backend desplegado aún no incluye este campo — el caller
+   * debe usar el fallback hardcodeado en ese caso.
+   */
+  maxBudgetUsd?: number
+  /** Mismo techo pero para Turbo Mode (Opus + xhigh). */
+  maxBudgetUsdTurbo?: number
 }
 
 // ── ask_user_question tool types ──

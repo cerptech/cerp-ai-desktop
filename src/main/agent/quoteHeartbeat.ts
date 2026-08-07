@@ -46,3 +46,12 @@ export function stopQuoteHeartbeat(): void {
 export function getActiveReservationId(): string | null {
   return activeQuoteId
 }
+
+/**
+ * Igual que {@link getActiveReservationId} pero con `undefined` en vez de `null` —
+ * conveniente para spread en bodies de request donde `undefined` se omite en el JSON
+ * (usageReporter la usa para adjuntar el quoteId de la cotización en curso, si hay una).
+ */
+export function getActiveQuoteId(): string | undefined {
+  return activeQuoteId ?? undefined
+}

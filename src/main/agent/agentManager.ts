@@ -6,7 +6,7 @@ import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { getCompanyId, getUserId, fetchApiKey } from '../auth/apiKeyManager'
+import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -397,7 +397,8 @@ async function startSession(
     permissionMode: 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
     // Turbo gasta más (Opus + xhigh + workflows): subimos el techo de forma consciente.
-    maxBudgetUsd: payload.maxBudgetUsd ?? (turbo ? 25.0 : 10.0),
+    // Prioridad: payload explícito > techo por plan (backend, Modelo CERP) > hardcode legacy.
+    maxBudgetUsd: payload.maxBudgetUsd ?? (turbo ? (getMaxBudgetUsdTurbo() ?? 25.0) : (getMaxBudgetUsd() ?? 10.0)),
     includePartialMessages: true,
     promptSuggestions: true,
     // 'medium' keeps the agent responsive: 'high' triggers long extended-reasoning
