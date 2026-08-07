@@ -41,7 +41,7 @@ interface ChatContainerProps {
 export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onAgentActivity, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
-  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
+  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { turboMode, toggleTurboMode } = useTurboMode()
@@ -75,10 +75,11 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     setShowThoughts((prev) => !prev)
   }, [])
 
-  // Show toast on agent error
+  // Show toast on agent error — NO_CREDITS gets its own persistent banner below
+  // instead of a toast, so it doesn't disappear before the user notices it.
   useEffect(() => {
-    if (error) addToast('error', error)
-  }, [error, addToast])
+    if (error && errorCode !== 'NO_CREDITS') addToast('error', error)
+  }, [error, errorCode, addToast])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -362,8 +363,23 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         )}
       </div>
 
+      {/* Paywall: la empresa se quedó sin créditos de IA (Modelo CERP) */}
+      {error && errorCode === 'NO_CREDITS' && (
+        <div className="mx-6 mb-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800 flex items-center justify-between gap-3">
+          <span>Tu empresa no tiene créditos de IA — recargá desde Configuración &gt; Suscripción.</span>
+          <a
+            href="https://app.cerp.es/settings/subscription"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 font-medium text-red-700 hover:text-red-900 underline transition-colors"
+          >
+            Recargar
+          </a>
+        </div>
+      )}
+
       {/* Error display */}
-      {error && (
+      {error && errorCode !== 'NO_CREDITS' && (
         <div className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {error}
         </div>

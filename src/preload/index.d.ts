@@ -34,7 +34,9 @@ export type AgentStreamEvent =
   // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK >= 0.2.119).
   | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
-  | { type: 'error'; message: string }
+  // `code` distinguishes specific error causes the renderer needs to react to differently
+  // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
+  | { type: 'error'; message: string; code?: string }
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -132,11 +134,48 @@ export interface OnboardingProgressUpdate {
   relaunch?: boolean
 }
 
+/** Modelo CERP — balance de créditos de IA de la empresa (GET /api/credits/balance). */
+export interface CreditsBalance {
+  mode: 'off' | 'shadow' | 'enforce'
+  plan: string
+  unlimited: boolean
+  planBalanceHundredths: number
+  topupBalanceHundredths: number
+  reservedHundredths: number
+  availableHundredths: number
+  monthlyCreditHundredths: number
+}
+
+export type CreditLedgerEntryType =
+  | 'grant_monthly'
+  | 'grant_trial'
+  | 'grant_topup'
+  | 'grant_admin'
+  | 'debit_usage'
+  | 'reserve'
+  | 'reserve_commit'
+  | 'reserve_release'
+  | 'adjustment'
+
+export interface CreditLedgerEntry {
+  id: string
+  type: CreditLedgerEntryType
+  amountHundredths: number
+  kind?: string
+  shadow?: boolean
+  createdAt: string
+  note?: string
+}
+
+export interface CreditsLedgerResponse {
+  entries: CreditLedgerEntry[]
+}
+
 interface CerpAPI {
   login(): Promise<AuthState>
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
-  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string }>
+  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }>
   abortAgent(conversationId?: string): Promise<void>
   resetSession(conversationId?: string): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>
@@ -150,7 +189,7 @@ interface CerpAPI {
   onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void
   onAgentMessage(callback: (event: AgentStreamEvent, conversationId: string) => void): () => void
   onAgentDone(callback: (conversationId: string) => void): () => void
-  onAgentError(callback: (err: { message: string }, conversationId?: string) => void): () => void
+  onAgentError(callback: (err: { message: string; code?: string }, conversationId?: string) => void): () => void
   listCustomContexts(): Promise<CustomContext[]>
   createCustomContext(ctx: Omit<CustomContext, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomContext>
   updateCustomContext(id: string, updates: Partial<CustomContext>): Promise<CustomContext | null>
@@ -182,6 +221,8 @@ interface CerpAPI {
     pageSize: number
     total: number
   }>
+  getCreditsBalance(): Promise<CreditsBalance | null>
+  getCreditsLedger(limit?: number): Promise<CreditsLedgerResponse | null>
   getOnboardingProgress(): Promise<OnboardingProgressResponse>
   updateOnboardingProgress(payload: OnboardingProgressUpdate): Promise<OnboardingProgressResponse>
   getVersion(): Promise<string>

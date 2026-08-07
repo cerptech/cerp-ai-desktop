@@ -53,7 +53,9 @@ export type AgentStreamEvent =
   // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK ≥ 0.2.119).
   | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
-  | { type: 'error'; message: string }
+  // `code` distinguishes specific error causes the renderer needs to react to differently
+  // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
+  | { type: 'error'; message: string; code?: string }
 
 export interface AuthState {
   isAuthenticated: boolean
