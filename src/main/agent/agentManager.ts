@@ -79,6 +79,12 @@ interface AgentSession {
   // abierta, reiniciamos SOLO esa sesión para que el próximo mensaje use el modelo
   // nuevo (sendFollowUp no puede cambiarlo — el SDK fija el modelo al crear la query).
   model: string
+  // true si esta sesión arrancó con modelChoice==='powerful' ("Potente"). Absorbe lo
+  // que antes era el Modo Turbo global: effort 'xhigh', tool Workflow habilitada y
+  // techo de presupuesto elevado. Se guarda por-sesión (no global) para que el
+  // reporte de consumo (`mapMessage` → 'result') sepa qué modo corrió esta ejecución
+  // aunque el usuario haya cambiado de modo mientras tanto.
+  powerful: boolean
   processingTurn: boolean
   // Registro de delegaciones activas: Agent/Task tool_use_id → agentName. Por-sesión
   // para que los eventos internos de subagentes resuelvan el nombre correcto.
@@ -102,38 +108,8 @@ const DEFAULT_CONV = '__default__'
 // agent cannot execute write operations; the user reviews the plan and resumes.
 let planModeEnabled = false
 
-// Turbo Mode (Idea 3, MVP conservador) — when true, complex quotes run with the
-// Opus xhigh-capable model + effort 'xhigh' + the Workflow tool / dynamic-workflow
-// orchestration. Opt-in (off by default): xhigh worsens the silent-pause "frozen UI"
-// effect and costs more, so it's only for big licitaciones, not chat. NOT ultracode
-// (that's the gated Full path — needs the prod account's Workflows entitlement).
-let turboModeEnabled = false
-
-// xhigh-capable Opus model used when Turbo is ON. Pinning a known xhigh-capable
-// model avoids the SDK's silent xhigh→high downgrade (which only happens on
-// non-capable models). If the prod key lacks Opus access, the query fails loudly.
-const TURBO_MODEL = 'claude-opus-4-8'
-
 export function getPlanMode(): boolean {
   return planModeEnabled
-}
-
-export function getTurboMode(): boolean {
-  return turboModeEnabled
-}
-
-/**
- * Enable or disable Turbo Mode. Like Plan Mode, the active session is closed so the
- * next runAgent applies the new model/effort/tools (Turbo settings are baked into
- * the SDK query options at startSession and don't change mid-session).
- */
-export function setTurboMode(enabled: boolean): void {
-  if (turboModeEnabled === enabled) return
-  turboModeEnabled = enabled
-  logger.info(`Turbo Mode ${enabled ? 'enabled' : 'disabled'}`)
-  // Turbo es global (como Plan Mode): cerramos TODAS las sesiones para que el
-  // próximo mensaje de cada conversación arranque con el modelo/effort/tools nuevos.
-  for (const id of [...sessions.keys()]) closeSession(id)
 }
 
 /**
@@ -232,9 +208,20 @@ export async function runAgent(
 
   let session = sessions.get(conversationId)
 
-  // If THIS conversation's session exists but cwd/context/model changed, restart only
-  // it. Other conversations' sessions are untouched — that's the point of concurrency.
-  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model)) {
+  // Bug encontrado al consolidar Turbo en "Potente" (verificación e2e de la cadena de
+  // modos): el restart de sesión comparaba solo el STRING del modelo resuelto. Eso es
+  // insuficiente ahora que "Potente" también cambia effort/tools/budget (antes eso lo
+  // garantizaba el toggle global de Turbo, que SIEMPRE cerraba todas las sesiones sin
+  // depender del string). Si "Auto" llegara a resolver al mismo modelo que "Potente"
+  // (p.ej. el plan de la empresa configura Opus como default), cambiar Auto→Potente no
+  // hubiera reiniciado la sesión y el turno siguiente hubiera seguido con effort/tools
+  // viejos. Comparamos también el flag `powerful` explícitamente para cerrar ese hueco.
+  const powerful = payload.modelChoice === 'powerful'
+
+  // If THIS conversation's session exists but cwd/context/model/powerful changed,
+  // restart only it. Other conversations' sessions are untouched — that's the point
+  // of concurrency.
+  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
     closeSession(conversationId)
     session = undefined
@@ -291,18 +278,19 @@ async function startSession(
   }
   logger.info(`CompanyId: ${companyId}, UserId: ${userId}`)
 
-  // Turbo Mode (Idea 3 MVP): raise execution rigor for complex quotes. Pin the
-  // xhigh-capable Opus model + xhigh effort + the Workflow tool. Off by default.
-  const turbo = turboModeEnabled
-  const effectiveModel = turbo ? TURBO_MODEL : model
-  const effort = turbo ? 'xhigh' : 'medium'
-  if (turbo) {
-    logger.info(`Turbo Mode ON — model=${effectiveModel}, effort=${effort}, workflows enabled`)
+  // "Potente" (Ola 1 selector) absorbe lo que antes era el Modo Turbo (pill separada,
+  // eliminada): raise execution rigor for complex quotes — xhigh effort + the Workflow
+  // tool + a higher budget ceiling. `model` ya llega resuelto a Opus por resolveModel()
+  // en handlers.ts cuando modelChoice==='powerful'; acá solo derivamos effort/tools/budget.
+  const powerful = payload.modelChoice === 'powerful'
+  const effort = powerful ? 'xhigh' : 'medium'
+  if (powerful) {
+    logger.info(`Modo Potente activo — model=${model}, effort=${effort}, workflows habilitados`)
   }
 
   // Reporte de consumo de tokens por ejecución (rentabilidad por cliente).
   // Fija el cliente HTTP + el modelo efectivo + el contexto; mapMessage reporta en cada `result`.
-  initUsageReporter(httpClient, effectiveModel, contextId)
+  initUsageReporter(httpClient, model, contextId)
 
   const cerpMcpServer = createCerpMcpServer(httpClient, companyId, userId, conversationId)
   const contextPrompt = await buildContextPrompt(httpClient)
@@ -312,7 +300,7 @@ async function startSession(
     payload.activeContextId,
     planModeEnabled,
     payload.conversationHistory,
-    turbo,
+    powerful,
   )
 
   // Build subagent definitions (with model overrides for cost optimization)
@@ -352,7 +340,7 @@ async function startSession(
   logger.info(`Electron execPath: ${process.execPath}`)
 
   const options: Record<string, unknown> = {
-    model: effectiveModel,
+    model,
     systemPrompt: fullSystemPrompt,
     cwd,
     pathToClaudeCodeExecutable: sdkCliPath,
@@ -409,11 +397,12 @@ async function startSession(
     agents: [...builtInAgents, ...customSdkAgents],
     allowedTools: [
       'Agent', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'mcp__cerp__*', 'mcp__cerp__ask_user_question',
-      // Turbo: habilita la orquestación de workflows dinámicos para cotizaciones grandes.
-      ...(turbo ? ['Workflow'] : []),
+      // Potente: habilita la orquestación de workflows dinámicos para cotizaciones grandes
+      // (absorbe lo que antes hacía el Modo Turbo).
+      ...(powerful ? ['Workflow'] : []),
     ],
-    // Turbo: orquestación de workflows dinámicos (MVP conservador, sin ultracode).
-    enableWorkflows: turbo,
+    // Potente: orquestación de workflows dinámicos (MVP conservador, sin ultracode).
+    enableWorkflows: powerful,
     // NOTE: we never use permissionMode:'plan' because the SDK then auto-injects
     // the ExitPlanMode tool, which conflicts with our ask_user_question flow.
     // Instead, when planModeEnabled is true we inject a strict directive into
@@ -421,14 +410,14 @@ async function startSession(
     // buildFullSystemPrompt). The user controls the toggle from the UI.
     permissionMode: 'bypassPermissions',
     maxTurns: payload.maxTurns ?? 100,
-    // Turbo gasta más (Opus + xhigh + workflows): subimos el techo de forma consciente.
+    // Potente gasta más (Opus + xhigh + workflows): subimos el techo de forma consciente.
     // Prioridad: payload explícito > techo por plan (backend, Modelo CERP) > hardcode legacy.
-    maxBudgetUsd: payload.maxBudgetUsd ?? (turbo ? (getMaxBudgetUsdTurbo() ?? 25.0) : (getMaxBudgetUsd() ?? 10.0)),
+    maxBudgetUsd: payload.maxBudgetUsd ?? (powerful ? (getMaxBudgetUsdTurbo() ?? 25.0) : (getMaxBudgetUsd() ?? 10.0)),
     includePartialMessages: true,
     promptSuggestions: true,
     // 'medium' keeps the agent responsive: 'high' triggers long extended-reasoning
     // pauses with no visible output, which reads as "frozen" in a live desktop UI.
-    // Turbo opts INTO that trade-off ('xhigh') for complex quotes — the heartbeat
+    // Potente opts INTO that trade-off ('xhigh') for complex quotes — the heartbeat
     // below mitigates the silent pauses.
     effort,
     // Fase 2: forward subagent text/reasoning deltas so we can render them
@@ -456,6 +445,7 @@ async function startSession(
     cwd,
     contextId,
     model,
+    powerful,
     processingTurn: false,
     activeDelegations: new Map(),
     heartbeat: null,
@@ -659,7 +649,7 @@ function buildFullSystemPrompt(
   activeContextId?: string,
   planModeEnabled = false,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  turboModeEnabled = false,
+  powerfulMode = false,
 ): string {
   let fullSystemPrompt = SYSTEM_PROMPT + contextPrompt
 
@@ -713,18 +703,21 @@ Estas reglas TIENEN PRIORIDAD sobre cualquier instruccion contraria en el resto 
   }
 
 
-  // Turbo Mode (Idea 3) — directiva de ejecución exhaustiva para cotizaciones complejas.
-  if (turboModeEnabled) {
+  // Modo Potente — directiva de ejecución exhaustiva para cotizaciones complejas.
+  // Absorbe lo que antes era el Modo Turbo (pill separada, eliminada): el usuario ya
+  // no lo "activa" con un toggle aparte, lo obtiene eligiendo "Potente" en el selector
+  // de modelo del composer.
+  if (powerfulMode) {
     fullSystemPrompt += `
 
-## MODO TURBO ACTIVADO — Cotización exhaustiva
+## MODO POTENTE ACTIVO — Cotización exhaustiva
 
-El usuario activó **Modo Turbo** para esta cotización compleja. Trabajás con máximo rigor:
+El usuario seleccionó el modelo **Potente** para esta cotización compleja. Trabajás con máximo rigor:
 
 1. **Planificá ANTES de escribir.** Mapeá el árbol completo capítulo → ítem → APU del pliego/mediciones antes de crear nada en CERP. No empieces a crear chapters sueltos sin saber qué ítems va a tener cada uno.
 2. **Repartí el trabajo en subagentes.** Para licitaciones grandes, delegá la construcción de capítulos/APUs en subagentes especialistas (tool Agent) y coordiná; no intentes todo en un solo hilo lineal.
 3. **Auto-verificá contra el CONTRATO DE COMPLETITUD (abajo) antes de cerrar.** No declares terminada la cotización hasta que CADA capítulo tenga al menos un ítem real y CADA ítem tenga su APU con cantidades y precios. Si algo quedó vacío, completalo o avisá explícitamente qué falta — NUNCA entregues capítulos vacíos.
-4. Turbo tarda más y consume más recursos: está bien tomarte el tiempo, pero mantené al usuario informado del avance (no quedes en silencio largo).
+4. El modo Potente tarda más y consume más recursos: está bien tomarte el tiempo, pero mantené al usuario informado del avance (no quedes en silencio largo).
 `
   }
 
@@ -988,7 +981,9 @@ function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string,
         cacheReadTokens: cacheRead,
         costUsd: costDelta,
         turns: turnsDelta,
-        turbo: turboModeEnabled,
+        // Campo heredado del antiguo Modo Turbo (nombre sin cambios por contrato con el
+        // backend) — ahora refleja si ESTA sesión corrió en modo "Potente" (Opus + xhigh).
+        turbo: session?.powerful ?? false,
       })
     }
     // El evento al renderer conserva el costo ACUMULADO (footer de costo de la sesión).

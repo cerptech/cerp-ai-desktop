@@ -27,8 +27,9 @@ export interface SendPromptPayload {
    */
   conversationHistory?: ConversationHistoryEntry[]
   /**
-   * Selector de modelo (Ola 1). Turbo Mode tiene prioridad sobre esto — agentManager
-   * ignora `model` cuando turboModeEnabled está activo (fija Opus xhigh).
+   * Selector de modelo (Ola 1). 'powerful' ("Potente") absorbe el antiguo Modo Turbo:
+   * agentManager le aplica effort 'xhigh', habilita la tool Workflow y sube el techo
+   * de presupuesto además de fijar el modelo Opus.
    */
   modelChoice?: ModelChoice
 }
@@ -115,7 +116,11 @@ export interface DesktopConfig {
    * debe usar el fallback hardcodeado en ese caso.
    */
   maxBudgetUsd?: number
-  /** Mismo techo pero para Turbo Mode (Opus + xhigh). */
+  /**
+   * Mismo techo pero para el modo "Potente" (Opus + xhigh). El nombre del campo se
+   * mantiene igual al que ya devuelve el backend (`maxBudgetUsdTurbo`, heredado del
+   * antiguo Modo Turbo) para no requerir un cambio de contrato ahí.
+   */
   maxBudgetUsdTurbo?: number
 }
 

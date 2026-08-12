@@ -95,6 +95,8 @@ export interface ExecutionUsage {
   cacheReadTokens: number
   costUsd?: number
   turns?: number
+  /** true si la sesión corrió en modo "Potente" (Opus + xhigh). Nombre heredado del
+   *  antiguo Modo Turbo — se mantiene sin cambios por contrato con el backend. */
   turbo?: boolean
 }
 

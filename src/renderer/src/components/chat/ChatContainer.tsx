@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
-import { ClipboardCheck, Zap } from 'lucide-react'
+import { ClipboardCheck } from 'lucide-react'
 import { useAgent, type ChatMessage } from '@/hooks/useAgent'
 import { sendPrompt as storeSendPrompt } from '@/stores/agentRuntimeStore'
 import { MessageBubble } from './MessageBubble'
@@ -11,7 +11,6 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
 import { useToast } from '@/hooks/useToast'
 import { usePlanMode } from '@/hooks/usePlanMode'
-import { useTurboMode } from '@/hooks/useTurboMode'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useDictation, type DictationError } from '@/hooks/useDictation'
 import { useAttachments, MAX_ATTACHMENTS, type AttachmentFile } from '@/hooks/useAttachments'
@@ -50,7 +49,6 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
-  const { turboMode, toggleTurboMode } = useTurboMode()
   const { modelChoice, setModelChoice } = useModelChoice()
   // Ola 3 — Git/Python se preparan en background tras el login; esto gatea solo las
   // quick actions que realmente los necesitan (ver QUICK_ACTIONS.requiresTools).
@@ -287,15 +285,6 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
-      {/* Turbo Mode banner — shown at the top when active (Idea 3) */}
-      {turboMode && (
-        <div className="flex items-center gap-2 px-6 py-2 bg-violet-50 border-b border-violet-200 text-xs text-violet-700">
-          <Zap className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-          <span className="font-medium">Modo Turbo activo</span>
-          <span className="text-violet-500">— esta cotización usa más recursos y tarda más, a cambio de mayor precisión en licitaciones complejas.</span>
-        </div>
-      )}
-
       {/* Drag overlay */}
       {isDragOver && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-brand-orange/5 border-2 border-dashed border-brand-orange/30 rounded-lg pointer-events-none">
@@ -439,11 +428,8 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
             dictationSilence={dictation.silence}
             modelChoice={modelChoice}
             onModelChange={setModelChoice}
-            modelSelectorDisabled={turboMode}
             planMode={planMode}
             onTogglePlanMode={togglePlanMode}
-            turboMode={turboMode}
-            onToggleTurboMode={toggleTurboMode}
             cwd={cwd}
             onSelectFolder={handleSelectFolder}
             onClearFolder={handleClearFolder}
