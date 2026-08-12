@@ -16,6 +16,7 @@ const IPC = {
   AGENT_USER_ANSWER: 'agent:user_answer',
   QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
   CANVAS_REGISTER: 'canvas:register',
+  CANVAS_OPEN_EXTERNAL: 'canvas:open-external',
   AGENT_STREAM_MESSAGE: 'agent:stream:message',
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
@@ -337,6 +338,12 @@ const api = {
   // devuelve el id que sirve `cerp-canvas://<id>` (ver canvasProtocol.ts en
   // main). null si el HTML viene vacío o supera el tope de registro.
   registerCanvasHtml: (html: string): Promise<string | null> => ipcRenderer.invoke(IPC.CANVAS_REGISTER, html),
+
+  // Abre el lienzo en el navegador por defecto del sistema (útil para imprimir) —
+  // el main escribe el HTML a un archivo temporal con la CSP del lienzo inyectada
+  // como meta tag (ver canvasProtocol.ts) y lo abre con shell.openPath.
+  openCanvasExternal: (canvasId: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.CANVAS_OPEN_EXTERNAL, canvasId),
 
   // Stream listeners — every event is tagged with the conversationId it belongs to.
   onAgentMessage: (callback: (event: AgentStreamEvent, conversationId: string) => void): (() => void) => {

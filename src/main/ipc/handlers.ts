@@ -1,6 +1,6 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { ipcMain, BrowserWindow, dialog, app, shell } from 'electron'
 import { statSync, writeFileSync } from 'fs'
-import { basename, extname } from 'path'
+import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
@@ -8,7 +8,8 @@ import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, NoCreditsError
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
-import { registerCanvas } from '../agent/htmlCanvasBridge'
+import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
+import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
@@ -269,6 +270,40 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC_CHANNELS.CANVAS_REGISTER, async (_event, html: unknown): Promise<string | null> => {
     if (typeof html !== 'string' || html.length === 0) return null
     return registerCanvas(html)
+  })
+
+  // Abrir lienzo en el navegador del sistema — útil para imprimir. El HTML se
+  // escribe a un archivo temporal con la CSP del lienzo inyectada como `<meta>`
+  // tag: fuera de `cerp-canvas://` no hay header de respuesta que la imponga, y
+  // sin ella un lienzo generado por el modelo, abierto en un navegador normal,
+  // podría hacer requests de red y filtrar datos (p.ej. `<img src="http://...">`)
+  // — algo que el protocolo bloquea DENTRO de la app pero un archivo local
+  // abierto en un navegador no bloquea por sí solo.
+  ipcMain.handle(IPC_CHANNELS.CANVAS_OPEN_EXTERNAL, async (_event, canvasId: unknown): Promise<{ success: boolean; error?: string }> => {
+    if (typeof canvasId !== 'string' || canvasId.length === 0) {
+      return { success: false, error: 'Id de lienzo inválido' }
+    }
+    const html = getCanvasHtml(canvasId)
+    if (!html) {
+      return { success: false, error: 'Lienzo no encontrado o expirado' }
+    }
+    try {
+      const document = buildCanvasDocument(html).replace(
+        '<head>',
+        `<head>\n<meta http-equiv="Content-Security-Policy" content="${CANVAS_CSP}">`,
+      )
+      const filePath = join(app.getPath('temp'), `cerp-canvas-${canvasId}.html`)
+      writeFileSync(filePath, document, 'utf-8')
+      const openError = await shell.openPath(filePath)
+      if (openError) {
+        logger.error(`No se pudo abrir el lienzo en el navegador (${filePath}): ${openError}`)
+        return { success: false, error: 'No se pudo abrir el archivo' }
+      }
+      return { success: true }
+    } catch (err) {
+      logger.error(`canvas:open-external falló para id=${canvasId}:`, err)
+      return { success: false, error: err instanceof Error ? err.message : 'No se pudo escribir el archivo' }
+    }
   })
 
   // Dialog: Export conversation to Markdown (Ola 3) — el renderer arma el contenido,

@@ -18,7 +18,6 @@ import { useAttachments, MAX_ATTACHMENTS, type AttachmentFile } from '@/hooks/us
 import { useModelChoice } from '@/hooks/useModelChoice'
 import { useToolsSetup } from '@/hooks/useToolsSetup'
 import { buildConversationTitle } from '@/utils/conversationTitle'
-import { formatSessionCost } from '@/utils/formatCost'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -48,7 +47,7 @@ interface ChatContainerProps {
 export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
-  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, sessionCost, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
+  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { turboMode, toggleTurboMode } = useTurboMode()
@@ -454,12 +453,6 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
           <div className="mt-2 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <span className="text-[11px] text-slate-300">v{appVersion}</span>
-              {/* Costo de sesión (Ola 3) — discreto, solo si ya se acumuló algo. */}
-              {sessionCost > 0 && (
-                <span className="text-[11px] text-slate-400" title="Costo estimado de esta conversación">
-                  Sesión: {formatSessionCost(sessionCost)}
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-3">
               {messages.length > 0 && (

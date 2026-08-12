@@ -108,6 +108,10 @@ function freshRuntime(): ConversationRuntime {
 
 const runtimes = new Map<string, ConversationRuntime>()
 const listeners = new Map<string, Set<() => void>>()
+// Suscriptores GLOBALES (todas las conversaciones) — usados por el indicador de
+// actividad del sidebar, que necesita saber qué conversaciones de FONDO están
+// trabajando sin suscribirse al runtime completo de cada una (ver notifyGlobal).
+const globalListeners = new Set<() => void>()
 // Persistencia: claves ya guardadas por conversación (timestamp:role).
 const persistedKeys = new Map<string, Set<string>>()
 // Callback opcional para crear/registrar persistencia — set por el provider.
@@ -124,6 +128,11 @@ function getListeners(conversationId: string): Set<() => void> {
 function notify(conversationId: string): void {
   const s = listeners.get(conversationId)
   if (s) for (const cb of s) cb()
+  notifyGlobal()
+}
+
+function notifyGlobal(): void {
+  for (const cb of globalListeners) cb()
 }
 
 /** Snapshot estable para useSyncExternalStore. */
@@ -135,6 +144,34 @@ export function subscribe(conversationId: string, cb: () => void): () => void {
   const s = getListeners(conversationId)
   s.add(cb)
   return () => { s.delete(cb) }
+}
+
+/** Se dispara en CUALQUIER cambio de CUALQUIER conversación (incluidas las de fondo). */
+export function subscribeGlobal(cb: () => void): () => void {
+  globalListeners.add(cb)
+  return () => { globalListeners.delete(cb) }
+}
+
+// Cache del último snapshot de ids activos — getActiveConversationIds() devuelve
+// SIEMPRE la misma referencia de Set mientras el conjunto de ids no cambie, para
+// que useSyncExternalStore no dispare un re-render en cada tick de streaming
+// (que notifica el store pero no cambia QUIÉN está activo).
+let activeIdsCacheKey = ''
+let activeIdsCache: Set<string> = new Set()
+
+/** Ids de conversación con `isStreaming || isPending` en true ahora mismo. */
+export function getActiveConversationIds(): Set<string> {
+  const ids: string[] = []
+  for (const [id, rt] of runtimes) {
+    if (rt.isStreaming || rt.isPending) ids.push(id)
+  }
+  ids.sort()
+  const key = ids.join(',')
+  if (key !== activeIdsCacheKey) {
+    activeIdsCacheKey = key
+    activeIdsCache = new Set(ids)
+  }
+  return activeIdsCache
 }
 
 /** Aplica una mutación inmutable al runtime de una conversación y notifica. */

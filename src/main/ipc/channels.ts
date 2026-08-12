@@ -76,6 +76,9 @@ export const IPC_CHANNELS = {
   // Lienzo HTML del agente — registra el HTML en el Map del main y devuelve el
   // id que sirve el protocolo cerp-canvas:// (ver canvasProtocol.ts).
   CANVAS_REGISTER: 'canvas:register',
+  // Escribe el lienzo a un archivo temporal (con la CSP como meta tag) y lo abre
+  // con la app por defecto del sistema — útil para imprimir.
+  CANVAS_OPEN_EXTERNAL: 'canvas:open-external',
 
   // App
   APP_GET_VERSION: 'app:get-version',

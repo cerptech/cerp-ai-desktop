@@ -3,6 +3,7 @@ import { MessageCircle, Trash2, Download, ChevronLeft, ChevronRight, Plus, Searc
 import type { ConversationSummary, ApiErrorCode } from '../../../../preload/index'
 import { AGENTS } from '@/components/agents/agentConfig'
 import { AgentIconGlyph, type AgentIconType } from '@/components/agents/AgentIcon'
+import { useActiveConversationActivity } from '@/hooks/useActiveConversationActivity'
 
 const SIDEBAR_WIDTH_KEY = 'cerp-sidebar-width'
 const SIDEBAR_MIN_WIDTH = 200
@@ -64,6 +65,11 @@ export function ConversationPanel({
 }: ConversationPanelProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+
+  // Único suscriptor al store de actividad — deriva el Set de ids "trabajando"
+  // una sola vez acá arriba; cada ítem de la lista solo hace `.has(id)` más abajo,
+  // no se suscribe al store por su cuenta (ver useActiveConversationActivity).
+  const activeConversationIds = useActiveConversationActivity()
 
   // Ancho redimensionable (Ola 2) — arrastrable entre 200 y 360px, persistido
   // en localStorage para que sobreviva a reinicios de la app.
@@ -208,6 +214,7 @@ export function ConversationPanel({
         {filteredConversations.map((conv) => {
           const isActive = activeConversationId === conv._id
           const isHovered = hoveredId === conv._id
+          const isWorking = activeConversationIds.has(conv._id)
           return (
             // `role="button"` en un div, NO un <button> anidando otro <button>
             // (el de eliminar): un botón dentro de otro botón es HTML inválido
@@ -234,9 +241,18 @@ export function ConversationPanel({
               <div className="flex items-start gap-2">
                 <AgentIconGlyph icon={getAgentIcon(conv.agentName)} className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
                 <div className="min-w-0 flex-1">
-                  <p className={`text-[13px] font-medium truncate ${isActive ? 'text-slate-800' : 'text-slate-600'}`}>
-                    {conv.title}
-                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <p className={`text-[13px] font-medium truncate ${isActive ? 'text-slate-800' : 'text-slate-600'}`}>
+                      {conv.title}
+                    </p>
+                    {isWorking && (
+                      <span
+                        className="w-2 h-2 rounded-full bg-brand-orange animate-pulse shrink-0"
+                        title="Trabajando…"
+                        aria-label="Trabajando…"
+                      />
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span className="text-[11px] text-slate-400">{formatRelativeDate(conv.updatedAt)}</span>
                     <span className="text-[11px] text-slate-300">{conv.messageCount} msg</span>

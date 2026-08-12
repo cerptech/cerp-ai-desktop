@@ -225,6 +225,7 @@ interface CerpAPI {
   submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
   onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void
   registerCanvasHtml(html: string): Promise<string | null>
+  openCanvasExternal(canvasId: string): Promise<{ success: boolean; error?: string }>
   onAgentMessage(callback: (event: AgentStreamEvent, conversationId: string) => void): () => void
   onAgentDone(callback: (conversationId: string) => void): () => void
   onAgentError(callback: (err: { message: string; code?: string }, conversationId?: string) => void): () => void
