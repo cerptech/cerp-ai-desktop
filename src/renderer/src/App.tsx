@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { LoginPage } from '@/pages/LoginPage'
 import { SetupPage } from '@/pages/SetupPage'
@@ -7,6 +7,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ToastProvider } from '@/hooks/useToast'
 import { ToastContainer } from '@/components/ui/ToastContainer'
 import { UpdateBanner } from '@/components/ui/UpdateBanner'
+import { SessionExpiredModal } from '@/components/ui/SessionExpiredModal'
 
 export default function App() {
   const { isAuthenticated, user, loading, login, logout } = useAuth()
@@ -15,18 +16,34 @@ export default function App() {
     return localStorage.getItem('cerp-setup-version') === '2'
   })
 
-  // Initial loading check
+  // El main avisa por acá cuando la sesión murió y no se pudo renovar sola
+  // (refresh token ausente/inválido) — ver auth:session-expired en handlers.ts.
+  const [sessionExpired, setSessionExpired] = useState(false)
+  // Se incrementa tras un re-login exitoso para remontar ChatPage: así los
+  // hooks que solo cargan datos al montar (conversaciones, créditos, etc.)
+  // vuelven a pedirlos con la sesión fresca, sin reiniciar la app.
+  const [sessionKey, setSessionKey] = useState(0)
+
+  useEffect(() => window.cerpAPI.onSessionExpired(() => setSessionExpired(true)), [])
+
+  const handleSessionReLogin = useCallback(async (): Promise<void> => {
+    await login()
+    setSessionExpired(false)
+    setSessionKey((k) => k + 1)
+  }, [login])
+
+  let content: React.ReactNode
+
   if (loading && !isAuthenticated) {
-    return (
+    // Initial loading check
+    content = (
       <div className="flex items-center justify-center h-screen bg-slate-50">
         <LoadingSpinner size="lg" />
       </div>
     )
-  }
-
-  // Python setup (only on first run)
-  if (!setupDone) {
-    return (
+  } else if (!setupDone) {
+    // Python setup (only on first run)
+    content = (
       <SetupPage
         onComplete={() => {
           localStorage.setItem('cerp-setup-version', '2')
@@ -34,17 +51,24 @@ export default function App() {
         }}
       />
     )
-  }
-
-  if (!isAuthenticated) {
-    return <LoginPage onLogin={login} loading={loading} />
+  } else if (!isAuthenticated) {
+    content = <LoginPage onLogin={login} loading={loading} />
+  } else {
+    content = (
+      <ToastProvider>
+        <ChatPage key={sessionKey} userName={user?.name} onLogout={logout} />
+        <ToastContainer />
+        <UpdateBanner />
+      </ToastProvider>
+    )
   }
 
   return (
-    <ToastProvider>
-      <ChatPage userName={user?.name} onLogout={logout} />
-      <ToastContainer />
-      <UpdateBanner />
-    </ToastProvider>
+    <>
+      {content}
+      {sessionExpired && (
+        <SessionExpiredModal onLogin={handleSessionReLogin} onClose={() => setSessionExpired(false)} />
+      )}
+    </>
   )
 }

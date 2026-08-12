@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import type { ApiErrorCode } from '../../../../preload/index'
 
 type Eligibility = {
   canQuote: boolean
@@ -21,29 +22,41 @@ function pluralCotizaciones(n: number): string {
 export function QuoteStatusBadge() {
   const [eligibility, setEligibility] = useState<Eligibility | null>(null)
   const [loading, setLoading] = useState(true)
+  // 'network' → badge de error con reintento (antes esto no mostraba nada).
+  // 'auth' → el modal global de sesión expirada ya cubre el aviso.
+  const [error, setError] = useState<ApiErrorCode | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const result = await window.cerpAPI.getQuoteEligibility()
+      if (result && 'error' in result) {
+        setEligibility(null)
+        setError(result.error)
+      } else {
+        setEligibility(result)
+        setError(null)
+      }
+    } catch {
+      setEligibility(null)
+      setError('network')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
-
-    async function load() {
-      try {
-        const result = await window.cerpAPI.getQuoteEligibility()
-        if (!cancelled) {
-          setEligibility(result)
-          setLoading(false)
-        }
-      } catch {
-        if (!cancelled) setLoading(false)
-      }
+    const run = async () => {
+      if (cancelled) return
+      await load()
     }
-
-    load()
-    const interval = setInterval(load, REFRESH_INTERVAL_MS)
+    run()
+    const interval = setInterval(run, REFRESH_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [])
+  }, [load])
 
   if (loading) {
     return (
@@ -54,6 +67,20 @@ export function QuoteStatusBadge() {
     )
   }
 
+  if (error === 'network') {
+    return (
+      <button
+        onClick={load}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 hover:bg-red-100 text-xs transition-colors"
+        title="No se pudo consultar el estado de cotizaciones. Click para reintentar."
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+        Error · Reintentar
+      </button>
+    )
+  }
+
+  // error === 'auth' (modal global ya visible) o sin datos todavía.
   if (!eligibility) return null
 
   if (eligibility.unlimited) {

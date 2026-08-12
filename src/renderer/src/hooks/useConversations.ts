@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { ConversationSummary, ConversationFull } from '../../../preload/index'
+import type { ConversationSummary, ConversationFull, ApiErrorCode } from '../../../preload/index'
 import type { ChatMessage } from './useAgent'
 import { useToast } from './useToast'
 
@@ -7,6 +7,10 @@ export function useConversations() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // 'network' → mostrar estado de error con reintento en el panel (no fingir
+  // lista vacía). 'auth' → el modal global de sesión expirada ya se está
+  // mostrando, no duplicar el aviso acá.
+  const [conversationsError, setConversationsError] = useState<ApiErrorCode | null>(null)
   const creatingRef = useRef(false)
   const { addToast } = useToast()
 
@@ -17,8 +21,10 @@ export function useConversations() {
       if (result?.data) {
         setConversations(result.data)
       }
+      setConversationsError(result?.error ?? null)
     } catch (err) {
       console.error('Failed to load conversations:', err)
+      setConversationsError('network')
       addToast('error', 'No se pudieron cargar las conversaciones')
     } finally {
       setLoading(false)
@@ -137,10 +143,14 @@ export function useConversations() {
           timestamp: m.timestamp,
         }))
       }
+      // 'auth' ya dispara el modal global de sesión expirada — no duplicar el aviso.
+      if (result?.error && result.error !== 'auth') {
+        addToast('error', 'No se pudo cargar la conversación')
+      }
       return null
     } catch (err) {
       console.error('Failed to load conversation:', err)
-      addToast('error', 'No se pudo cargar la conversacion')
+      addToast('error', 'No se pudo cargar la conversación')
       return null
     }
   }, [addToast])
@@ -170,6 +180,7 @@ export function useConversations() {
     conversations,
     activeConversationId,
     loading,
+    conversationsError,
     loadConversations,
     createConversation,
     appendMessage,

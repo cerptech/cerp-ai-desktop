@@ -4,6 +4,7 @@ const IPC = {
   AUTH_LOGIN: 'auth:login',
   AUTH_LOGOUT: 'auth:logout',
   AUTH_GET_STATUS: 'auth:get-status',
+  AUTH_SESSION_EXPIRED: 'auth:session-expired',
   AGENT_SEND_PROMPT: 'agent:send-prompt',
   AGENT_ABORT: 'agent:abort',
   AGENT_RESET_SESSION: 'agent:reset-session',
@@ -157,6 +158,12 @@ export interface CustomAgent {
   updatedAt: string
 }
 
+/** Distingue por qué falló una llamada al backend: 'auth' ya disparó el modal
+ *  global de sesión expirada (el renderer no debe mostrar un error propio
+ *  además); 'network' es cualquier otra falla (red, 5xx) — ahí sí corresponde
+ *  un estado de error visible con reintento. */
+export type ApiErrorCode = 'auth' | 'network'
+
 export interface ConversationSummary {
   _id: string
   title: string
@@ -234,6 +241,7 @@ export interface CreditLedgerEntry {
 
 export interface CreditsLedgerResponse {
   entries: CreditLedgerEntry[]
+  error?: ApiErrorCode
 }
 
 const api = {
@@ -241,6 +249,13 @@ const api = {
   login: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_LOGIN),
   logout: (): Promise<void> => ipcRenderer.invoke(IPC.AUTH_LOGOUT),
   getAuthStatus: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_GET_STATUS),
+  // La sesión murió y no se pudo renovar sola (refresh token ausente/inválido).
+  // El renderer muestra el modal de "Tu sesión expiró".
+  onSessionExpired: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on(IPC.AUTH_SESSION_EXPIRED, handler)
+    return () => ipcRenderer.removeListener(IPC.AUTH_SESSION_EXPIRED, handler)
+  },
 
   // Agent
   sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }> =>
@@ -308,9 +323,12 @@ const api = {
   deleteCustomAgent: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.CUSTOM_AGENT_DELETE, id),
 
   // Conversations
-  listConversations: (page?: number, limit?: number): Promise<any> =>
-    ipcRenderer.invoke(IPC.CONVERSATION_LIST, { page, limit }),
-  getConversation: (id: string): Promise<any> =>
+  listConversations: (page?: number, limit?: number): Promise<{
+    data: ConversationSummary[]
+    pagination: { currentPage: number; totalPages: number; totalItems: number }
+    error?: ApiErrorCode
+  }> => ipcRenderer.invoke(IPC.CONVERSATION_LIST, { page, limit }),
+  getConversation: (id: string): Promise<{ data: ConversationFull | null; error?: ApiErrorCode }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_GET, id),
   createConversation: (data: { title: string; agentName: string; sessionId?: string; activeContextId?: string; metadata?: Record<string, unknown> }): Promise<any> =>
     ipcRenderer.invoke(IPC.CONVERSATION_CREATE, data),
@@ -330,7 +348,7 @@ const api = {
     prepaidCredits: number
     unlimited: boolean
     blockedReason?: 'no_subscription' | 'subscription_inactive'
-  } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
+  } | { error: ApiErrorCode } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
   consumeUnlimitedQuote: (): Promise<{ quote: Record<string, unknown> } | null> =>
     ipcRenderer.invoke(IPC.QUOTES_CONSUME_UNLIMITED),
   listQuotes: (page?: number, pageSize?: number): Promise<{
@@ -338,6 +356,7 @@ const api = {
     page: number
     pageSize: number
     total: number
+    error?: ApiErrorCode
   }> => ipcRenderer.invoke(IPC.QUOTES_LIST, { page, pageSize }),
 
   // Credits (Modelo CERP — créditos de IA)

@@ -77,8 +77,10 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   // Show toast on agent error — NO_CREDITS gets its own persistent banner below
   // instead of a toast, so it doesn't disappear before the user notices it.
+  // AUTH_EXPIRED gets no toast either: the global SessionExpiredModal is already
+  // showing (or about to), a red toast on top of it would be redundant noise.
   useEffect(() => {
-    if (error && errorCode !== 'NO_CREDITS') addToast('error', error)
+    if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED') addToast('error', error)
   }, [error, errorCode, addToast])
 
   useEffect(() => {
@@ -378,10 +380,18 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
-      {/* Error display */}
-      {error && errorCode !== 'NO_CREDITS' && (
+      {/* Error display — AUTH_EXPIRED se omite: el SessionExpiredModal global ya cubre ese caso */}
+      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && (
         <div className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {/* Status message discreto (p.ej. "Reconectando con el servidor...") — sobre el input */}
+      {statusMessage && (isStreaming || isPending) && (
+        <div className="px-6 pb-1.5 flex items-center gap-1.5 text-xs text-slate-400">
+          <LoadingSpinner size="sm" />
+          <span>{statusMessage}</span>
         </div>
       )}
 

@@ -70,6 +70,8 @@ export interface CustomAgent {
   updatedAt: string
 }
 
+export type ApiErrorCode = 'auth' | 'network'
+
 export interface ConversationSummary {
   _id: string
   title: string
@@ -169,12 +171,14 @@ export interface CreditLedgerEntry {
 
 export interface CreditsLedgerResponse {
   entries: CreditLedgerEntry[]
+  error?: ApiErrorCode
 }
 
 interface CerpAPI {
   login(): Promise<AuthState>
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
+  onSessionExpired(callback: () => void): () => void
   sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }>
   abortAgent(conversationId?: string): Promise<void>
   resetSession(conversationId?: string): Promise<void>
@@ -198,8 +202,8 @@ interface CerpAPI {
   createCustomAgent(agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomAgent>
   updateCustomAgent(id: string, updates: Partial<CustomAgent>): Promise<CustomAgent | null>
   deleteCustomAgent(id: string): Promise<boolean>
-  listConversations(page?: number, limit?: number): Promise<{ data: ConversationSummary[]; pagination: { currentPage: number; totalPages: number; totalItems: number } }>
-  getConversation(id: string): Promise<{ data: ConversationFull } | null>
+  listConversations(page?: number, limit?: number): Promise<{ data: ConversationSummary[]; pagination: { currentPage: number; totalPages: number; totalItems: number }; error?: ApiErrorCode }>
+  getConversation(id: string): Promise<{ data: ConversationFull | null; error?: ApiErrorCode }>
   createConversation(data: { title: string; agentName: string; sessionId?: string; activeContextId?: string; metadata?: Record<string, unknown> }): Promise<{ data: ConversationFull } | null>
   appendConversationMessage(conversationId: string, message: Record<string, unknown>, metadata?: Record<string, unknown>): Promise<boolean>
   deleteConversation(id: string): Promise<boolean>
@@ -213,13 +217,14 @@ interface CerpAPI {
     prepaidCredits: number
     unlimited: boolean
     blockedReason?: 'no_subscription' | 'subscription_inactive'
-  } | null>
+  } | { error: ApiErrorCode } | null>
   consumeUnlimitedQuote(): Promise<{ quote: Record<string, unknown> } | null>
   listQuotes(page?: number, pageSize?: number): Promise<{
     items: Array<Record<string, unknown>>
     page: number
     pageSize: number
     total: number
+    error?: ApiErrorCode
   }>
   getCreditsBalance(): Promise<CreditsBalance | null>
   getCreditsLedger(limit?: number): Promise<CreditsLedgerResponse | null>

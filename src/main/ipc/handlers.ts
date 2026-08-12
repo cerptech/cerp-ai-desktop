@@ -1,27 +1,50 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { IPC_CHANNELS } from './channels'
-import { login, logout, isAuthenticated, handleCallback } from '../auth/auth0Client'
+import { login, logout, ensureFreshToken, refreshAccessToken, handleCallback } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, NoCreditsError } from '../auth/apiKeyManager'
+import { fetchApiKey, getApiKey, clearApiKey, NoCreditsError } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
-import { HttpClient } from '../utils/httpClient'
+import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AuthState, UserAnswerPayload } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
-const httpClient = new HttpClient(
-  () => tokenStore.getAccessToken(),
-  async () => {
-    // On 401, try to refresh the API key (which re-validates the token)
-    logger.info('Token expired during session, refreshing...')
-    await fetchApiKey(httpClient)
-  },
-)
+/** true si el error vino de una respuesta 401 — refresh ya se intentó y falló (ver onTokenExpired abajo). */
+function isAuthError(err: unknown): boolean {
+  return err instanceof HttpError && err.status === 401
+}
 
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
+  function notifySessionExpired(): void {
+    const mainWindow = getMainWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.AUTH_SESSION_EXPIRED)
+    }
+  }
+
+  const httpClient = new HttpClient(
+    () => tokenStore.getAccessToken(),
+    async () => {
+      logger.info('Token expirado durante la sesión — intentando renovar...')
+      try {
+        await refreshAccessToken()
+        // El accessToken nuevo ya quedó guardado en tokenStore; fetchApiKey lo
+        // usa automáticamente (vía el mismo httpClient) para re-validar la API key.
+        await fetchApiKey(httpClient)
+        logger.info('Token renovado y API key re-obtenida correctamente')
+      } catch (err) {
+        logger.warn('No se pudo renovar la sesión — limpiando credenciales:', err)
+        tokenStore.clearAll()
+        clearApiKey()
+        notifySessionExpired()
+        throw err
+      }
+    },
+  )
+
   // Auth: Login
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGIN, async (): Promise<AuthState> => {
     try {
@@ -49,13 +72,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     resetSession()
   })
 
-  // Auth: Get status
+  // Auth: Get status — refresca el token si está por vencer en vez de confiar
+  // en que "existe" == "sirve" (isAuthenticated() antiguo no validaba expiración).
   ipcMain.handle(IPC_CHANNELS.AUTH_GET_STATUS, async (): Promise<AuthState> => {
-    const authenticated = isAuthenticated()
+    const token = await ensureFreshToken()
     const user = tokenStore.getUser()
     return {
-      isAuthenticated: authenticated,
-      user: authenticated && user ? user : undefined,
+      isAuthenticated: !!token,
+      user: token && user ? user : undefined,
     }
   })
 
@@ -68,6 +92,15 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
       let apiKey = getApiKey()
       if (!apiKey) {
+        // Si no hay token utilizable (p.ej. el usuario cerró el modal de sesión
+        // expirada sin volver a loguearse), cortamos acá: evita una llamada de
+        // red condenada a fallar y devuelve el código correcto de una.
+        const token = await ensureFreshToken()
+        if (!token) {
+          notifySessionExpired()
+          return { started: false, error: 'No se pudo recuperar la sesión. Inicia sesión de nuevo.', code: 'AUTH_EXPIRED' }
+        }
+
         try {
           const config = await fetchApiKey(httpClient)
           apiKey = config.apiKey
@@ -78,7 +111,17 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           if (err instanceof NoCreditsError) {
             return { started: false, error: err.message, code: 'NO_CREDITS' }
           }
-          return { started: false, error: 'Could not retrieve API key. Please log in again.' }
+          // El httpClient ya intentó refrescar el token (onTokenExpired) antes de
+          // llegar acá — si seguimos con 401 es porque el refresh falló y ya se
+          // limpiaron las credenciales + se avisó al renderer (AUTH_SESSION_EXPIRED).
+          // Devolvemos un código propio para que el chat NO muestre además un toast
+          // rojo genérico encima del modal de sesión expirada.
+          if (isAuthError(err)) {
+            logger.warn('No se pudo obtener la API key: sesión expirada')
+            return { started: false, error: 'No se pudo recuperar la sesión. Inicia sesión de nuevo.', code: 'AUTH_EXPIRED' }
+          }
+          logger.error('No se pudo obtener la API key:', err)
+          return { started: false, error: 'No se pudo conectar con el servidor. Intenta de nuevo en unos segundos.', code: 'NETWORK_ERROR' }
         }
       }
 
@@ -192,7 +235,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       return await httpClient.get(`/desktop/conversations?page=${page || 1}&limit=${limit || 20}`)
     } catch (err) {
       logger.error('Failed to list conversations:', err)
-      return { data: [], pagination: { currentPage: 1, totalPages: 0, totalItems: 0 } }
+      // No fingir una lista vacía: el renderer distingue 'auth' (ya se disparó
+      // el modal de sesión expirada, arriba) de 'network' (muestra error + reintentar).
+      return { data: [], pagination: { currentPage: 1, totalPages: 0, totalItems: 0 }, error: isAuthError(err) ? 'auth' : 'network' }
     }
   })
 
@@ -201,7 +246,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       return await httpClient.get(`/desktop/conversations/${id}`)
     } catch (err) {
       logger.error(`Failed to get conversation ${id}:`, err)
-      return null
+      return { data: null, error: isAuthError(err) ? 'auth' : 'network' }
     }
   })
 
@@ -240,7 +285,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       return await httpClient.get('/quotes/eligibility')
     } catch (err) {
       logger.error('Failed to fetch quote eligibility:', err)
-      return null
+      // Antes esto devolvía null y el badge desaparecía sin avisar nada. Ahora
+      // el renderer puede mostrar un estado de error con reintento en vez de
+      // no mostrar nada (salvo 'auth', que ya dispara el modal global).
+      return { error: isAuthError(err) ? 'auth' : 'network' } as const
     }
   })
 
@@ -264,7 +312,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       return await httpClient.get(path)
     } catch (err) {
       logger.error('Failed to list quotes:', err)
-      return { items: [], page: 1, pageSize: 20, total: 0 }
+      return { items: [], page: 1, pageSize: 20, total: 0, error: isAuthError(err) ? 'auth' : 'network' }
     }
   })
 
@@ -285,7 +333,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       return await httpClient.get(`/credits/ledger${qs}`)
     } catch (err) {
       logger.error('Failed to fetch credits ledger:', err)
-      return null
+      // Antes volvía null y el panel lo leía como "sin movimientos" (lista vacía
+      // fingida). Ahora el panel puede mostrar su estado de error existente.
+      return { entries: [], error: isAuthError(err) ? 'auth' : 'network' }
     }
   })
 

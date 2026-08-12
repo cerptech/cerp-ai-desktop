@@ -1,11 +1,15 @@
 import { useState, useMemo, type MutableRefObject } from 'react'
-import type { ConversationSummary } from '../../../../preload/index'
+import type { ConversationSummary, ApiErrorCode } from '../../../../preload/index'
 import { AGENTS } from '@/components/agents/agentConfig'
 
 interface ConversationPanelProps {
   conversations: ConversationSummary[]
   activeConversationId: string | null
   loading: boolean
+  /** 'network' → mostrar error + reintentar. 'auth' → el modal global de sesión
+   *  expirada ya se está mostrando, así que acá no se duplica el aviso. */
+  error?: ApiErrorCode | null
+  onRetry?: () => void
   collapsed: boolean
   onToggleCollapse: () => void
   onSelectConversation: (id: string) => void
@@ -39,6 +43,8 @@ export function ConversationPanel({
   conversations,
   activeConversationId,
   loading,
+  error,
+  onRetry,
   collapsed,
   onToggleCollapse,
   onSelectConversation,
@@ -152,7 +158,23 @@ export function ConversationPanel({
           <p className="text-[10px] text-slate-400 text-center py-4">Cargando...</p>
         )}
 
-        {!loading && conversations.length === 0 && (
+        {/* Error real (red caída, 5xx) — no fingir que no hay conversaciones. El
+            caso 'auth' se omite: el modal global de sesión expirada ya lo cubre. */}
+        {!loading && error === 'network' && conversations.length === 0 && (
+          <div className="text-center py-6">
+            <p className="text-[10px] text-red-500">No se pudieron cargar las conversaciones</p>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="text-[10px] text-brand-orange hover:underline mt-1"
+              >
+                Reintentar
+              </button>
+            )}
+          </div>
+        )}
+
+        {!loading && error !== 'network' && conversations.length === 0 && (
           <div className="text-center py-6">
             <p className="text-[10px] text-slate-400">Sin conversaciones</p>
             <p className="text-[10px] text-slate-300 mt-1">Envia un mensaje para comenzar</p>

@@ -39,6 +39,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     conversations,
     activeConversationId,
     loading: convLoading,
+    conversationsError,
+    loadConversations,
     createConversation,
     appendMessage,
     loadConversation,
@@ -192,6 +194,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           conversations={conversations}
           activeConversationId={activeConversationId}
           loading={convLoading}
+          error={conversationsError}
+          onRetry={loadConversations}
           collapsed={convPanelCollapsed}
           onToggleCollapse={() => setConvPanelCollapsed(!convPanelCollapsed)}
           onSelectConversation={handleSelectConversation}

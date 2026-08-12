@@ -2,7 +2,13 @@ import { shell } from 'electron'
 import { randomBytes, createHash } from 'crypto'
 import { createServer, Server } from 'http'
 import { tokenStore } from './tokenStore'
+import { clearApiKey } from './apiKeyManager'
 import { logger } from '../utils/logger'
+
+// Margen de seguridad: un token que expira dentro de este umbral se trata
+// como expirado, para no arrancar una request con un token que muere a mitad
+// de camino en el servidor.
+const EXPIRY_MARGIN_MS = 60 * 1000
 
 // Read env vars lazily (dotenv loads after imports are evaluated)
 function getAuth0Config() {
@@ -112,7 +118,11 @@ export async function login(): Promise<string> {
           return
         }
 
-        const { access_token } = (await tokenResponse.json()) as { access_token: string }
+        const { access_token, refresh_token, expires_in } = (await tokenResponse.json()) as {
+          access_token: string
+          refresh_token?: string
+          expires_in?: number
+        }
 
         // Fetch user info
         const userInfoRes = await fetch(`https://${domain}/userinfo`, {
@@ -130,7 +140,15 @@ export async function login(): Promise<string> {
           })
         }
 
-        tokenStore.setAccessToken(access_token)
+        tokenStore.setSession({
+          accessToken: access_token,
+          refreshToken: refresh_token ?? null,
+          expiresAt: Date.now() + (expires_in ?? 3600) * 1000,
+        })
+
+        if (!refresh_token) {
+          logger.warn('Auth0 no devolvió refresh_token — revisar que "Allow Offline Access" esté habilitado en la Application/API de Auth0')
+        }
 
         // Success page
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -162,7 +180,9 @@ export async function login(): Promise<string> {
         response_type: 'code',
         client_id: clientId,
         redirect_uri: LOCAL_REDIRECT_URI,
-        scope: 'openid profile email',
+        // offline_access → Auth0 emite refresh_token (requiere "Allow Offline Access"
+        // habilitado en la Application y en la API de Auth0; ver README de config).
+        scope: 'openid profile email offline_access',
         audience: audience,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
@@ -201,9 +221,89 @@ export async function handleCallback(_url: string): Promise<void> {
 
 export function logout(): void {
   tokenStore.clearAll()
+  clearApiKey()
   logger.info('User logged out')
 }
 
+/**
+ * Solo mira el estado guardado — no refresca. Usar `ensureFreshToken()` en
+ * cualquier flujo que vaya a hacer una llamada real (arranque de la app,
+ * AUTH_GET_STATUS), para que un token vencido se refresque en vez de leerse
+ * como "logueado" con un token muerto.
+ */
 export function isAuthenticated(): boolean {
-  return tokenStore.getAccessToken() !== null
+  const token = tokenStore.getAccessToken()
+  if (!token) return false
+  const expiresAt = tokenStore.getExpiresAt()
+  // Migración: credenciales guardadas antes de este campo existir → tratar
+  // como expiradas, fuerza un único login limpio.
+  if (expiresAt === null) return false
+  return Date.now() < expiresAt - EXPIRY_MARGIN_MS
+}
+
+/**
+ * Intercambia el refresh token guardado por un accessToken nuevo. Auth0 puede
+ * rotar el refresh token (Refresh Token Rotation) — si viene uno nuevo en la
+ * respuesta lo persistimos; si no, mantenemos el actual.
+ */
+export async function refreshAccessToken(): Promise<string> {
+  const { domain, clientId } = getAuth0Config()
+  const refreshToken = tokenStore.getRefreshToken()
+
+  if (!domain || !clientId || !refreshToken) {
+    throw new Error('No hay refresh token disponible para renovar la sesión')
+  }
+
+  const res = await fetch(`https://${domain}/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: refreshToken,
+    }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`No se pudo renovar el token: ${res.status} ${body}`)
+  }
+
+  const data = (await res.json()) as { access_token: string; refresh_token?: string; expires_in?: number }
+
+  tokenStore.setSession({
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token ?? refreshToken,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+  })
+
+  logger.info('Access token renovado correctamente')
+  return data.access_token
+}
+
+/**
+ * Devuelve un accessToken válido, refrescándolo primero si está por vencer.
+ * `null` significa "no hay sesión utilizable" — ni token vigente ni refresh
+ * posible (sin refresh token, o el refresh falló porque fue revocado/venció).
+ * Usar esto en vez de `isAuthenticated()` en cualquier punto que vaya a hacer
+ * una llamada de red real.
+ */
+export async function ensureFreshToken(): Promise<string | null> {
+  const token = tokenStore.getAccessToken()
+  if (!token) return null
+
+  const expiresAt = tokenStore.getExpiresAt()
+  if (expiresAt === null) {
+    logger.warn('Token sin fecha de expiración guardada (credenciales antiguas) — se requiere un nuevo login')
+    return null
+  }
+
+  if (Date.now() < expiresAt - EXPIRY_MARGIN_MS) return token
+
+  try {
+    return await refreshAccessToken()
+  } catch (err) {
+    logger.warn('No se pudo refrescar el token de acceso:', err)
+    return null
+  }
 }

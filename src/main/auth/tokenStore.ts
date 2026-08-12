@@ -46,6 +46,38 @@ export const tokenStore = {
     return decrypt(val)
   },
 
+  /**
+   * Guarda accessToken + refreshToken (ambos cifrados) + expiresAt (timestamp ms,
+   * sin cifrar — no es sensible) en una sola escritura atómica. Reemplaza a las
+   * llamadas sueltas a setAccessToken durante el login/refresh de Auth0.
+   */
+  setSession(session: { accessToken: string; refreshToken?: string | null; expiresAt: number }): void {
+    const data = readStore()
+    data.accessToken = encrypt(session.accessToken)
+    if (session.refreshToken) data.refreshToken = encrypt(session.refreshToken)
+    data.expiresAt = session.expiresAt
+    writeStore(data)
+  },
+
+  getRefreshToken(): string | null {
+    const data = readStore()
+    const val = data.refreshToken as string | undefined
+    if (!val) return null
+    return decrypt(val)
+  },
+
+  /**
+   * Timestamp (ms) de expiración del accessToken. `null` cubre tanto "no hay
+   * sesión" como credenciales viejas guardadas ANTES de este campo existir —
+   * en ambos casos tratamos el token como expirado (migración suave: fuerza
+   * un único login limpio en vez de operar con un token sin fecha conocida).
+   */
+  getExpiresAt(): number | null {
+    const data = readStore()
+    const val = data.expiresAt as number | undefined
+    return typeof val === 'number' ? val : null
+  },
+
   setApiKey(key: string, expiresInMs = 24 * 60 * 60 * 1000): void {
     const data = readStore()
     data.apiKey = encrypt(key)

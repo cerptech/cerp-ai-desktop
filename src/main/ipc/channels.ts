@@ -3,6 +3,9 @@ export const IPC_CHANNELS = {
   AUTH_LOGIN: 'auth:login',
   AUTH_LOGOUT: 'auth:logout',
   AUTH_GET_STATUS: 'auth:get-status',
+  // main → renderer: la sesión murió (refresh token ausente o inválido) y no
+  // se pudo renovar sola. El renderer muestra el modal de sesión expirada.
+  AUTH_SESSION_EXPIRED: 'auth:session-expired',
 
   // Agent
   AGENT_SEND_PROMPT: 'agent:send-prompt',

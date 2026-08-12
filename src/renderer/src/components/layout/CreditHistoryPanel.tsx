@@ -130,7 +130,12 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
       if (mode !== 'off') {
         try {
           const ledger = await window.cerpAPI.getCreditsLedger(30)
-          if (!cancelled) setLedgerEntries(ledger?.entries ?? [])
+          if (!cancelled) {
+            // 'auth' ya dispara el modal global de sesión expirada — no marcar
+            // error acá también (evita un mensaje redundante debajo del modal).
+            if (ledger?.error && ledger.error !== 'auth') setError(true)
+            setLedgerEntries(ledger?.entries ?? [])
+          }
         } catch {
           if (!cancelled) setError(true)
         }
@@ -141,7 +146,10 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
       window.cerpAPI
         .listQuotes(1, 30)
         .then((res) => {
-          if (!cancelled) setRows((res?.items as unknown as QuoteRow[]) ?? [])
+          if (!cancelled) {
+            if (res?.error && res.error !== 'auth') setError(true)
+            setRows((res?.items as unknown as QuoteRow[]) ?? [])
+          }
         })
         .catch(() => {
           if (!cancelled) setError(true)
