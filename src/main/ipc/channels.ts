@@ -73,6 +73,10 @@ export const IPC_CHANNELS = {
   // Cortafuegos de cotización (Idea 2) — eventos de estado main → renderer
   QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
 
+  // Lienzo HTML del agente — registra el HTML en el Map del main y devuelve el
+  // id que sirve el protocolo cerp-canvas:// (ver canvasProtocol.ts).
+  CANVAS_REGISTER: 'canvas:register',
+
   // App
   APP_GET_VERSION: 'app:get-version',
 

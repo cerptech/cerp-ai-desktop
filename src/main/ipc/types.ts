@@ -83,6 +83,10 @@ export type AgentStreamEvent =
   | { type: 'subagent_tool_done'; parentToolUseId: string; toolUseId: string; output?: string; isError?: boolean }
   // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK ≥ 0.2.119).
   | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
+  // Lienzo HTML del agente (tool `show_html`, MCP server `cerp`). Emitido por
+  // htmlCanvasBridge en el momento en que se ejecuta la tool, NO por el mapeo
+  // genérico tool_start/tool_done (que trunca input/output a 200/800 chars).
+  | { type: 'html_canvas'; toolUseId: string; title: string; html: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   // `code` distinguishes specific error causes the renderer needs to react to differently
   // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
@@ -147,6 +151,13 @@ export interface SubagentStep {
   endTime?: number
 }
 
+/** Lienzo HTML emitido por la tool `show_html` durante el turno. */
+export interface HtmlCanvas {
+  toolUseId: string
+  title: string
+  html: string
+}
+
 export interface ConversationMessage {
   role: 'user' | 'assistant'
   content: string
@@ -164,6 +175,8 @@ export interface ConversationMessage {
     /** Live text/reasoning streamed from the subagent (Fase 2, forwardSubagentText) */
     subagentText?: string
   }>
+  /** Lienzos HTML emitidos por show_html durante este turno del asistente. */
+  htmlCanvases?: HtmlCanvas[]
   timestamp: number
 }
 

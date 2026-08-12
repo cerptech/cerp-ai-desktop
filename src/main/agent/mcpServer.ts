@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { toolSchemas } from './toolDefinitions'
@@ -7,6 +7,7 @@ import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
 import { startQuoteHeartbeat, stopQuoteHeartbeat } from './quoteHeartbeat'
 import { emitQuoteFirewallEvent } from './quoteEventsBridge'
+import { emitHtmlCanvasEvent } from './htmlCanvasBridge'
 
 // ── create_tasks_batch: chunking + claves idempotentes ───────────────────────
 
@@ -169,6 +170,28 @@ const AskUserQuestionSchema = z.object({
     .describe('Entre 1 y 4 preguntas para hacer al usuario en este turno.'),
 })
 
+// ── show_html Zod schema ──────────────────────────────────────────────────
+// Contrato equivalente al part `html` del canal web (cerp-ai-service/lib/agents/parts.ts
+// htmlPartSchema), portado al desktop como tool MCP en vez de UI part del stream de la
+// SDK Vercel AI — acá el "part" lo emite htmlCanvasBridge, no un data-<parte> del stream.
+const ShowHtmlSchema = z.object({
+  title: z
+    .string()
+    .max(120)
+    .optional()
+    .describe('Encabezado corto de la tarjeta (ej: "Comparativa de presupuestos"). Si se omite, se usa "Lienzo".'),
+  html: z
+    .string()
+    .min(1)
+    .max(64_000)
+    .describe(
+      'Documento HTML completo o fragmento a dibujar (comparativa, esquema, tabla con formato, grafico con divs o SVG inline). ' +
+        'Se renderiza AISLADO: sin acceso a la pagina ni a internet. TODO el CSS y JS va inline o en un <style>/<script> del propio documento — ' +
+        'NO puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa (sí funcionan imagenes data: y SVG inline). ' +
+        'Maximo 64 KB.',
+    ),
+})
+
 /**
  * Creates an in-process MCP server with all CERP tools.
  * companyId is injected automatically into write operations.
@@ -271,6 +294,46 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       }
     },
     { annotations: { readOnlyHint: true } },
+  )
+
+  // ── show_html tool ────────────────────────────────────────────────────────
+  // Emite un lienzo HTML visual (comparativa, esquema, tabla con formato, grafico
+  // inline). No pega al backend de CERP: solo valida y avisa al renderer via el
+  // bridge — el render seguro (sandbox de iframe + CSP interna) vive del lado
+  // del renderer (HtmlCanvasCard.tsx), portado del mismo modelo de seguridad
+  // que usa el canal web (cerp-ai-frontend/src/components/chat/parts/HtmlCanvasCard.tsx).
+  const showHtmlTool = tool(
+    'show_html',
+    'Dibuja un lienzo visual escribiendo HTML: una comparativa, un esquema, una tabla con formato, un grafico hecho con divs o SVG inline. ' +
+      'Se muestra aislado, sin acceso a la app ni a internet: todo el CSS y JS va inline o en un <style>/<script> del propio documento, y NO puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa (sí funcionan imagenes data: y SVG inline). ' +
+      'Usala cuando la forma visual aporte de verdad — para presupuestos usa las tools de budget, que ademas se exportan a PDF/Excel. ' +
+      'Tu texto tiene que seguir explicando la respuesta: el lienzo ACOMPAÑA, no reemplaza.',
+    ShowHtmlSchema as any,
+    async (args: Record<string, unknown>) => {
+      try {
+        const parsed = ShowHtmlSchema.parse(args)
+        const toolUseId = randomUUID()
+        const title = parsed.title?.trim() || 'Lienzo'
+        const sent = emitHtmlCanvasEvent(conversationId, { toolUseId, title, html: parsed.html })
+        if (!sent) {
+          // Sin ventana activa (o destruida) el evento nunca llegó al renderer — el
+          // modelo NO puede narrar "te muestro el lienzo" como si el usuario lo
+          // hubiera visto, así que esto es un error de tool, no un éxito silencioso.
+          logger.error(`show_html FAILED: no hay ventana activa para mostrar el lienzo (conversation ${conversationId})`)
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No se pudo mostrar el lienzo: no hay ventana activa.' }) }],
+            isError: true,
+          }
+        }
+        logger.info(`show_html OK: ${JSON.stringify(title)} (${parsed.html.length} chars) → conversation ${conversationId}`)
+        return { content: [{ type: 'text' as const, text: 'Lienzo mostrado al usuario.' }] }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        logger.error(`show_html FAILED: ${message}`)
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true }
+      }
+    },
+    { annotations: { readOnlyHint: true, destructiveHint: false } },
   )
 
   // ── CERP REST API tools ───────────────────────────────────────────────────
@@ -390,7 +453,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
   return createSdkMcpServer({
     name: 'cerp',
     version: '2.0.0',
-    tools: [askUserTool, attachBudgetPdfTool, downloadBudgetAttachmentTool, ...cerpApiTools],
+    tools: [askUserTool, attachBudgetPdfTool, downloadBudgetAttachmentTool, showHtmlTool, ...cerpApiTools],
   })
 }
 

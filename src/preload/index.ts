@@ -15,6 +15,7 @@ const IPC = {
   AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
   AGENT_USER_ANSWER: 'agent:user_answer',
   QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
+  CANVAS_REGISTER: 'canvas:register',
   AGENT_STREAM_MESSAGE: 'agent:stream:message',
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
@@ -146,10 +147,19 @@ export type AgentStreamEvent =
   | { type: 'subagent_tool_done'; parentToolUseId: string; toolUseId: string; output?: string; isError?: boolean }
   // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK >= 0.2.119).
   | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
+  // Lienzo HTML del agente (tool `show_html`) — ver htmlCanvasBridge.ts en main.
+  | { type: 'html_canvas'; toolUseId: string; title: string; html: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   // `code` distinguishes specific error causes the renderer needs to react to differently
   // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
   | { type: 'error'; message: string; code?: string }
+
+/** Lienzo HTML emitido por la tool `show_html` durante un turno del asistente. */
+export interface HtmlCanvas {
+  toolUseId: string
+  title: string
+  html: string
+}
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -222,6 +232,7 @@ export interface ConversationFull extends ConversationSummary {
       }>
       subagentText?: string
     }>
+    htmlCanvases?: HtmlCanvas[]
     timestamp: number
   }>
   metadata?: {
@@ -321,6 +332,11 @@ const api = {
     ipcRenderer.on(IPC.QUOTE_FIREWALL_EVENT, handler)
     return () => ipcRenderer.removeListener(IPC.QUOTE_FIREWALL_EVENT, handler)
   },
+
+  // Lienzo HTML del agente — registra el HTML en el Map del proceso main y
+  // devuelve el id que sirve `cerp-canvas://<id>` (ver canvasProtocol.ts en
+  // main). null si el HTML viene vacío o supera el tope de registro.
+  registerCanvasHtml: (html: string): Promise<string | null> => ipcRenderer.invoke(IPC.CANVAS_REGISTER, html),
 
   // Stream listeners — every event is tagged with the conversationId it belongs to.
   onAgentMessage: (callback: (event: AgentStreamEvent, conversationId: string) => void): (() => void) => {

@@ -20,6 +20,7 @@ import type { ModelChoice } from '@/hooks/useModelChoice'
 import type { DictationStatus } from '@/hooks/useDictation'
 import type { AttachmentFile } from '@/hooks/useAttachments'
 import { AttachmentCard } from './AttachmentCard'
+import { DictationRecordingBar } from './DictationRecordingBar'
 
 interface ComposerProps {
   value: string
@@ -36,6 +37,11 @@ interface ComposerProps {
   onSelectAttachments: () => void
   dictationStatus: DictationStatus
   onDictate: () => void
+  /** Nivel de micrófono 0-1 en vivo (throttled ~150ms por useDictation), solo relevante durante 'recording'. */
+  dictationLevel: number
+  dictationElapsedSeconds: number
+  /** true si no se detecta audio hace >3s — hint ámbar de "revisa el micrófono". */
+  dictationSilence: boolean
   modelChoice: ModelChoice
   onModelChange: (choice: ModelChoice) => void
   modelSelectorDisabled?: boolean
@@ -77,6 +83,9 @@ export function Composer({
   onSelectAttachments,
   dictationStatus,
   onDictate,
+  dictationLevel,
+  dictationElapsedSeconds,
+  dictationSilence,
   modelChoice,
   onModelChange,
   modelSelectorDisabled,
@@ -94,6 +103,19 @@ export function Composer({
   const modelMenuRef = useRef<HTMLDivElement>(null)
 
   const canSend = Boolean(value.trim()) || attachments.length > 0
+
+  // Al terminar de dictar (recording/transcribing → idle), el textarea que
+  // reemplazó DictationRecordingBar nunca tenía foco — el usuario tenía que
+  // clickearlo a mano para seguir escribiendo o mandar con Enter. Devuelve el
+  // foco automáticamente en cuanto vuelve a estar disponible.
+  const prevDictationStatusRef = useRef(dictationStatus)
+  useEffect(() => {
+    const prev = prevDictationStatusRef.current
+    prevDictationStatusRef.current = dictationStatus
+    if (prev !== 'idle' && dictationStatus === 'idle') {
+      textareaRef.current?.focus()
+    }
+  }, [dictationStatus, textareaRef])
 
   useEffect(() => {
     if (!openMenu) return
@@ -154,18 +176,31 @@ export function Composer({
         </div>
       )}
 
-      <textarea
-        ref={textareaRef}
-        rows={1}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder ?? 'Pregunta lo que necesites…'}
-        aria-label={placeholder ?? 'Pregunta lo que necesites'}
-        disabled={disabled}
-        className="max-h-40 min-h-[26px] w-full resize-none bg-transparent text-base leading-[1.45] text-brand-black outline-none placeholder:text-[#9aa1ad] disabled:text-slate-400"
-      />
+      {dictationStatus === 'recording' ? (
+        <DictationRecordingBar
+          level={dictationLevel}
+          elapsedSeconds={dictationElapsedSeconds}
+          silence={dictationSilence}
+          onStop={onDictate}
+        />
+      ) : (
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder ?? 'Pregunta lo que necesites…'}
+          aria-label={placeholder ?? 'Pregunta lo que necesites'}
+          disabled={disabled}
+          className="max-h-40 min-h-[26px] w-full resize-none bg-transparent text-base leading-[1.45] text-brand-black outline-none placeholder:text-[#9aa1ad] disabled:text-slate-400"
+        />
+      )}
 
+      {/* Fila de controles inferior — oculta durante la grabación: DictationRecordingBar
+          ya trae su propio botón de parar, y Modo plan/Turbo/adjuntar no aplican mientras
+          se dicta. */}
+      {dictationStatus !== 'recording' && (
       <div className="mt-3.5 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
           {/* "+" agrupa adjuntar archivos y seleccionar carpeta de trabajo */}
@@ -292,22 +327,19 @@ export function Composer({
             )}
           </div>
 
-          {/* Dictado por voz */}
+          {/* Dictado por voz — mientras graba, DictationRecordingBar reemplaza todo este
+              bloque de controles (ver arriba) y trae su propio botón de parar; acá solo
+              quedan los estados 'idle' y 'transcribing'. */}
           <button
             type="button"
-            title={dictationStatus === 'recording' ? 'Detener grabación' : dictationStatus === 'transcribing' ? 'Transcribiendo…' : 'Dictar por voz'}
-            aria-label={dictationStatus === 'recording' ? 'Detener grabación' : 'Dictar por voz'}
-            aria-pressed={dictationStatus === 'recording'}
+            title={dictationStatus === 'transcribing' ? 'Transcribiendo…' : 'Dictar por voz'}
+            aria-label="Dictar por voz"
             onClick={onDictate}
             disabled={dictationStatus === 'transcribing' || disabled}
-            className={`flex size-[33px] items-center justify-center rounded-full text-[#44474d] outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40 hover:bg-black/5 hover:text-brand-black disabled:opacity-40 disabled:cursor-not-allowed ${
-              dictationStatus === 'recording' ? 'animate-pulse bg-red-500 text-white hover:bg-red-600 hover:text-white' : ''
-            }`}
+            className="flex size-[33px] items-center justify-center rounded-full text-[#44474d] outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40 hover:bg-black/5 hover:text-brand-black disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {dictationStatus === 'transcribing' ? (
               <Loader2 className="size-[18px] animate-spin" strokeWidth={2} aria-hidden="true" />
-            ) : dictationStatus === 'recording' ? (
-              <Square className="size-3.5 fill-current" strokeWidth={0} aria-hidden="true" />
             ) : (
               <Mic className="size-[18px]" strokeWidth={2} aria-hidden="true" />
             )}
@@ -339,6 +371,7 @@ export function Composer({
           )}
         </div>
       </div>
+      )}
 
       {/* Chip de carpeta activa — visible cuando hay cwd seleccionado */}
       {cwd && (

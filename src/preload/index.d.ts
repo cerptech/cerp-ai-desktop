@@ -54,10 +54,19 @@ export type AgentStreamEvent =
   | { type: 'subagent_tool_done'; parentToolUseId: string; toolUseId: string; output?: string; isError?: boolean }
   // Subagent text/reasoning forwarded in real-time (requires forwardSubagentText: true, SDK >= 0.2.119).
   | { type: 'subagent_text'; parentToolUseId: string; agentName: string; text: string }
+  // Lienzo HTML del agente (tool `show_html`) — ver htmlCanvasBridge.ts en main.
+  | { type: 'html_canvas'; toolUseId: string; title: string; html: string }
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   // `code` distinguishes specific error causes the renderer needs to react to differently
   // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
   | { type: 'error'; message: string; code?: string }
+
+/** Lienzo HTML emitido por la tool `show_html` durante un turno del asistente. */
+export interface HtmlCanvas {
+  toolUseId: string
+  title: string
+  html: string
+}
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -126,6 +135,7 @@ export interface ConversationFull extends ConversationSummary {
       }>
       subagentText?: string
     }>
+    htmlCanvases?: HtmlCanvas[]
     timestamp: number
   }>
   metadata?: {
@@ -214,6 +224,7 @@ interface CerpAPI {
   onAskUserQuestion(callback: (questions: AskUserQuestionItem[], conversationId: string) => void): () => void
   submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
   onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void
+  registerCanvasHtml(html: string): Promise<string | null>
   onAgentMessage(callback: (event: AgentStreamEvent, conversationId: string) => void): () => void
   onAgentDone(callback: (conversationId: string) => void): () => void
   onAgentError(callback: (err: { message: string; code?: string }, conversationId?: string) => void): () => void

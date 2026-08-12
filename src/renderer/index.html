@@ -3,7 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:;" />
+    <!-- frame-src cerp-canvas: es el único añadido para el lienzo HTML del agente
+         (tool show_html). Sin él, `frame-src` cae a `default-src 'self'` y el
+         iframe ni siquiera puede NAVEGAR a cerp-canvas://<id> — Electron lo corta
+         con ERR_BLOCKED_BY_CSP antes de que el documento se sirva (verificado en
+         runtime). Esto NO habilita unsafe-inline ni afloja script-src/default-src
+         de ESTE documento: solo dice "este documento puede embeber un frame de
+         cerp-canvas:". La CSP real del contenido del lienzo (que sí permite
+         scripts/estilos inline, sin red) va como header de la respuesta del
+         protocolo, ver src/main/agent/canvasProtocol.ts — no acá. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; frame-src cerp-canvas:;" />
     <title>CERP AI</title>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased">

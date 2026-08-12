@@ -5,6 +5,7 @@ import { createCerpMcpServer } from './mcpServer'
 import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
+import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
 import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
@@ -195,6 +196,8 @@ export function closeAllSessions(): void {
   for (const id of [...sessions.keys()]) closeSession(id)
   cachedContextPrompt = null
   setAskUserWindow(null)
+  setHtmlCanvasWindow(null)
+  clearCanvases()
   logger.info('All sessions closed')
 }
 
@@ -222,6 +225,7 @@ export async function runAgent(
   mainWindowRef = mainWindow
   setAskUserWindow(mainWindow)
   setQuoteEventWindow(mainWindow)
+  setHtmlCanvasWindow(mainWindow)
   const conversationId = payload.conversationId || DEFAULT_CONV
   const cwd = payload.cwd || app.getPath('home')
   const contextId = payload.activeContextId || null

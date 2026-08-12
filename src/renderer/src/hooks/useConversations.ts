@@ -16,6 +16,9 @@ function normalizeToolStatus(status: unknown): 'running' | 'done' | 'error' {
   return status === 'error' ? status : 'done'
 }
 
+/** Tope defensivo de lienzos HTML persistidos por mensaje (ver appendMessage). */
+const MAX_HTML_CANVASES_PER_MESSAGE = 5
+
 export function useConversations() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -119,6 +122,12 @@ export function useConversations() {
         subagentSteps: t.subagentSteps,
         subagentText: t.subagentText,
       })),
+      // Lienzos HTML de show_html — el backend ya declara este campo en su
+      // MessageSchema (cerp-server DesktopConversation.ts, maxlength 262144 por
+      // html), así que sobrevive a un reload. Tope defensivo acá de todos modos:
+      // un turno con muchos lienzos infla el documento de Mongo sin aportar nada
+      // (el chat ya los mostró todos en vivo) — cortamos a los primeros 5.
+      htmlCanvases: message.htmlCanvases?.slice(0, MAX_HTML_CANVASES_PER_MESSAGE),
       timestamp: message.timestamp,
     }
 
@@ -171,6 +180,7 @@ export function useConversations() {
             })),
             subagentText: t.subagentText,
           })),
+          htmlCanvases: m.htmlCanvases,
           timestamp: m.timestamp,
         }))
       }
