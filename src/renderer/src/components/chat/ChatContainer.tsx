@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
+import { Mic, Square, Loader2, Paperclip } from 'lucide-react'
 import { useAgent, type ChatMessage } from '@/hooks/useAgent'
 import { sendPrompt as storeSendPrompt } from '@/stores/agentRuntimeStore'
 import { MessageBubble } from './MessageBubble'
 import { AskUserQuestion } from './AskUserQuestion'
 import { QuickActions } from './QuickActions'
+import { AttachmentCard } from './AttachmentCard'
+import { ModelSelector } from './ModelSelector'
 import { Button } from '@/components/ui/Button'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
@@ -11,6 +14,9 @@ import { useToast } from '@/hooks/useToast'
 import { usePlanMode } from '@/hooks/usePlanMode'
 import { useTurboMode } from '@/hooks/useTurboMode'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
+import { useDictation, type DictationError } from '@/hooks/useDictation'
+import { useAttachments, MAX_ATTACHMENTS, type AttachmentFile } from '@/hooks/useAttachments'
+import { useModelChoice } from '@/hooks/useModelChoice'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -45,9 +51,10 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { turboMode, toggleTurboMode } = useTurboMode()
+  const { modelChoice, setModelChoice } = useModelChoice()
+  const { attachments, addFiles, removeAttachment, clearAttachments } = useAttachments()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
-  const [attachedPdf, setAttachedPdf] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [showThoughts, setShowThoughts] = useState(true)
   const [appVersion, setAppVersion] = useState('...')
@@ -58,13 +65,17 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   const cwdRef = useRef<string | null>(cwd)
   useEffect(() => { cwdRef.current = cwd }, [cwd])
 
+  // modelChoice en un ref por el mismo motivo que cwd — doSend es un callback estable.
+  const modelChoiceRef = useRef(modelChoice)
+  useEffect(() => { modelChoiceRef.current = modelChoice }, [modelChoice])
+
   // Envío con "crear-antes-de-enviar": si no hay conversación activa, la creamos
   // para tener un id real (cada conversación necesita su propia sesión en el main).
   const doSend = useCallback(async (fullPrompt: string): Promise<void> => {
     let id = activeConversationId
     if (!id) id = await ensureConversation(fullPrompt.slice(0, 50) || 'Nueva conversacion')
     if (!id) return
-    storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined)
+    storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined, modelChoiceRef.current)
   }, [activeConversationId, ensureConversation, activeContextId])
 
   useEffect(() => {
@@ -143,22 +154,65 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     }
   }, [setCwdRef, setInputRef, adjustTextareaHeight])
 
-  const handleSelectPdf = async () => {
-    const path = await window.cerpAPI.selectPdf()
-    if (path) setAttachedPdf(path)
+  // --- Dictado por voz (Ola 1) ---
+  // El texto SIEMPRE se concatena al textarea existente — nunca se envía solo, el
+  // usuario tiene que poder revisarlo antes de mandar.
+  const handleDictationTranscript = useCallback((text: string) => {
+    setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+    // Defer so the textarea has the new value before we resize/focus it (mismo
+    // patrón que setInputRef más abajo).
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (el) {
+        adjustTextareaHeight(el)
+        el.focus()
+        el.setSelectionRange(el.value.length, el.value.length)
+      }
+    })
+  }, [adjustTextareaHeight])
+
+  const handleDictationError = useCallback((kind: DictationError) => {
+    const messages: Record<DictationError, string> = {
+      permission: 'No pudimos acceder al micrófono. Revisa los permisos de la aplicación en tu sistema.',
+      unsupported: 'Tu sistema no soporta grabación de audio.',
+      // El modal global de sesión expirada (Ola 0) ya se dispara solo — este toast es
+      // un refuerzo breve, no la única señal.
+      session: 'Tu sesión expiró. Inicia sesión de nuevo.',
+      failed: 'No se pudo transcribir el audio. Intenta de nuevo.',
+    }
+    addToast('error', messages[kind])
+  }, [addToast])
+
+  const dictation = useDictation({ onTranscript: handleDictationTranscript, onError: handleDictationError })
+
+  const handleMicClick = () => {
+    if (dictation.status === 'recording') {
+      dictation.stop()
+    } else if (dictation.status === 'idle') {
+      dictation.start()
+    }
+  }
+
+  // --- Adjuntos multi-archivo (Ola 1) ---
+  const handleSelectAttachments = async () => {
+    const files = await window.cerpAPI.selectAttachments()
+    if (files.length) addFiles(files)
   }
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
     const trimmed = input.trim()
-    if (!trimmed || isStreaming || pendingQuestions) return
+    if ((!trimmed && attachments.length === 0) || isStreaming || pendingQuestions) return
 
-    const fullPrompt = attachedPdf
-      ? `${trimmed}\n\n[Archivo PDF adjunto: ${attachedPdf}]`
-      : trimmed
+    // Bloque estable, una línea por archivo — el agente los lee del disco, igual que
+    // antes con el PDF único (mismo formato `[Archivo adjunto: ...]`).
+    const attachmentsBlock = attachments.length
+      ? '\n\n' + attachments.map((a) => `[Archivo adjunto: ${a.path}]`).join('\n')
+      : ''
+    const fullPrompt = `${trimmed}${attachmentsBlock}`.trim()
 
     setInput('')
-    setAttachedPdf(null)
+    clearAttachments()
     doSend(fullPrompt)
   }
 
@@ -230,19 +284,40 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     setIsDragOver(false)
   }
 
+  // Archivos soltados se convierten en tarjetas de adjunto — ya NO se pegan como
+  // texto de ruta en el textarea (Ola 1). webUtils.getPathForFile es el reemplazo
+  // oficial de File.path (removido en Electron 32+ por seguridad).
   const handleDrop = (e: DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
 
     const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) {
-      const paths = files.map((f) => (f as any).path || f.name)
-      const pathsText = paths.join('\n')
-      setInput((prev) => (prev ? `${prev}\n${pathsText}` : pathsText))
-      inputRef.current?.focus()
+    if (files.length === 0) return
+
+    const mapped: AttachmentFile[] = []
+    for (const file of files) {
+      try {
+        const path = window.cerpAPI.getPathForFile(file)
+        if (!path) continue
+        const ext = (file.name.split('.').pop() || '').toLowerCase()
+        mapped.push({ path, name: file.name, ext, sizeBytes: file.size })
+      } catch {
+        // Archivo sin path resoluble (p.ej. arrastrado desde otro origen no-FS) — se ignora.
+      }
     }
+    if (mapped.length) addFiles(mapped)
   }
+
+  // Regenerar (Ola 1) — reenvía el ÚLTIMO prompt del usuario por el flujo normal
+  // (doSend), en la MISMA conversación/sesión del SDK (no crea ni reinicia sesión).
+  const handleRegenerate = useCallback(() => {
+    if (isStreaming || isPending || pendingQuestions) return
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
+    if (!lastUserMessage) return
+    addToast('info', 'Reintentando…')
+    doSend(lastUserMessage.content)
+  }, [messages, isStreaming, isPending, pendingQuestions, doSend, addToast])
 
   const isEmpty = messages.length === 0
 
@@ -286,22 +361,12 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
-      {/* PDF adjunto badge */}
-      {attachedPdf && (
-        <div className="flex items-center gap-3 px-6 py-2 bg-orange-50 border-b border-orange-200 text-xs text-orange-700">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-brand-orange">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-          </svg>
-          <span className="font-medium truncate">{attachedPdf.split(/[\\/]/).pop()}</span>
-          <span className="text-orange-400 shrink-0">PDF adjunto — se enviará con tu mensaje</span>
-          <button
-            onClick={() => setAttachedPdf(null)}
-            className="ml-auto text-orange-400 hover:text-orange-600 shrink-0"
-            title="Quitar PDF adjunto"
-          >
-            &#x2715;
-          </button>
+      {/* Adjuntos (Ola 1) — tarjetas por archivo, arriba de la barra de input */}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-6 py-2 bg-orange-50/60 border-b border-orange-100">
+          {attachments.map((a) => (
+            <AttachmentCard key={a.path} attachment={a} onRemove={removeAttachment} />
+          ))}
         </div>
       )}
 
@@ -332,7 +397,11 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         ) : (
           <>
             {messages.map((msg, i) => {
-              const isLastAssistant = isStreaming && i === messages.length - 1 && msg.role === 'assistant'
+              const isLastMessage = i === messages.length - 1
+              const isLastAssistant = isStreaming && isLastMessage && msg.role === 'assistant'
+              // Regenerar solo tiene sentido sobre el último mensaje del asistente, y
+              // solo cuando su turno ya terminó (no mientras está streameando).
+              const canRegenerate = isLastMessage && msg.role === 'assistant' && !isLastAssistant
               return (
                 <MessageBubble
                   key={i}
@@ -341,6 +410,8 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
                   showThoughts={showThoughts}
                   onToggleThoughts={msg.role === 'assistant' && msg.tools?.length ? toggleShowThoughts : undefined}
                   onStop={isLastAssistant ? abort : undefined}
+                  onRegenerate={canRegenerate ? handleRegenerate : undefined}
+                  regenerateDisabled={isStreaming || isPending || !!pendingQuestions}
                 />
               )
             })}
@@ -454,13 +525,42 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
           <button
             type="button"
-            onClick={handleSelectPdf}
-            className={`h-11 w-11 inline-flex items-center justify-center rounded-lg border transition-colors ${attachedPdf ? 'border-brand-orange/30 bg-orange-50 text-brand-orange' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
-            title={attachedPdf ? `PDF adjunto: ${attachedPdf.split(/[\\/]/).pop()}` : 'Adjuntar PDF a la cotización'}
+            onClick={handleSelectAttachments}
+            disabled={attachments.length >= MAX_ATTACHMENTS}
+            className={`h-11 w-11 inline-flex items-center justify-center rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${attachments.length > 0 ? 'border-brand-orange/30 bg-orange-50 text-brand-orange' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}
+            title={attachments.length > 0 ? `${attachments.length} archivo${attachments.length > 1 ? 's' : ''} adjunto${attachments.length > 1 ? 's' : ''}` : 'Adjuntar archivos'}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
+            <Paperclip className="size-[18px]" strokeWidth={2} aria-hidden="true" />
+          </button>
+
+          {/* Dictado por voz (Ola 1) — recording: rojo pulsante (click = parar);
+              transcribiendo: spinner; idle: micrófono. El texto SIEMPRE se revisa
+              en el textarea antes de mandar, nunca se envía solo. */}
+          <button
+            type="button"
+            onClick={handleMicClick}
+            disabled={dictation.status === 'transcribing' || isStreaming || !!pendingQuestions}
+            aria-pressed={dictation.status === 'recording'}
+            className={`h-11 w-11 inline-flex items-center justify-center rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              dictation.status === 'recording'
+                ? 'border-red-500 bg-red-500 text-white animate-pulse hover:bg-red-600'
+                : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'
+            }`}
+            title={
+              dictation.status === 'recording'
+                ? 'Detener grabación'
+                : dictation.status === 'transcribing'
+                  ? 'Transcribiendo...'
+                  : 'Dictar por voz'
+            }
+          >
+            {dictation.status === 'transcribing' ? (
+              <Loader2 className="size-[18px] animate-spin" strokeWidth={2} aria-hidden="true" />
+            ) : dictation.status === 'recording' ? (
+              <Square className="size-3.5 fill-current" strokeWidth={0} aria-hidden="true" />
+            ) : (
+              <Mic className="size-[18px]" strokeWidth={2} aria-hidden="true" />
+            )}
           </button>
 
           <button
@@ -473,6 +573,9 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
           </button>
+
+          {/* Selector de modelo (Ola 1) — Turbo Mode tiene prioridad y lo deshabilita visualmente */}
+          <ModelSelector value={modelChoice} onChange={setModelChoice} disabled={turboMode} />
 
           {/* Plan Mode toggle — pill button con texto + icono, visible en ambos estados */}
           <button
@@ -531,7 +634,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
               </svg>
             </button>
           ) : (
-            <Button type="submit" disabled={!input.trim()} className="h-11">
+            <Button type="submit" disabled={!input.trim() && attachments.length === 0} className="h-11">
               Enviar
             </Button>
           )}

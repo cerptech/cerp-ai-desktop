@@ -73,6 +73,11 @@ interface AgentSession {
   messageQueue: MessageQueue
   cwd: string
   contextId: string | null
+  // Modelo con el que arrancó esta sesión (Ola 1 — selector de modelo). Igual que
+  // cwd/contextId: si el usuario cambia de modelo mientras la conversación sigue
+  // abierta, reiniciamos SOLO esa sesión para que el próximo mensaje use el modelo
+  // nuevo (sendFollowUp no puede cambiarlo — el SDK fija el modelo al crear la query).
+  model: string
   processingTurn: boolean
   // Registro de delegaciones activas: Agent/Task tool_use_id → agentName. Por-sesión
   // para que los eventos internos de subagentes resuelvan el nombre correcto.
@@ -223,9 +228,9 @@ export async function runAgent(
 
   let session = sessions.get(conversationId)
 
-  // If THIS conversation's session exists but cwd/context changed, restart only it.
-  // Other conversations' sessions are untouched — that's the point of concurrency.
-  if (session && (cwd !== session.cwd || contextId !== session.contextId)) {
+  // If THIS conversation's session exists but cwd/context/model changed, restart only
+  // it. Other conversations' sessions are untouched — that's the point of concurrency.
+  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
     closeSession(conversationId)
     session = undefined
@@ -446,6 +451,7 @@ async function startSession(
     messageQueue,
     cwd,
     contextId,
+    model,
     processingTurn: false,
     activeDelegations: new Map(),
     heartbeat: null,

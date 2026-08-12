@@ -1,4 +1,4 @@
-import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload } from '../../../preload/index'
+import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload, ModelChoice } from '../../../preload/index'
 import type { ChatMessage, ToolExecution, SubagentStep, AgentDelegation } from '../hooks/useAgent'
 
 /**
@@ -408,6 +408,7 @@ export async function sendPrompt(
   prompt: string,
   cwd?: string,
   activeContextId?: string,
+  modelChoice?: ModelChoice,
 ): Promise<void> {
   ensureIpcWired()
   // Snapshot del historial ANTES de agregar el mensaje del usuario (igual que useAgent).
@@ -432,7 +433,7 @@ export async function sendPrompt(
   // Persistir el mensaje del usuario inmediatamente.
   persistNewMessages(conversationId, getRuntime(conversationId))
 
-  const result = await window.cerpAPI.sendPrompt({ prompt, conversationId, cwd, activeContextId, conversationHistory: history })
+  const result = await window.cerpAPI.sendPrompt({ prompt, conversationId, cwd, activeContextId, conversationHistory: history, modelChoice })
   if (!result.started) {
     update(conversationId, (rt) => ({
       ...rt,

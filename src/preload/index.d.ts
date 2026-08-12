@@ -1,3 +1,21 @@
+/** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
+export type ModelChoice = 'auto' | 'fast' | 'powerful'
+
+/** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
+export interface AttachmentFile {
+  path: string
+  name: string
+  ext: string
+  sizeBytes: number
+}
+
+/** Resultado de `dictation:transcribe`. */
+export interface DictationTranscribeResult {
+  text?: string
+  language?: string
+  error?: 'auth' | 'network' | 'validation'
+}
+
 export interface AskUserQuestionOption {
   label: string
   description: string
@@ -179,7 +197,7 @@ interface CerpAPI {
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
   onSessionExpired(callback: () => void): () => void
-  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }>
+  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>; modelChoice?: ModelChoice }): Promise<{ started: boolean; error?: string; code?: string }>
   abortAgent(conversationId?: string): Promise<void>
   resetSession(conversationId?: string): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>
@@ -187,7 +205,9 @@ interface CerpAPI {
   setTurboMode(enabled: boolean): Promise<void>
   getTurboMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
-  selectPdf(): Promise<string | null>
+  selectAttachments(): Promise<AttachmentFile[]>
+  getPathForFile(file: File): string
+  transcribeDictation(buffer: ArrayBuffer, mimeType: string): Promise<DictationTranscribeResult>
   onAskUserQuestion(callback: (questions: AskUserQuestionItem[], conversationId: string) => void): () => void
   submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
   onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void

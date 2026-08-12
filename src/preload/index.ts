@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const IPC = {
   AUTH_LOGIN: 'auth:login',
@@ -19,7 +19,8 @@ const IPC = {
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
   SELECT_FOLDER: 'dialog:select-folder',
-  SELECT_PDF: 'dialog:select-pdf',
+  SELECT_ATTACHMENTS: 'dialog:select-attachments',
+  DICTATION_TRANSCRIBE: 'dictation:transcribe',
   CUSTOM_CONTEXTS_LIST: 'custom:contexts:list',
   CUSTOM_CONTEXT_CREATE: 'custom:context:create',
   CUSTOM_CONTEXT_UPDATE: 'custom:context:update',
@@ -76,6 +77,26 @@ export interface OnboardingProgressUpdate {
   skipped?: boolean
   completed?: boolean
   relaunch?: boolean
+}
+
+/** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
+export type ModelChoice = 'auto' | 'fast' | 'powerful'
+
+/** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
+export interface AttachmentFile {
+  path: string
+  name: string
+  ext: string
+  sizeBytes: number
+}
+
+/** Resultado de `dictation:transcribe`. 'auth' ya disparó AUTH_SESSION_EXPIRED (el modal
+ *  global de sesión expirada ya se está mostrando); 'network' es cualquier otra falla;
+ *  'validation' es un problema con el audio en sí (vacío o > 25 MB). */
+export interface DictationTranscribeResult {
+  text?: string
+  language?: string
+  error?: 'auth' | 'network' | 'validation'
 }
 
 export interface AskUserQuestionOption {
@@ -258,7 +279,7 @@ const api = {
   },
 
   // Agent
-  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }> =>
+  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>; modelChoice?: ModelChoice }): Promise<{ started: boolean; error?: string; code?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
   abortAgent: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT, conversationId),
   resetSession: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION, conversationId),
@@ -269,7 +290,15 @@ const api = {
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
-  selectPdf: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_PDF),
+  selectAttachments: (): Promise<AttachmentFile[]> => ipcRenderer.invoke(IPC.SELECT_ATTACHMENTS),
+  // Ruta real en disco de un File del navegador (drag&drop) — Electron 32+ ya no expone
+  // File.path directamente por seguridad; este es el reemplazo oficial documentado para
+  // usar vía contextBridge.
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  // Dictado por voz (Ola 1) — el renderer manda los bytes crudos (no tiene el Bearer).
+  transcribeDictation: (buffer: ArrayBuffer, mimeType: string): Promise<DictationTranscribeResult> =>
+    ipcRenderer.invoke(IPC.DICTATION_TRANSCRIBE, { buffer, mimeType }),
 
   // ask_user_question: listener for incoming questions + sender for user answers.
   // Both carry conversationId so each conversation routes to its own widget.

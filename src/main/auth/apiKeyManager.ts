@@ -84,6 +84,15 @@ export function getUserId(): string | null {
   return cachedConfig?.userId ?? tokenStore.getUserId()
 }
 
+/**
+ * Modelo por defecto que devuelve el backend en /desktop/api-key (config por plan/empresa).
+ * Usado por el selector de modelo cuando el usuario elige "Auto" (Ola 1). Puede faltar si
+ * todavía no se cacheó la config — el caller debe tener un fallback hardcodeado.
+ */
+export function getConfiguredModel(): string | undefined {
+  return cachedConfig?.model
+}
+
 /** Techo de coste por sesión (modo normal) informado por el backend, si ya se cacheó. */
 export function getMaxBudgetUsd(): number | undefined {
   return cachedConfig?.maxBudgetUsd

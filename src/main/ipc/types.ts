@@ -3,6 +3,9 @@ export interface ConversationHistoryEntry {
   content: string
 }
 
+/** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
+export type ModelChoice = 'auto' | 'fast' | 'powerful'
+
 export interface SendPromptPayload {
   prompt: string
   sessionId?: string
@@ -23,6 +26,28 @@ export interface SendPromptPayload {
    * cwd or context change). Ignored when the session is already open.
    */
   conversationHistory?: ConversationHistoryEntry[]
+  /**
+   * Selector de modelo (Ola 1). Turbo Mode tiene prioridad sobre esto — agentManager
+   * ignora `model` cuando turboModeEnabled está activo (fija Opus xhigh).
+   */
+  modelChoice?: ModelChoice
+}
+
+/** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
+export interface AttachmentFile {
+  path: string
+  name: string
+  ext: string
+  sizeBytes: number
+}
+
+/** Resultado de `dictation:transcribe`. `error` sigue la misma convención que el resto
+ *  de las llamadas HTTP del main: 'auth' ya disparó AUTH_SESSION_EXPIRED, 'network' es
+ *  cualquier otra falla, 'validation' es un problema con el audio en sí (vacío/grande). */
+export interface DictationTranscribeResult {
+  text?: string
+  language?: string
+  error?: 'auth' | 'network' | 'validation'
 }
 
 // IMPORTANT — tool lifecycle is keyed by `toolUseId`, NEVER by tool name.

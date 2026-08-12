@@ -1,20 +1,54 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { statSync } from 'fs'
+import { basename, extname } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken, handleCallback } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, NoCreditsError } from '../auth/apiKeyManager'
+import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, NoCreditsError } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
-import type { SendPromptPayload, AuthState, UserAnswerPayload } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 /** true si el error vino de una respuesta 401 — refresh ya se intentó y falló (ver onTokenExpired abajo). */
 function isAuthError(err: unknown): boolean {
-  return err instanceof HttpError && err.status === 401
+  return (err instanceof HttpError && err.status === 401) || (err instanceof Error && /\b401\b/.test(err.message))
+}
+
+// Ola 1 — selector de modelo. "Auto" usa el que informa /desktop/api-key (config por
+// plan/empresa); si todavía no se cacheó, cae en el hardcode legacy que ya usaba runAgent.
+const DEFAULT_MODEL = 'claude-sonnet-4-6'
+const FAST_MODEL = 'claude-haiku-4-5-20251001'
+const POWERFUL_MODEL = 'claude-opus-4-8'
+
+function resolveModel(choice?: ModelChoice): string {
+  if (choice === 'fast') return FAST_MODEL
+  if (choice === 'powerful') return POWERFUL_MODEL
+  return getConfiguredModel() || DEFAULT_MODEL
+}
+
+// Ola 1 — adjuntos: mismos tipos que puede leer el agente localmente del disco (no hay
+// subida a ningún lado, solo se referencia el path en el prompt).
+const ALLOWED_ATTACHMENT_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'xlsx', 'xls', 'csv', 'docx', 'txt', 'dwg']
+
+function statAttachment(filePath: string): AttachmentFile | null {
+  try {
+    const stats = statSync(filePath)
+    if (!stats.isFile()) return null
+    return {
+      path: filePath,
+      name: basename(filePath),
+      ext: extname(filePath).replace(/^\./, '').toLowerCase(),
+      sizeBytes: stats.size,
+    }
+  } catch (err) {
+    logger.warn(`Could not stat attachment file "${filePath}": ${err}`)
+    return null
+  }
 }
 
 export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): void {
@@ -125,7 +159,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         }
       }
 
-      runAgent(payload, apiKey, 'claude-sonnet-4-6', httpClient, mainWindow).catch((err) => {
+      const resolvedModel = resolveModel(payload.modelChoice)
+      runAgent(payload, apiKey, resolvedModel, httpClient, mainWindow).catch((err) => {
         logger.error('Agent run error:', err)
       })
 
@@ -163,20 +198,59 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     return getTurboMode()
   })
 
-  // Dialog: Select PDF file
-  ipcMain.handle(IPC_CHANNELS.SELECT_PDF, async (): Promise<string | null> => {
+  // Dialog: Select attachments (Ola 1) — multiselección, varios tipos de documento.
+  // El agente los lee directo del disco (no hay subida); acá solo resolvemos path +
+  // metadata (nombre/extensión/tamaño) para que el renderer arme las tarjetas y valide.
+  ipcMain.handle(IPC_CHANNELS.SELECT_ATTACHMENTS, async (): Promise<AttachmentFile[]> => {
     const mainWindow = getMainWindow()
-    if (!mainWindow) return null
+    if (!mainWindow) return []
 
     const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openFile'],
-      title: 'Seleccionar PDF para adjuntar',
-      filters: [{ name: 'Documentos PDF', extensions: ['pdf'] }],
+      properties: ['openFile', 'multiSelections'],
+      title: 'Seleccionar archivos para adjuntar',
+      filters: [
+        { name: 'Documentos soportados', extensions: ALLOWED_ATTACHMENT_EXTENSIONS },
+        { name: 'Todos los archivos', extensions: ['*'] },
+      ],
     })
 
-    if (result.canceled || !result.filePaths.length) return null
-    return result.filePaths[0]
+    if (result.canceled || !result.filePaths.length) return []
+    return result.filePaths
+      .map(statAttachment)
+      .filter((a): a is AttachmentFile => a !== null)
   })
+
+  // Dictation: transcribe audio (Ola 1) — el renderer manda los bytes crudos porque no
+  // tiene el Bearer; acá armamos el multipart y usamos el mismo httpClient (con refresh
+  // automático de token) que el resto de las llamadas al backend.
+  ipcMain.handle(
+    IPC_CHANNELS.DICTATION_TRANSCRIBE,
+    async (_event, payload: { buffer: ArrayBuffer; mimeType: string }): Promise<DictationTranscribeResult> => {
+      try {
+        const nodeBuffer = Buffer.from(payload.buffer)
+        if (nodeBuffer.length === 0) {
+          return { error: 'validation' }
+        }
+        const MAX_AUDIO_BYTES = 25 * 1024 * 1024
+        if (nodeBuffer.length > MAX_AUDIO_BYTES) {
+          return { error: 'validation' }
+        }
+
+        const mimeType = payload.mimeType || 'audio/webm'
+        const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : 'webm'
+        const formData = new FormData()
+        const blob = new Blob([nodeBuffer], { type: mimeType })
+        formData.append('audio', blob, `dictation.${ext}`)
+
+        const result = await httpClient.uploadFile<{ text: string; language?: string }>('/desktop/transcribe', formData)
+        return { text: result.text, language: result.language }
+      } catch (err) {
+        logger.error('Dictation transcribe failed:', err)
+        if (isAuthError(err)) return { error: 'auth' }
+        return { error: 'network' }
+      }
+    },
+  )
 
   // Dialog: Select folder
   ipcMain.handle(IPC_CHANNELS.SELECT_FOLDER, async (): Promise<string | null> => {
