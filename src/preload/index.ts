@@ -10,8 +10,6 @@ const IPC = {
   AGENT_RESET_SESSION: 'agent:reset-session',
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
   AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
-  AGENT_SET_TURBO_MODE: 'agent:set-turbo-mode',
-  AGENT_GET_TURBO_MODE: 'agent:get-turbo-mode',
   AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
   AGENT_USER_ANSWER: 'agent:user_answer',
   QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
@@ -301,8 +299,6 @@ const api = {
   resetSession: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION, conversationId),
   setPlanMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_PLAN_MODE, enabled),
   getPlanMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_PLAN_MODE),
-  setTurboMode: (enabled: boolean): Promise<void> => ipcRenderer.invoke(IPC.AGENT_SET_TURBO_MODE, enabled),
-  getTurboMode: (): Promise<boolean> => ipcRenderer.invoke(IPC.AGENT_GET_TURBO_MODE),
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),

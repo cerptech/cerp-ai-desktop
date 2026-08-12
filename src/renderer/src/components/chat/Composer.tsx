@@ -13,7 +13,6 @@ import {
   Square,
   Upload,
   X,
-  Zap,
   ClipboardCheck,
 } from 'lucide-react'
 import type { ModelChoice } from '@/hooks/useModelChoice'
@@ -44,11 +43,8 @@ interface ComposerProps {
   dictationSilence: boolean
   modelChoice: ModelChoice
   onModelChange: (choice: ModelChoice) => void
-  modelSelectorDisabled?: boolean
   planMode: boolean
   onTogglePlanMode: () => void
-  turboMode: boolean
-  onToggleTurboMode: () => void
   cwd: string | null
   onSelectFolder: () => void
   onClearFolder: () => void
@@ -65,9 +61,11 @@ const MODEL_OPTIONS: Array<{ value: ModelChoice; label: string; hint: string; ic
  * Composer — converge con el patrón de ai.cerp.es (Composer.tsx): contenedor
  * blanco rounded-3xl, fila inferior de controles agrupada. Reemplaza a los 5+
  * controles sueltos que tenía ChatContainer (adjuntar, dictado, carpeta,
- * selector de modelo, Modo plan, Turbo, enviar/detener): ahora "+" agrupa
- * adjuntar/carpeta, Modo plan y Turbo son pills, y a la derecha quedan
- * modelo + micrófono + enviar/detener.
+ * selector de modelo, Modo plan, enviar/detener): ahora "+" agrupa
+ * adjuntar/carpeta, Modo plan es una pill, y a la derecha quedan modelo +
+ * micrófono + enviar/detener. El selector de modelo (Auto/Rápido/Potente) es
+ * el único control de modo de ejecución — el antiguo Modo Turbo (pill aparte)
+ * se eliminó y su comportamiento quedó absorbido por "Potente".
  */
 export function Composer({
   value,
@@ -88,11 +86,8 @@ export function Composer({
   dictationSilence,
   modelChoice,
   onModelChange,
-  modelSelectorDisabled,
   planMode,
   onTogglePlanMode,
-  turboMode,
-  onToggleTurboMode,
   cwd,
   onSelectFolder,
   onClearFolder,
@@ -198,7 +193,7 @@ export function Composer({
       )}
 
       {/* Fila de controles inferior — oculta durante la grabación: DictationRecordingBar
-          ya trae su propio botón de parar, y Modo plan/Turbo/adjuntar no aplican mientras
+          ya trae su propio botón de parar, y Modo plan/adjuntar no aplican mientras
           se dicta. */}
       {dictationStatus !== 'recording' && (
       <div className="mt-3.5 flex items-center justify-between gap-2">
@@ -265,41 +260,22 @@ export function Composer({
             <ClipboardCheck className="size-4" strokeWidth={2} aria-hidden="true" />
             Modo plan
           </button>
-
-          {/* Turbo — pill toggle */}
-          <button
-            type="button"
-            onClick={onToggleTurboMode}
-            aria-pressed={turboMode}
-            title={turboMode ? 'Modo Turbo activo — máxima precisión, usa más recursos' : 'Activar Modo Turbo'}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-[13px] py-[7px] text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
-              turboMode
-                ? 'border-violet-300 bg-violet-100 text-violet-800'
-                : 'border-composer-border bg-white text-[#3f434a] hover:bg-black/5 hover:text-brand-black'
-            }`}
-          >
-            <Zap className="size-4" strokeWidth={2} aria-hidden="true" />
-            Turbo
-          </button>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Selector de modelo */}
+          {/* Selector de modelo — único control de modo de ejecución (Auto/Rápido/Potente) */}
           <div ref={modelMenuRef} className="relative">
             <button
               type="button"
-              onClick={() => !modelSelectorDisabled && setOpenMenu(openMenu === 'model' ? null : 'model')}
-              disabled={modelSelectorDisabled}
-              title={modelSelectorDisabled ? 'Modo Turbo activo — fija el modelo automáticamente' : `Modelo: ${currentModel.label}`}
-              className={`inline-flex items-center gap-1.5 rounded-full py-1.5 pl-[7px] pr-[9px] text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
-                modelSelectorDisabled ? 'text-slate-300 cursor-not-allowed' : 'text-[#3f434a] hover:bg-black/5 hover:text-brand-black'
-              }`}
+              onClick={() => setOpenMenu(openMenu === 'model' ? null : 'model')}
+              title={`Modelo: ${currentModel.label}`}
+              className="inline-flex items-center gap-1.5 rounded-full py-1.5 pl-[7px] pr-[9px] text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 text-[#3f434a] hover:bg-black/5 hover:text-brand-black"
             >
               <CurrentModelIcon className="size-4 text-brand-orange" strokeWidth={2} aria-hidden="true" />
               {currentModel.label}
               <ChevronDown className={`size-3.5 text-[#9aa1ad] transition-transform ${openMenu === 'model' ? 'rotate-180' : ''}`} strokeWidth={2} aria-hidden="true" />
             </button>
-            {openMenu === 'model' && !modelSelectorDisabled && (
+            {openMenu === 'model' && (
               <div className="absolute bottom-full right-0 mb-2 w-64 rounded-xl border border-composer-border bg-white shadow-lg py-1.5 z-20">
                 {MODEL_OPTIONS.map((option) => {
                   const Icon = option.icon

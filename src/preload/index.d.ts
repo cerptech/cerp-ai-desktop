@@ -215,8 +215,6 @@ interface CerpAPI {
   resetSession(conversationId?: string): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>
   getPlanMode(): Promise<boolean>
-  setTurboMode(enabled: boolean): Promise<void>
-  getTurboMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
   selectAttachments(): Promise<AttachmentFile[]>
   getPathForFile(file: File): string

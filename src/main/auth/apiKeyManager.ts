@@ -98,7 +98,11 @@ export function getMaxBudgetUsd(): number | undefined {
   return cachedConfig?.maxBudgetUsd
 }
 
-/** Techo de coste por sesión en Turbo Mode informado por el backend, si ya se cacheó. */
+/**
+ * Techo de coste por sesión cuando el modo elegido es "Potente" (Opus + xhigh),
+ * informado por el backend, si ya se cacheó. El nombre del campo (`maxBudgetUsdTurbo`)
+ * se heredó del antiguo Modo Turbo — el contrato con el backend no cambió.
+ */
 export function getMaxBudgetUsdTurbo(): number | undefined {
   return cachedConfig?.maxBudgetUsdTurbo
 }

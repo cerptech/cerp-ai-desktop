@@ -5,7 +5,7 @@ import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, NoCreditsError } from '../auth/apiKeyManager'
-import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
+import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
@@ -31,6 +31,9 @@ function isAuthError(err: unknown): boolean {
 
 // Ola 1 — selector de modelo. "Auto" usa el que informa /desktop/api-key (config por
 // plan/empresa); si todavía no se cacheó, cae en el hardcode legacy que ya usaba runAgent.
+// "Potente" absorbió el antiguo Modo Turbo (pill separada, eliminada): además de fijar
+// este modelo, agentManager le aplica effort 'xhigh', habilita la tool Workflow y sube
+// el techo de presupuesto — ver `payload.modelChoice === 'powerful'` en agentManager.ts.
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const FAST_MODEL = 'claude-haiku-4-5-20251001'
 const POWERFUL_MODEL = 'claude-opus-4-8'
@@ -196,16 +199,6 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Agent: Get plan mode (so the renderer can hydrate on startup)
   ipcMain.handle(IPC_CHANNELS.AGENT_GET_PLAN_MODE, async (): Promise<boolean> => {
     return getPlanMode()
-  })
-
-  // Agent: Set turbo mode (Idea 3 — cotización exhaustiva)
-  ipcMain.handle(IPC_CHANNELS.AGENT_SET_TURBO_MODE, async (_event, enabled: boolean): Promise<void> => {
-    setTurboMode(enabled)
-  })
-
-  // Agent: Get turbo mode (hydrate the toggle on startup)
-  ipcMain.handle(IPC_CHANNELS.AGENT_GET_TURBO_MODE, async (): Promise<boolean> => {
-    return getTurboMode()
   })
 
   // Dialog: Select attachments (Ola 1) — multiselección, varios tipos de documento.

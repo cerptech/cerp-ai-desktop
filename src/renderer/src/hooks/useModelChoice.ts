@@ -14,8 +14,9 @@ function isModelChoice(value: string | null): value is ModelChoice {
  *
  * 'auto' usa el modelo que informa el backend en /desktop/api-key (config por plan
  * de la empresa, resuelto en el main — ver `resolveModel` en handlers.ts). 'fast' y
- * 'powerful' fuerzan Haiku/Opus respectivamente. Turbo Mode tiene prioridad sobre
- * esta elección (agentManager ignora `model` cuando Turbo está activo).
+ * 'powerful' fuerzan Haiku/Opus respectivamente. 'powerful' ("Potente") absorbe lo
+ * que antes era el Modo Turbo (pill separada, eliminada): además de Opus, agentManager
+ * le aplica effort 'xhigh', habilita la tool Workflow y sube el techo de presupuesto.
  *
  * Se persiste en localStorage por usuario (email) — no hay un solo perfil de SO por
  * instalación garantizado, así que sin el email todos los usuarios de una misma
