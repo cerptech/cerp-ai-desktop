@@ -371,10 +371,27 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       return { ...r, tools, messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })) }
     }
     case 'html_canvas': {
-      // Lienzo HTML de la tool show_html — se acumula en el mensaje del asistente en
-      // curso, igual que tool_start (sin manejo especial de needsNewAssistant: ningún
-      // otro evento no-texto lo hace tampoco, ver tool_start arriba).
+      // Lienzo HTML de la tool show_html. Igual que text/text_delta: si
+      // needsNewAssistant está prendido (turno nuevo tras un ask_user_question
+      // respondido), el lienzo tiene que abrir una burbuja assistant NUEVA — si no,
+      // updateLastAssistant lo engancharía a la burbuja de ANTES de la pregunta
+      // (la última con role:'assistant' en el array), que es del turno anterior.
       const canvas = { toolUseId: event.toolUseId, title: event.title, html: event.html }
+      if (r.needsNewAssistant) {
+        return {
+          ...r,
+          needsNewAssistant: false,
+          tools: [],
+          messages: [...r.messages, {
+            role: 'assistant',
+            content: '',
+            timestamp: now,
+            tools: [],
+            htmlCanvases: [canvas],
+            agentContext: r.currentDelegation || undefined,
+          }],
+        }
+      }
       return {
         ...r,
         messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({

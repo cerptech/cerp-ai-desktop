@@ -5,7 +5,7 @@ import { createCerpMcpServer } from './mcpServer'
 import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
 import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
-import { setHtmlCanvasWindow } from './htmlCanvasBridge'
+import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
 import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
@@ -197,6 +197,7 @@ export function closeAllSessions(): void {
   cachedContextPrompt = null
   setAskUserWindow(null)
   setHtmlCanvasWindow(null)
+  clearCanvases()
   logger.info('All sessions closed')
 }
 

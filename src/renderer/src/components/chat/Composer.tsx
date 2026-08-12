@@ -104,6 +104,19 @@ export function Composer({
 
   const canSend = Boolean(value.trim()) || attachments.length > 0
 
+  // Al terminar de dictar (recording/transcribing → idle), el textarea que
+  // reemplazó DictationRecordingBar nunca tenía foco — el usuario tenía que
+  // clickearlo a mano para seguir escribiendo o mandar con Enter. Devuelve el
+  // foco automáticamente en cuanto vuelve a estar disponible.
+  const prevDictationStatusRef = useRef(dictationStatus)
+  useEffect(() => {
+    const prev = prevDictationStatusRef.current
+    prevDictationStatusRef.current = dictationStatus
+    if (prev !== 'idle' && dictationStatus === 'idle') {
+      textareaRef.current?.focus()
+    }
+  }, [dictationStatus, textareaRef])
+
   useEffect(() => {
     if (!openMenu) return
     const handleClickOutside = (e: MouseEvent): void => {

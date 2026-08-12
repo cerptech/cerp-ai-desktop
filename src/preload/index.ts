@@ -15,6 +15,7 @@ const IPC = {
   AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',
   AGENT_USER_ANSWER: 'agent:user_answer',
   QUOTE_FIREWALL_EVENT: 'quote:firewall:event',
+  CANVAS_REGISTER: 'canvas:register',
   AGENT_STREAM_MESSAGE: 'agent:stream:message',
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
@@ -331,6 +332,11 @@ const api = {
     ipcRenderer.on(IPC.QUOTE_FIREWALL_EVENT, handler)
     return () => ipcRenderer.removeListener(IPC.QUOTE_FIREWALL_EVENT, handler)
   },
+
+  // Lienzo HTML del agente — registra el HTML en el Map del proceso main y
+  // devuelve el id que sirve `cerp-canvas://<id>` (ver canvasProtocol.ts en
+  // main). null si el HTML viene vacío o supera el tope de registro.
+  registerCanvasHtml: (html: string): Promise<string | null> => ipcRenderer.invoke(IPC.CANVAS_REGISTER, html),
 
   // Stream listeners — every event is tagged with the conversationId it belongs to.
   onAgentMessage: (callback: (event: AgentStreamEvent, conversationId: string) => void): (() => void) => {

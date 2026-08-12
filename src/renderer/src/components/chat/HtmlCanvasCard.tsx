@@ -8,131 +8,103 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
  *
  * Todo lo demás del contrato son datos y la UI decide cómo se ven. Acá el
  * marcado lo escribe un modelo, así que renderizarlo es ejecutar código que no
- * controlamos en el equipo del usuario. Portado 1:1 del modelo de seguridad
- * del canal web (cerp-ai-frontend/src/components/chat/parts/HtmlCanvasCard.tsx)
- * — tres cosas lo hacen aceptable, y ninguna es opcional:
+ * controlamos en el equipo del usuario. Arrancó portado 1:1 del canal web
+ * (cerp-ai-frontend/src/components/chat/parts/HtmlCanvasCard.tsx), que usa
+ * `<iframe srcDoc>` con la CSP en un `<meta>` tag — pero **eso no sirve acá**:
+ * verificado en runtime que un documento `srcDoc` navega como `about:srcdoc`,
+ * y el spec de CSP lo trata como parte del MISMO documento que lo embebe. La
+ * política efectiva es la INTERSECCIÓN entre la del renderer
+ * (`src/renderer/index.html`, `script-src 'self'` sin `unsafe-inline`, porque
+ * protege todo lo demás de la app) y la del meta tag del lienzo — esa
+ * intersección mata `script-src 'unsafe-inline'` y NINGÚN script inline corre:
+ * ni las gráficas del agente ni el reportero de altura, y el iframe queda
+ * clavado en 240px.
+ *
+ * Por eso el iframe de acá NO usa `srcDoc`: apunta a `cerp-canvas://<id>`, un
+ * scheme propio que sirve el proceso main (`canvasProtocol.ts`) con la CSP
+ * puesta como HEADER real de la respuesta — eso ya no se intersecta con nada,
+ * es una navegación a otro origen. El HTML se registra vía IPC
+ * (`registerCanvasHtml`) al montar el componente: el Map que lo guarda vive
+ * solo en memoria del proceso main (se reinicia con la app), así que un id de
+ * una sesión anterior nunca es válido y siempre se re-registra, tanto para un
+ * lienzo recién emitido como para uno de una conversación restaurada de la DB.
+ *
+ * El resto del modelo de seguridad es el mismo que el web, y sigue siendo
+ * igual de necesario:
  *
  * 1. **`sandbox="allow-scripts"` SIN `allow-same-origin`.** El documento queda
- *    en un origen opaco: no puede leer cookies, `localStorage`, el token de
- *    sesión (que en Electron vive en el proceso main, ni siquiera en el
- *    renderer) ni el DOM del padre. Poner las dos flags juntas anula el
- *    sandbox entero — con ambas, el documento puede reescribir su propio
- *    atributo `sandbox` y escapar. Nunca las dos.
+ *    en un origen opaco: no puede leer cookies, `localStorage` ni el DOM del
+ *    padre. Poner las dos flags juntas anula el sandbox entero. Nunca las dos.
  *
  *    Nota Electron: `webPreferences.sandbox: false` del BrowserWindow (ver
- *    `src/main/index.ts`) es el sandbox de PROCESO de Electron (aislar el
- *    renderer de Node — está en false porque el Agent SDK necesita spawnear
- *    procesos hijos). Es un mecanismo completamente distinto del atributo
- *    `sandbox` de un `<iframe>` del DOM, que sigue siendo el de Chromium y
- *    no lo afecta: un iframe sandboxeado adentro de un BrowserWindow con
- *    `sandbox: false` sigue aislado igual.
+ *    `src/main/index.ts`) es el sandbox de PROCESO de Electron (el Agent SDK
+ *    necesita spawnear procesos hijos) — mecanismo distinto del atributo
+ *    `sandbox` del `<iframe>`, que sigue siendo el de Chromium y no lo afecta.
  *
- * 2. **CSP propia dentro del documento, sin red.** `default-src 'none'` corta
- *    `fetch`, `XHR`, WebSocket, imágenes remotas, fuentes y scripts externos.
- *    Aunque el modelo escribiera código para mandar datos de la conversación
- *    afuera, no tiene por dónde — ni siquiera puede llegar al backend de CERP.
- *    Se permiten `data:` para imágenes y estilos/scripts inline, que es lo que
- *    el lienzo necesita.
+ * 2. **CSP sin red** (ahora por header, ver arriba): `default-src 'none'`
+ *    corta `fetch`, `XHR`, WebSocket, imágenes remotas, fuentes y scripts
+ *    externos. Se permiten `data:` para imágenes y estilos/scripts inline.
  *
- * 3. **Ni formularios, ni navegación, ni popups.** No están en el `sandbox`,
- *    así que un `<a target="_top">` o un `<form>` no llevan al usuario a
- *    ninguna parte.
+ * 3. **Ni formularios, ni navegación, ni popups.** No están en el `sandbox`.
  *
- * Lo que el documento SÍ puede hacer es `postMessage` al padre — es la única
- * vía que le queda hacia afuera. Por eso el listener de abajo verifica
- * `event.source` contra el `contentWindow` de ESTE iframe y valida la forma
- * del mensaje antes de creerle nada.
+ * Lo que el documento SÍ puede hacer es `postMessage` al padre — la única vía
+ * que le queda hacia afuera. El listener de abajo verifica `event.source`
+ * contra el `contentWindow` de ESTE iframe y valida la forma del mensaje.
  *
  * # Altura
  *
- * Con origen opaco el padre no puede medir el contenido (leer el documento del
- * iframe es justo lo que el aislamiento impide). Así que el lienzo la reporta
- * él mismo con un `ResizeObserver` y el padre la acota. Si el mensaje nunca
- * llega, queda la altura por defecto y el contenido hace scroll dentro del
- * marco en vez de cortarse.
+ * Con origen opaco el padre no puede medir el contenido. El lienzo la reporta
+ * él mismo con un `ResizeObserver` (dentro del documento que sirve
+ * `canvasProtocol.ts`) y el padre la acota acá. Si el mensaje nunca llega,
+ * queda la altura por defecto y el contenido hace scroll dentro del marco.
  */
 
 const MIN_HEIGHT = 80
 const MAX_HEIGHT = 1200
 const DEFAULT_HEIGHT = 240
 
-/**
- * Sufijo del documento: mide y reporta su alto. Corre DENTRO del sandbox — es
- * el único canal de salida que tiene el lienzo (postMessage, validado del
- * lado del padre en el useEffect de abajo).
- *
- * Mide el BODY y nunca `documentElement.scrollHeight`: ese último devuelve el
- * máximo entre el contenido y el viewport del iframe, así que con contenido
- * corto informaría el alto que ya tiene el marco y el lienzo jamás encogería.
- */
-const HEIGHT_REPORTER = `<script>
-(function () {
-  var last = 0;
-  function report() {
-    var body = document.body;
-    if (!body) return;
-    var h = Math.ceil(Math.max(body.getBoundingClientRect().height, body.scrollHeight));
-    // 0 = todavía sin layout (script inline, pestaña en segundo plano). Un 0
-    // reportado encogería el lienzo al mínimo: mejor callarse y esperar.
-    if (h <= 0 || h === last) return;
-    last = h;
-    parent.postMessage({ __cerpCanvas: 'height', value: h }, '*');
-  }
-  if (typeof ResizeObserver === 'function') {
-    new ResizeObserver(report).observe(document.body);
-  }
-  window.addEventListener('load', report);
-  report();
-})();
-</script>`
-
-/**
- * Envuelve el HTML del agente en un documento con su CSP y una base tipográfica
- * sobria. El agente escribe el contenido; el encierro lo ponemos nosotros.
- */
-function buildSrcDoc(html: string): string {
-  return `<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'">
-<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: 14px;
-    line-height: 1.5;
-    color: #1e1e1e;
-    background: transparent;
-    padding: 14px;
-    overflow-x: auto;
-  }
-  table { border-collapse: collapse; width: 100%; }
-  img, svg { max-width: 100%; }
-</style>
-</head>
-<body>
-${html}
-${HEIGHT_REPORTER}
-</body>
-</html>`
-}
-
 interface HtmlCanvasCardProps {
   title: string
   html: string
 }
 
+type RegisterState = 'loading' | 'ready' | 'failed'
+
 export function HtmlCanvasCard({ title, html }: HtmlCanvasCardProps) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [height, setHeight] = useState(() => clamp(DEFAULT_HEIGHT))
   const [collapsed, setCollapsed] = useState(false)
+  const [canvasId, setCanvasId] = useState<string | null>(null)
+  const [registerState, setRegisterState] = useState<RegisterState>('loading')
 
-  // `srcDoc` se recalcula sólo si cambia el HTML: rearmarlo en cada render
-  // recargaría el iframe innecesariamente.
-  const srcDoc = useMemo(() => buildSrcDoc(html), [html])
+  // Registra el HTML en el Map del main SIEMPRE que cambia (o al montar) —
+  // nunca asumimos que un id previo sigue siendo válido (ver el comentario
+  // largo de arriba). No depende de si el lienzo es "nuevo" o "restaurado":
+  // el mismo camino sirve para los dos casos.
+  useEffect(() => {
+    let cancelled = false
+    setRegisterState('loading')
+    setCanvasId(null)
+    window.cerpAPI
+      .registerCanvasHtml(html)
+      .then((id) => {
+        if (cancelled) return
+        if (!id) {
+          setRegisterState('failed')
+          return
+        }
+        setCanvasId(id)
+        setRegisterState('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setRegisterState('failed')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [html])
+
+  const src = useMemo(() => (canvasId ? `cerp-canvas://${canvasId}` : undefined), [canvasId])
 
   useEffect(() => {
     function onMessage(event: MessageEvent): void {
@@ -176,10 +148,16 @@ export function HtmlCanvasCard({ title, html }: HtmlCanvasCardProps) {
           )}
         </button>
       </figcaption>
-      {!collapsed && (
+      {!collapsed && registerState === 'failed' && (
+        <p className="px-3 py-2.5 text-xs text-slate-400">No se pudo mostrar el lienzo.</p>
+      )}
+      {!collapsed && registerState === 'loading' && (
+        <p className="px-3 py-2.5 text-xs text-slate-400">Cargando lienzo…</p>
+      )}
+      {!collapsed && registerState === 'ready' && src && (
         <iframe
           ref={frameRef}
-          srcDoc={srcDoc}
+          src={src}
           title={title}
           // Sin `allow-same-origin`: ver el bloque de arriba. No es un descuido.
           sandbox="allow-scripts"

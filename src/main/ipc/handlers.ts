@@ -8,6 +8,7 @@ import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, NoCreditsError
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
+import { registerCanvas } from '../agent/htmlCanvasBridge'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
@@ -259,6 +260,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       }
     },
   )
+
+  // Lienzo HTML del agente — el renderer llama esto SIEMPRE que monta un
+  // HtmlCanvasCard (tool call en vivo o conversación restaurada de la DB, que
+  // no trae ningún id vivo de una sesión anterior porque el Map de
+  // htmlCanvasBridge se reinicia con la app). Devuelve null si el HTML está
+  // vacío o supera el tope — HtmlCanvasCard lo trata como "no se pudo mostrar".
+  ipcMain.handle(IPC_CHANNELS.CANVAS_REGISTER, async (_event, html: unknown): Promise<string | null> => {
+    if (typeof html !== 'string' || html.length === 0) return null
+    return registerCanvas(html)
+  })
 
   // Dialog: Export conversation to Markdown (Ola 3) — el renderer arma el contenido,
   // acá solo mostramos el diálogo nativo y escribimos el archivo elegido.

@@ -183,12 +183,12 @@ const ShowHtmlSchema = z.object({
   html: z
     .string()
     .min(1)
-    .max(256_000)
+    .max(64_000)
     .describe(
       'Documento HTML completo o fragmento a dibujar (comparativa, esquema, tabla con formato, grafico con divs o SVG inline). ' +
         'Se renderiza AISLADO: sin acceso a la pagina ni a internet. TODO el CSS y JS va inline o en un <style>/<script> del propio documento — ' +
-        'NO puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa (si funcionan imagenes data: y SVG inline). ' +
-        'Maximo 256 KB.',
+        'NO puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa (sí funcionan imagenes data: y SVG inline). ' +
+        'Maximo 64 KB.',
     ),
 })
 
@@ -305,7 +305,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
   const showHtmlTool = tool(
     'show_html',
     'Dibuja un lienzo visual escribiendo HTML: una comparativa, un esquema, una tabla con formato, un grafico hecho con divs o SVG inline. ' +
-      'Se muestra aislado, sin acceso a la app ni a internet: todo el CSS y JS va inline o en un <style>/<script> del propio documento, y NO puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa (si funcionan imagenes data: y SVG inline). ' +
+      'Se muestra aislado, sin acceso a la app ni a internet: todo el CSS y JS va inline o en un <style>/<script> del propio documento, y NO puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa (sí funcionan imagenes data: y SVG inline). ' +
       'Usala cuando la forma visual aporte de verdad — para presupuestos usa las tools de budget, que ademas se exportan a PDF/Excel. ' +
       'Tu texto tiene que seguir explicando la respuesta: el lienzo ACOMPAÑA, no reemplaza.',
     ShowHtmlSchema as any,
@@ -313,12 +313,19 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       try {
         const parsed = ShowHtmlSchema.parse(args)
         const toolUseId = randomUUID()
-        emitHtmlCanvasEvent(conversationId, {
-          toolUseId,
-          title: parsed.title?.trim() || 'Lienzo',
-          html: parsed.html,
-        })
-        logger.info(`show_html OK: "${parsed.title || 'Lienzo'}" (${parsed.html.length} chars) → conversation ${conversationId}`)
+        const title = parsed.title?.trim() || 'Lienzo'
+        const sent = emitHtmlCanvasEvent(conversationId, { toolUseId, title, html: parsed.html })
+        if (!sent) {
+          // Sin ventana activa (o destruida) el evento nunca llegó al renderer — el
+          // modelo NO puede narrar "te muestro el lienzo" como si el usuario lo
+          // hubiera visto, así que esto es un error de tool, no un éxito silencioso.
+          logger.error(`show_html FAILED: no hay ventana activa para mostrar el lienzo (conversation ${conversationId})`)
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No se pudo mostrar el lienzo: no hay ventana activa.' }) }],
+            isError: true,
+          }
+        }
+        logger.info(`show_html OK: ${JSON.stringify(title)} (${parsed.html.length} chars) → conversation ${conversationId}`)
         return { content: [{ type: 'text' as const, text: 'Lienzo mostrado al usuario.' }] }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)

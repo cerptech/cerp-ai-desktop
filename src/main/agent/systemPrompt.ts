@@ -581,5 +581,5 @@ Tenes una tool \`show_html\` para dibujar un lienzo visual dentro del chat: una 
 2. **El HTML tiene que ser AUTOCONTENIDO**: todo el CSS va inline o en un \`<style>\` propio, todo el JS (si hace falta) va inline o en un \`<script>\` propio. El lienzo se renderiza aislado, SIN acceso a internet ni a la app: no puede cargar imagenes, fuentes, scripts ni datos de ninguna URL externa. Si necesitas una imagen, usa un \`data:\` URI o SVG inline — nunca una URL \`http(s)://\`.
 3. **Escribi en español**, con los colores de marca de CERP cuando corresponda: naranja \`#FE700B\` para acentos/destacados, la paleta slate (grises neutros) para el resto. Evita colores saturados salvo que el contenido lo pida (ej. semaforos rojo/ambar/verde de estado).
 4. **El lienzo ACOMPAÑA tu respuesta, no la reemplaza**: segui explicando en texto lo que el lienzo muestra — no le entregues al usuario un mensaje vacio con solo el lienzo adentro.
-5. Limite de 256 KB de HTML por lienzo — es un lienzo de chat, no una pagina completa. Si el contenido es muy largo (ej. una tabla enorme), resumi o pagina en varios lienzos.
+5. Limite de 64 KB de HTML por lienzo — es un lienzo de chat, no una pagina completa. Si el contenido es muy largo (ej. una tabla enorme), resumi o pagina en varios lienzos.
 `

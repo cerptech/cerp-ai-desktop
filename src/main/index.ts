@@ -16,6 +16,13 @@ import { join } from 'path'
 import { registerIpcHandlers } from './ipc/handlers'
 import { initAutoUpdate } from './updater'
 import { logger } from './utils/logger'
+import { registerCanvasProtocolPrivileges, registerCanvasProtocolHandler } from './agent/canvasProtocol'
+
+// Debe correr ANTES de que la app esté "ready" (requisito de Electron para
+// protocol.registerSchemesAsPrivileged) — por eso va acá, a nivel de módulo,
+// antes de cualquier lógica async. Sirve el lienzo HTML del agente
+// (`cerp-canvas://<id>`) con su propia CSP por header; ver canvasProtocol.ts.
+registerCanvasProtocolPrivileges()
 
 let mainWindow: BrowserWindow | null = null
 
@@ -41,6 +48,10 @@ if (!gotTheLock) {
 
     // Register IPC handlers
     registerIpcHandlers(() => mainWindow)
+
+    // Sirve los lienzos HTML del agente (cerp-canvas://<id>) — necesita la app
+    // "ready" para que protocol.handle esté disponible.
+    registerCanvasProtocolHandler()
 
     createWindow()
 
