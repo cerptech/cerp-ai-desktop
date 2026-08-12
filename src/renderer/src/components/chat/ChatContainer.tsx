@@ -435,6 +435,9 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
             onSelectAttachments={handleSelectAttachments}
             dictationStatus={dictation.status}
             onDictate={handleDictate}
+            dictationLevel={dictation.level}
+            dictationElapsedSeconds={dictation.elapsedSeconds}
+            dictationSilence={dictation.silence}
             modelChoice={modelChoice}
             onModelChange={setModelChoice}
             modelSelectorDisabled={turboMode}

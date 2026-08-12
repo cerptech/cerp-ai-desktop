@@ -119,6 +119,13 @@ export function useConversations() {
         subagentSteps: t.subagentSteps,
         subagentText: t.subagentText,
       })),
+      // Lienzos HTML de show_html — mismo patrón que tools/subagentSteps arriba.
+      // NOTA: el backend (DesktopConversation.ts en cerp-server) todavía no declara
+      // este campo en su MessageSchema — igual que ya pasaba con subagentSteps/
+      // subagentText, Mongoose lo descarta al castear el $push si no se agrega ahí.
+      // Sobrevive dentro de la sesión (agentRuntimeStore) pero no a un reload hasta
+      // que se actualice el schema del backend.
+      htmlCanvases: message.htmlCanvases,
       timestamp: message.timestamp,
     }
 
@@ -171,6 +178,7 @@ export function useConversations() {
             })),
             subagentText: t.subagentText,
           })),
+          htmlCanvases: m.htmlCanvases,
           timestamp: m.timestamp,
         }))
       }

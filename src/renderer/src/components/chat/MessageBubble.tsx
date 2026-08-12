@@ -3,6 +3,7 @@ import type { ChatMessage } from '@/hooks/useAgent'
 import { ToolExecutions } from './ToolIndicator'
 import { MarkdownContent } from './MarkdownContent'
 import { ThinkingLoader } from './ThinkingLoader'
+import { HtmlCanvasCard } from './HtmlCanvasCard'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 interface MessageBubbleProps {
@@ -210,6 +211,11 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
             {isStreaming && <StreamingCursor />}
           </div>
         )}
+
+        {/* Lienzos HTML del agente (tool show_html) — acompañan al texto, no lo reemplazan. */}
+        {message.htmlCanvases?.map((canvas) => (
+          <HtmlCanvasCard key={canvas.toolUseId} title={canvas.title} html={canvas.html} />
+        ))}
       </div>
     </div>
   )

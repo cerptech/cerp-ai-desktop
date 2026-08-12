@@ -370,6 +370,19 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       const tools = r.tools.map((t) => (t.toolUseId === ev.parentToolUseId ? { ...t, subagentText: ev.text } : t))
       return { ...r, tools, messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })) }
     }
+    case 'html_canvas': {
+      // Lienzo HTML de la tool show_html — se acumula en el mensaje del asistente en
+      // curso, igual que tool_start (sin manejo especial de needsNewAssistant: ningún
+      // otro evento no-texto lo hace tampoco, ver tool_start arriba).
+      const canvas = { toolUseId: event.toolUseId, title: event.title, html: event.html }
+      return {
+        ...r,
+        messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
+          ...msg,
+          htmlCanvases: [...(msg.htmlCanvases ?? []), canvas],
+        })),
+      }
+    }
     case 'prompt_suggestions': {
       return { ...r, promptSuggestions: event.suggestions }
     }

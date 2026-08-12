@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react'
-import type { AskUserQuestionItem, UserAnswerPayload, ModelChoice } from '../../../preload/index'
+import type { AskUserQuestionItem, UserAnswerPayload, ModelChoice, HtmlCanvas } from '../../../preload/index'
 import {
   getRuntime,
   subscribe,
@@ -45,6 +45,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   tools?: ToolExecution[]
+  /** Lienzos HTML emitidos por show_html durante este turno (Ola — lienzo HTML dinámico). */
+  htmlCanvases?: HtmlCanvas[]
   timestamp: number
   agentContext?: string
 }
