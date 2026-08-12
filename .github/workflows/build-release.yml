@@ -40,8 +40,18 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      # npm ci corre el install.js de electron, que descarga el zip desde los
+      # releases de GitHub y sufre los mismos cortes intermitentes (socket hang up)
+      # que el paso del instalador — mismo remedio: reintentos con backoff.
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            npm ci && exit 0
+            echo "npm ci falló (intento $i/5) — reintento en 90s"
+            sleep 90
+          done
+          exit 1
 
       - name: Build app
         run: npm run build
