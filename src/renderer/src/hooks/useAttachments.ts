@@ -77,11 +77,28 @@ export function isImageAttachment(ext: string): boolean {
   return IMAGE_EXTENSIONS.has((ext || '').toLowerCase())
 }
 
-/** file:// URL para thumbnails de imagen — normaliza backslashes de Windows.
- *  Usa encodeURI (no encodeURIComponent) para no escapar ':' — necesario para
- *  que la letra de unidad de Windows ("C:") quede literal en la URL. */
+/**
+ * file:// URL para thumbnails de imagen — normaliza backslashes de Windows y
+ * escapa CADA SEGMENTO de la ruta por separado con encodeURIComponent.
+ *
+ * `encodeURI` (usado antes) deja pasar '#' y '?' sin escapar porque son
+ * caracteres reservados de URL válidos para ESE propósito — pero acá truncan la
+ * ruta: todo lo que sigue a un '#' se interpreta como fragmento y a un '?' como
+ * query string, así que un archivo tipo "Presupuesto #2 (final).pdf" rompía la
+ * miniatura silenciosamente (el navegador pedía solo "Presupuesto " como file
+ * URL). encodeURIComponent por segmento escapa '#'/'?' (y todo lo demás) sin
+ * tocar las barras que separan directorios.
+ *
+ * Excepción: la letra de unidad de Windows ("C:", primer segmento tras la barra
+ * inicial) se deja literal — encodeURIComponent también escaparía el ':' a
+ * '%3A', y con eso el file URL deja de resolver a una unidad válida.
+ */
 export function toFileUrl(path: string): string {
   const normalized = path.replace(/\\/g, '/')
   const withLeadingSlash = normalized.startsWith('/') ? normalized : `/${normalized}`
-  return `file://${encodeURI(withLeadingSlash)}`
+  const encoded = withLeadingSlash
+    .split('/')
+    .map((segment, i) => (i === 1 && /^[a-zA-Z]:$/.test(segment) ? segment : encodeURIComponent(segment)))
+    .join('/')
+  return `file://${encoded}`
 }

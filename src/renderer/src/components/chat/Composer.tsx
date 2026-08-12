@@ -119,8 +119,16 @@ export function Composer({
       return
     }
     if (e.key === 'Escape') {
-      if (streaming) onStop?.()
-      else if (value.trim()) onChange('')
+      if (streaming) {
+        onStop?.()
+        // El listener global de ChatContainer (window 'keydown') también aborta en
+        // Escape — cubre el caso en que el textarea NO tiene foco. Con foco acá,
+        // paramos la propagación para que ese listener no dispare un SEGUNDO abort()
+        // para el mismo turno (idempotente en el store, pero redundante e innecesario).
+        e.stopPropagation()
+      } else if (value.trim()) {
+        onChange('')
+      }
     }
   }
 

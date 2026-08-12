@@ -72,7 +72,7 @@ export function QuoteStatusBadge() {
       <button
         onClick={load}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 hover:bg-red-100 text-xs transition-colors"
-        title="No se pudo consultar el estado de cotizaciones. Click para reintentar."
+        title="No se pudo consultar el estado de cotizaciones. Haz clic para reintentar."
       >
         <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
         Error · Reintentar

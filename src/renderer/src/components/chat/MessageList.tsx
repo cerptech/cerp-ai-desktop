@@ -2,6 +2,33 @@ import { useCallback, useEffect, useRef, useState, type DependencyList, type Rea
 import { ArrowDown } from 'lucide-react'
 
 /**
+ * React exige que el array de dependencias de un `useEffect` tenga SIEMPRE la
+ * misma longitud entre renders — si cambia, tira "The final argument passed to
+ * useEffect changed size between renders". `deps` acá es una `DependencyList`
+ * arbitraria que controla el CALLER; hoy el único caller (ChatContainer) siempre
+ * pasa un array literal de 3 elementos, así que no explota, pero es un bug latente
+ * en la firma del componente: cualquier caller futuro que pase un array de
+ * longitud variable (o el mismo caller cambiando esa lista) rompe en runtime.
+ *
+ * Esta hook convierte `deps` (longitud variable) en un número de versión estable
+ * (longitud fija: siempre un solo valor) comparando por referencia cada elemento
+ * durante el render — sin usar un Effect, así que no dispara un render extra por
+ * sí sola. El array real de `useEffect` más abajo queda con longitud fija
+ * (`[depsVersion, stickToBottom, busy]`) sin importar cuántos elementos traiga `deps`.
+ */
+function useDepsVersion(deps: DependencyList): number {
+  const prevRef = useRef<DependencyList>([])
+  const versionRef = useRef(0)
+  const prev = prevRef.current
+  const changed = prev.length !== deps.length || deps.some((d, i) => !Object.is(d, prev[i]))
+  if (changed) {
+    prevRef.current = deps
+    versionRef.current += 1
+  }
+  return versionRef.current
+}
+
+/**
  * Margen desde el fondo dentro del cual se considera que el usuario "sigue"
  * la respuesta. Por encima de eso se asume que subió a leer algo y el
  * autoscroll se desengancha hasta que vuelva al final. Port fiel de
@@ -37,11 +64,12 @@ export function MessageList({ children, deps, busy = false, className }: Message
     bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'end' })
   }, [])
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `deps` es la lista dinámica que el caller controla
+  const depsVersion = useDepsVersion(deps)
+
   useEffect(() => {
     if (!stickToBottom) return
     scrollToBottom(!busy)
-  }, [...deps, stickToBottom, busy])
+  }, [depsVersion, stickToBottom, busy, scrollToBottom])
 
   return (
     <div className={`relative min-h-0 flex-1 ${className ?? ''}`}>

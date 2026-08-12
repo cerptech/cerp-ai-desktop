@@ -443,7 +443,7 @@ const api = {
 
   // Export conversation (Ola 3) — el renderer arma el Markdown, el main muestra el
   // diálogo nativo de guardado y escribe el archivo.
-  exportConversationMarkdown: (defaultFileName: string, content: string): Promise<{ success: boolean; path?: string }> =>
+  exportConversationMarkdown: (defaultFileName: string, content: string): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.EXPORT_CONVERSATION, { defaultFileName, content }),
 }
 

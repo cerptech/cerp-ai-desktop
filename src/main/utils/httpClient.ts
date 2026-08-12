@@ -31,11 +31,39 @@ function parseErrorBody(text: string): unknown {
 export class HttpClient {
   private getToken: () => string | null
   private onTokenExpired?: () => Promise<void>
-  private isRefreshing = false
+  /** Promesa del refresh en vuelo — reemplaza al viejo guard booleano `isRefreshing`. */
+  private refreshPromise: Promise<void> | null = null
 
   constructor(getToken: () => string | null, onTokenExpired?: () => Promise<void>) {
     this.getToken = getToken
     this.onTokenExpired = onTokenExpired
+  }
+
+  /**
+   * Memoiza el refresh en vuelo: si dos (o más) requests concurrentes reciben 401 a
+   * la vez, todas comparten UNA sola llamada a `onTokenExpired` en vez de disparar
+   * una por cada 401. Antes, el guard booleano `isRefreshing` hacía que el SEGUNDO
+   * 401 concurrente se topara con `isRefreshing === true`, se saltara el refresh por
+   * completo y cayera directo al `throw HttpError(401)` — que los handlers mapean a
+   * `error:'auth'`, y la UI lo renderiza vacío asumiendo (incorrectamente) que el
+   * modal global de sesión expirada ya está abierto. Ahora cada caller espera esta
+   * misma promesa y reintenta su propia request una vez con el token nuevo.
+   *
+   * La asignación a `this.refreshPromise` ocurre de forma síncrona (antes de que
+   * corra cualquier `await` dentro de `onTokenExpired`), así que no hay ventana en
+   * la que un 401 posterior en el mismo tick vea `refreshPromise` todavía en null.
+   */
+  private refreshTokenOnce(): Promise<void> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = (async () => {
+        try {
+          await this.onTokenExpired?.()
+        } finally {
+          this.refreshPromise = null
+        }
+      })()
+    }
+    return this.refreshPromise
   }
 
   async get<T = unknown>(path: string): Promise<T> {
@@ -69,19 +97,16 @@ export class HttpClient {
       body: formData,
     })
 
-    if (res.status === 401 && !retried && this.onTokenExpired && !this.isRefreshing) {
-      this.isRefreshing = true
+    if (res.status === 401 && !retried && this.onTokenExpired) {
       try {
-        await this.onTokenExpired()
+        await this.refreshTokenOnce()
         return this.uploadFile(path, formData, true)
-      } catch { /* fall through */ } finally {
-        this.isRefreshing = false
-      }
+      } catch { /* fall through */ }
     }
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`API error ${res.status}: ${body}`)
+      const text = await res.text().catch(() => '')
+      throw new HttpError(res.status, parseErrorBody(text), `API error ${res.status}: ${text}`)
     }
 
     return res.json() as Promise<T>
@@ -100,19 +125,16 @@ export class HttpClient {
       },
     })
 
-    if (res.status === 401 && !retried && this.onTokenExpired && !this.isRefreshing) {
-      this.isRefreshing = true
+    if (res.status === 401 && !retried && this.onTokenExpired) {
       try {
-        await this.onTokenExpired()
+        await this.refreshTokenOnce()
         return this.downloadFile(path, savePath, true)
-      } catch { /* fall through */ } finally {
-        this.isRefreshing = false
-      }
+      } catch { /* fall through */ }
     }
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`API error ${res.status}: ${body}`)
+      const text = await res.text().catch(() => '')
+      throw new HttpError(res.status, parseErrorBody(text), `API error ${res.status}: ${text}`)
     }
 
     const { writeFileSync } = require('fs')
@@ -136,17 +158,15 @@ export class HttpClient {
     })
 
     // Retry once on 401 — token may have expired during a long session.
-    // isRefreshing guard prevents re-entry: fetchApiKey also calls request(),
-    // which would otherwise trigger onTokenExpired recursively on a repeated 401.
-    if (res.status === 401 && !retried && this.onTokenExpired && !this.isRefreshing) {
-      this.isRefreshing = true
+    // refreshTokenOnce() memoiza el refresh en vuelo: concurrent 401s (incluida la
+    // reentrancy de fetchApiKey, que también llama a request()) comparten la misma
+    // promesa en vez de disparar un refresh por cada una.
+    if (res.status === 401 && !retried && this.onTokenExpired) {
       try {
-        await this.onTokenExpired()
+        await this.refreshTokenOnce()
         return this.request(method, path, data, true)
       } catch {
         // Refresh failed — fall through to throw original error
-      } finally {
-        this.isRefreshing = false
       }
     }
 

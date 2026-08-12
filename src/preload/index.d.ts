@@ -264,7 +264,7 @@ interface CerpAPI {
   checkGit(): Promise<{ installed: boolean; version?: string }>
   installGit(): Promise<boolean>
   onGitProgress(callback: (data: { message: string; percent: number }) => void): () => void
-  exportConversationMarkdown(defaultFileName: string, content: string): Promise<{ success: boolean; path?: string }>
+  exportConversationMarkdown(defaultFileName: string, content: string): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
 }
 
 declare global {

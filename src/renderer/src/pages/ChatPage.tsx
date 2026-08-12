@@ -112,10 +112,10 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
 
   // Exportar conversación a Markdown (Ola 3) — trae la conversación completa de la
   // DB (no el runtime local, que puede no tener los mensajes si nunca se abrió en
-  // esta sesión) y deja que el main muestre el diálogo nativo de guardado. `success:
-  // false` cubre tanto "el usuario canceló el diálogo" como una falla real de
-  // escritura — no distinguimos ambos casos con un toast de error para no alarmar
-  // por algo tan común como cancelar el diálogo.
+  // esta sesión) y deja que el main muestre el diálogo nativo de guardado.
+  // `canceled: true` = el usuario cerró el diálogo sin elegir archivo — silencio,
+  // es un flujo normal. `success: false` sin `canceled` = falló la escritura real
+  // (permisos, disco lleno, etc.) — ese sí amerita un toast de error.
   const { addToast } = useToast()
   const handleExportConversation = useCallback(async (id: string) => {
     const result = await window.cerpAPI.getConversation(id)
@@ -126,7 +126,11 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     const markdown = buildConversationMarkdown(result.data)
     const fileName = `${sanitizeFileName(result.data.title)}.md`
     const saved = await window.cerpAPI.exportConversationMarkdown(fileName, markdown)
-    if (saved.success) addToast('success', 'Conversación exportada')
+    if (saved.success) {
+      addToast('success', 'Conversación exportada')
+    } else if (!saved.canceled) {
+      addToast('error', 'No se pudo exportar la conversación')
+    }
   }, [addToast])
 
   // Crea una conversación si no hay activa, devolviendo su id real para enviar.

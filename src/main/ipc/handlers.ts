@@ -14,9 +14,17 @@ import { logger } from '../utils/logger'
 import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
-/** true si el error vino de una respuesta 401 — refresh ya se intentó y falló (ver onTokenExpired abajo). */
+/**
+ * true si el error vino de una respuesta 401 — refresh ya se intentó y falló (ver
+ * onTokenExpired abajo). Solo confía en el status real de `HttpError`: el fallback
+ * por regex sobre el mensaje (`/\b401\b/`) se quitó porque un cuerpo de error de la
+ * API que simplemente MENCIONARA "401" en su texto (p.ej. un mensaje de validación)
+ * se clasificaba como sesión expirada. Ahora que uploadFile/downloadFile también
+ * lanzan HttpError con el status real (antes lanzaban Error genérico), este chequeo
+ * ya cubre todos los paths sin necesitar el regex.
+ */
 function isAuthError(err: unknown): boolean {
-  return (err instanceof HttpError && err.status === 401) || (err instanceof Error && /\b401\b/.test(err.message))
+  return err instanceof HttpError && err.status === 401
 }
 
 // Ola 1 — selector de modelo. "Auto" usa el que informa /desktop/api-key (config por
@@ -254,11 +262,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
 
   // Dialog: Export conversation to Markdown (Ola 3) — el renderer arma el contenido,
   // acá solo mostramos el diálogo nativo y escribimos el archivo elegido.
+  // `canceled: true` distingue "el usuario cerró el diálogo" (silencio, no es un
+  // error) de una falla real de escritura (toast de error) — antes ambos casos
+  // colapsaban en el mismo `success: false` y el renderer no podía diferenciarlos.
   ipcMain.handle(
     IPC_CHANNELS.EXPORT_CONVERSATION,
-    async (_event, { defaultFileName, content }: { defaultFileName: string; content: string }): Promise<{ success: boolean; path?: string }> => {
+    async (_event, { defaultFileName, content }: { defaultFileName: string; content: string }): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> => {
       const mainWindow = getMainWindow()
-      if (!mainWindow) return { success: false }
+      if (!mainWindow) return { success: false, error: 'No se encontró la ventana de la aplicación' }
 
       const result = await dialog.showSaveDialog(mainWindow, {
         title: 'Exportar conversación',
@@ -266,14 +277,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         filters: [{ name: 'Markdown', extensions: ['md'] }],
       })
 
-      if (result.canceled || !result.filePath) return { success: false }
+      if (result.canceled || !result.filePath) return { success: false, canceled: true }
 
       try {
         writeFileSync(result.filePath, content, 'utf-8')
         return { success: true, path: result.filePath }
       } catch (err) {
         logger.error(`Failed to export conversation to ${result.filePath}:`, err)
-        return { success: false }
+        return { success: false, error: err instanceof Error ? err.message : 'No se pudo escribir el archivo' }
       }
     },
   )

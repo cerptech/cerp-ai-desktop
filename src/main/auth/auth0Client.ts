@@ -262,27 +262,30 @@ export function logout(): void {
 }
 
 /**
- * Solo mira el estado guardado — no refresca. Usar `ensureFreshToken()` en
- * cualquier flujo que vaya a hacer una llamada real (arranque de la app,
- * AUTH_GET_STATUS), para que un token vencido se refresque en vez de leerse
- * como "logueado" con un token muerto.
+ * Refresh en vuelo (memoizado): `ensureFreshToken()` y el `onTokenExpired` del
+ * httpClient pueden disparar un refresh casi al mismo tiempo (p.ej. una llamada de
+ * red en curso recibe 401 justo cuando AUTH_GET_STATUS también decide refrescar).
+ * Con Refresh Token Rotation, DOS llamadas concurrentes con el mismo refresh_token
+ * revocan la familia entera en Auth0 y desloguean al usuario. Todos los callers
+ * comparten esta única promesa mientras hay un refresh en curso.
  */
-export function isAuthenticated(): boolean {
-  const token = tokenStore.getAccessToken()
-  if (!token) return false
-  const expiresAt = tokenStore.getExpiresAt()
-  // Migración: credenciales guardadas antes de este campo existir → tratar
-  // como expiradas, fuerza un único login limpio.
-  if (expiresAt === null) return false
-  return Date.now() < expiresAt - EXPIRY_MARGIN_MS
-}
+let inflightRefresh: Promise<string> | null = null
 
 /**
  * Intercambia el refresh token guardado por un accessToken nuevo. Auth0 puede
  * rotar el refresh token (Refresh Token Rotation) — si viene uno nuevo en la
  * respuesta lo persistimos; si no, mantenemos el actual.
  */
-export async function refreshAccessToken(): Promise<string> {
+export function refreshAccessToken(): Promise<string> {
+  if (inflightRefresh) return inflightRefresh
+
+  inflightRefresh = doRefreshAccessToken().finally(() => {
+    inflightRefresh = null
+  })
+  return inflightRefresh
+}
+
+async function doRefreshAccessToken(): Promise<string> {
   const { domain, clientId } = getAuth0Config()
   const refreshToken = tokenStore.getRefreshToken()
 
@@ -321,8 +324,7 @@ export async function refreshAccessToken(): Promise<string> {
  * Devuelve un accessToken válido, refrescándolo primero si está por vencer.
  * `null` significa "no hay sesión utilizable" — ni token vigente ni refresh
  * posible (sin refresh token, o el refresh falló porque fue revocado/venció).
- * Usar esto en vez de `isAuthenticated()` en cualquier punto que vaya a hacer
- * una llamada de red real.
+ * Usar esto en cualquier punto que vaya a hacer una llamada de red real.
  */
 export async function ensureFreshToken(): Promise<string | null> {
   const token = tokenStore.getAccessToken()
@@ -340,6 +342,10 @@ export async function ensureFreshToken(): Promise<string | null> {
     return await refreshAccessToken()
   } catch (err) {
     logger.warn('No se pudo refrescar el token de acceso:', err)
+    // El accessToken guardado ya está muerto (venció y el refresh falló) — lo
+    // limpiamos para que httpClient no lo siga mandando en requests directos
+    // (uploadFile/downloadFile no pasan por ensureFreshToken) hasta el próximo login.
+    tokenStore.clearAccessToken()
     return null
   }
 }

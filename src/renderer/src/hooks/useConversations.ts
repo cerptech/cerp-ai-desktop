@@ -3,10 +3,17 @@ import type { ConversationSummary, ConversationFull, ApiErrorCode } from '../../
 import type { ChatMessage } from './useAgent'
 import { useToast } from './useToast'
 
-/** El backend guarda `status` como string libre — nos quedamos con el valor real si
- *  es uno de los tres válidos, y caemos a 'done' solo cuando el campo falta del todo. */
+/**
+ * El backend guarda `status` como string libre. Al RESTAURAR una conversación de
+ * la DB, 'running' nunca es un estado válido — no puede haber una tool corriendo en
+ * un turno que ya terminó (persistió). Puede quedar así si el usuario abortó a mitad
+ * de una tool call: el `abort()` del store no siempre alcanza a marcarla 'done'/'error'
+ * antes de persistir. Mapeamos 'running' → 'done' acá para que no quede una tool
+ * congelada en spinner infinito al reabrir la conversación; 'error' SÍ se preserva
+ * (una tool que falló de verdad no debe mostrarse como exitosa).
+ */
 function normalizeToolStatus(status: unknown): 'running' | 'done' | 'error' {
-  return status === 'running' || status === 'error' || status === 'done' ? status : 'done'
+  return status === 'error' ? status : 'done'
 }
 
 export function useConversations() {

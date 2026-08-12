@@ -49,7 +49,7 @@ export function QuickActions({ onSelect, disabled, toolsSetup }: QuickActionsPro
               isPreparing
                 ? `Preparando herramientas… ${Math.round(toolsSetup!.percent)}%`
                 : hasFailed
-                  ? 'No se pudieron preparar las herramientas necesarias. Click para reintentar.'
+                  ? 'No se pudieron preparar las herramientas necesarias. Haz clic para reintentar.'
                   : undefined
             }
             className="flex items-center gap-3 p-4 bg-white rounded-2xl border border-composer-border hover:border-brand-orange/40 hover:bg-orange-50/50 transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed group"

@@ -40,7 +40,42 @@ export interface ConversationRuntime {
   currentDelegation: string | null
   needsNewAssistant: boolean
   waitingAfterAnswer: boolean
+  /**
+   * Acumulador de texto del turno EN CURSO, indexado por content block (ver
+   * `textAccumulator` más abajo para el detalle del bug que esto arregla).
+   */
+  textAccumulator: TextAccumulator
 }
+
+/**
+ * `text_delta` llega token a token con el `index` del content block del SDK al que
+ * pertenece (ver agentManager.ts:864). Un turno puede tener VARIOS bloques de texto
+ * si el modelo hace una tool call en el medio (bloque 0: texto antes de la tool,
+ * bloque 2 p.ej.: texto después). Antes, `text_delta` simplemente hacía
+ * `content + event.text` sin mirar el índice — así que los deltas del segundo
+ * bloque se seguían pegando al final del primero, lo cual por sí solo no rompía
+ * nada. El bug real estaba en `text` (el evento autoritativo que cierra un bloque):
+ * `block.text` en agentManager.ts (línea ~875) es el texto COMPLETO de ESE bloque
+ * únicamente, no de todo el mensaje — pero el reducer hacía `content: event.text`,
+ * o sea REEMPLAZABA todo el contenido acumulado (bloque 0 + bloque 1...) por el
+ * texto del último bloque solo. Resultado visible: el texto crece con los deltas
+ * y de golpe "pega un salto atrás" perdiendo el contenido de los bloques previos
+ * en cuanto llega el `text` autoritativo del bloque siguiente.
+ *
+ * Fix: `committed` guarda el texto YA CERRADO por bloques anteriores (se le suma
+ * el texto autoritativo de cada `text` que llega). `buffer` acumula los deltas del
+ * bloque ABIERTO actual. Si `text_delta` llega con un `index` distinto al bloque
+ * que se venía llenando, el buffer viejo se pliega a `committed` (por si el turno
+ * termina o aborta sin que llegue un `text` autoritativo para ese bloque — no se
+ * pierde lo ya tipeado). El contenido mostrado siempre es `committed + buffer`.
+ */
+interface TextAccumulator {
+  blockIndex: number | null
+  committed: string
+  buffer: string
+}
+
+const EMPTY_TEXT_ACCUMULATOR: TextAccumulator = Object.freeze({ blockIndex: null, committed: '', buffer: '' })
 
 const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   messages: [],
@@ -62,10 +97,11 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   currentDelegation: null,
   needsNewAssistant: false,
   waitingAfterAnswer: false,
+  textAccumulator: EMPTY_TEXT_ACCUMULATOR,
 })
 
 function freshRuntime(): ConversationRuntime {
-  return { ...EMPTY_RUNTIME, messages: [], tools: [], promptSuggestions: [] }
+  return { ...EMPTY_RUNTIME, messages: [], tools: [], promptSuggestions: [], textAccumulator: EMPTY_TEXT_ACCUMULATOR }
 }
 
 // ── Store internals ─────────────────────────────────────────────────────────
@@ -163,27 +199,39 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
   const now = Date.now()
 
   // Bug #2: stream_start es señal pura — prende isStreaming/isPending, nada más.
+  // También resetea el acumulador de texto por bloque: es el arranque de un turno
+  // NUEVO (incluido el que sigue a un ask_user_question respondido), así que no debe
+  // arrastrar el `committed`/`buffer` del turno anterior.
   if (event.type === 'stream_start') {
-    return { ...rt, isStreaming: true, isPending: false, lastEvent: now }
+    return { ...rt, isStreaming: true, isPending: false, lastEvent: now, textAccumulator: EMPTY_TEXT_ACCUMULATOR }
   }
 
   // Primer evento real: limpiar pending + el gate de waitingAfterAnswer (Bug #4, línea 173 del hook).
   let r: ConversationRuntime = { ...rt, lastEvent: now, isPending: false, waitingAfterAnswer: false }
 
   switch (event.type) {
-    // Delta de streaming (Ola 2) — SE ACUMULA (append), a diferencia de 'text'
-    // que reemplaza. Cuando llega el bloque completo ('text', más abajo) se
-    // reconcilia reemplazando el contenido acumulado por el texto autoritativo
-    // del SDK, evitando drift entre los deltas y la versión final.
+    // Delta de streaming (Ola 2) — bufferizado POR BLOQUE (ver TextAccumulator arriba).
+    // Si el índice del bloque cambia respecto al que se venía llenando, el buffer
+    // del bloque anterior se pliega a `committed` ANTES de empezar el nuevo — así
+    // el segundo bloque de texto de un turno (p.ej. el que sigue a una tool call) no
+    // se concatena por error al primero ni lo pisa.
     case 'text_delta': {
+      const prevAcc = r.textAccumulator
+      const isNewBlock = prevAcc.blockIndex !== null && prevAcc.blockIndex !== event.index
+      const committed = isNewBlock ? prevAcc.committed + prevAcc.buffer : prevAcc.committed
+      const buffer = (isNewBlock ? '' : prevAcc.buffer) + event.text
+      const textAccumulator: TextAccumulator = { blockIndex: event.index, committed, buffer }
+      const fullText = committed + buffer
+
       if (r.needsNewAssistant) {
         return {
           ...r,
           needsNewAssistant: false,
           tools: [],
+          textAccumulator,
           messages: [...r.messages, {
             role: 'assistant',
-            content: event.text,
+            content: fullText,
             timestamp: now,
             tools: [],
             agentContext: r.currentDelegation || undefined,
@@ -192,23 +240,35 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       }
       return {
         ...r,
+        textAccumulator,
         messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
           ...msg,
-          content: (msg.content || '') + event.text,
+          content: fullText,
           tools: [...r.tools],
           agentContext: r.currentDelegation || msg.agentContext,
         })),
       }
     }
     case 'text': {
+      // Reconciliación: `event.text` es el texto COMPLETO y autoritativo del bloque
+      // que se acaba de cerrar (no de todo el mensaje — ver comentario de
+      // TextAccumulator). Se suma a `committed` (no reemplaza el mensaje entero) y
+      // el buffer del bloque se vacía: si había drift entre los deltas y la versión
+      // final del SDK, gana la autoritativa para ESE bloque, pero los bloques
+      // previos ya cerrados en `committed` se preservan.
+      const prevAcc = r.textAccumulator
+      const committed = prevAcc.committed + event.text
+      const textAccumulator: TextAccumulator = { blockIndex: prevAcc.blockIndex, committed, buffer: '' }
+
       if (r.needsNewAssistant) {
         return {
           ...r,
           needsNewAssistant: false,
           tools: [],
+          textAccumulator,
           messages: [...r.messages, {
             role: 'assistant',
-            content: event.text,
+            content: committed,
             timestamp: now,
             tools: [],
             agentContext: r.currentDelegation || undefined,
@@ -217,12 +277,10 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       }
       return {
         ...r,
-        // Reconciliación: el bloque completo del SDK reemplaza (no acumula) lo
-        // que hayan ido armando los `text_delta` previos — es la versión
-        // autoritativa, así que gana ella si hay cualquier diferencia.
+        textAccumulator,
         messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
           ...msg,
-          content: event.text,
+          content: committed,
           tools: [...r.tools],
           agentContext: r.currentDelegation || msg.agentContext,
         })),
@@ -435,17 +493,30 @@ function ensureIpcWired(): void {
 
 // ── API pública de acciones ──────────────────────────────────────────────────
 
+export interface SendPromptOptions {
+  /**
+   * Regenerar (Ola 1) reenvía el ÚLTIMO prompt del usuario, que YA está en
+   * `messages` (y ya persistido) de la vez anterior — sin esta opción,
+   * `sendPrompt` agrega Y persiste un mensaje de usuario IDÉNTICO de nuevo,
+   * duplicando la burbuja en el chat y en la DB. Con `skipUserEcho: true` no se
+   * toca `messages` ni se persiste nada nuevo; solo se dispara la consulta.
+   */
+  skipUserEcho?: boolean
+}
+
 export async function sendPrompt(
   conversationId: string,
   prompt: string,
   cwd?: string,
   activeContextId?: string,
   modelChoice?: ModelChoice,
+  options?: SendPromptOptions,
 ): Promise<void> {
   ensureIpcWired()
   // Snapshot del historial ANTES de agregar el mensaje del usuario (igual que useAgent).
   const prevMessages = getRuntime(conversationId).messages
   const history = prevMessages.map((m) => ({ role: m.role, content: m.content }))
+  const skipUserEcho = options?.skipUserEcho ?? false
 
   update(conversationId, (rt) => ({
     ...rt,
@@ -460,10 +531,13 @@ export async function sendPrompt(
     currentDelegation: null,
     waitingAfterAnswer: false,
     tools: [],
-    messages: [...rt.messages, { role: 'user', content: prompt, timestamp: Date.now() }],
+    textAccumulator: EMPTY_TEXT_ACCUMULATOR,
+    messages: skipUserEcho ? rt.messages : [...rt.messages, { role: 'user', content: prompt, timestamp: Date.now() }],
   }))
-  // Persistir el mensaje del usuario inmediatamente.
-  persistNewMessages(conversationId, getRuntime(conversationId))
+  // Persistir el mensaje del usuario inmediatamente (salvo regeneración: ya está persistido).
+  if (!skipUserEcho) {
+    persistNewMessages(conversationId, getRuntime(conversationId))
+  }
 
   const result = await window.cerpAPI.sendPrompt({ prompt, conversationId, cwd, activeContextId, conversationHistory: history, modelChoice })
   if (!result.started) {

@@ -50,11 +50,21 @@ export const tokenStore = {
    * Guarda accessToken + refreshToken (ambos cifrados) + expiresAt (timestamp ms,
    * sin cifrar — no es sensible) en una sola escritura atómica. Reemplaza a las
    * llamadas sueltas a setAccessToken durante el login/refresh de Auth0.
+   *
+   * Si `refreshToken` no viene (login sin "Allow Offline Access", o un refresh que
+   * no rotó token nuevo pero tampoco reenvía el viejo) se BORRA el campo en vez de
+   * dejar el de la sesión anterior — es cross-tenant: un login sin refresh_token
+   * nuevo podía dejar el refresh token de OTRA cuenta guardado, y `ensureFreshToken`
+   * lo usaría para emitir accessTokens de esa cuenta ajena.
    */
   setSession(session: { accessToken: string; refreshToken?: string | null; expiresAt: number }): void {
     const data = readStore()
     data.accessToken = encrypt(session.accessToken)
-    if (session.refreshToken) data.refreshToken = encrypt(session.refreshToken)
+    if (session.refreshToken) {
+      data.refreshToken = encrypt(session.refreshToken)
+    } else {
+      delete data.refreshToken
+    }
     data.expiresAt = session.expiresAt
     writeStore(data)
   },
@@ -134,6 +144,16 @@ export const tokenStore = {
     const data = readStore()
     delete data.apiKey
     delete data.apiKeyExpiresAt
+    writeStore(data)
+  },
+
+  /** Borra solo el accessToken + su expiresAt — usado cuando `ensureFreshToken`
+   *  se rinde (refresh falló) para que httpClient deje de mandar un token muerto.
+   *  Preserva refreshToken/user/companyId: no es un logout completo. */
+  clearAccessToken(): void {
+    const data = readStore()
+    delete data.accessToken
+    delete data.expiresAt
     writeStore(data)
   },
 

@@ -58,6 +58,11 @@ export function getToolsSetupSnapshot(): ToolsSetupState {
 }
 
 let started = false
+// Guard de re-entrada: sin esto, clicks repetidos en "Reintentar" (o una segunda
+// llamada a ensureToolsSetupStarted que se cuele mientras un intento anterior sigue
+// corriendo) lanzaban instaladores paralelos de Git/Python — mismo binario, misma
+// ruta destino, dos procesos pisándose.
+let running = false
 
 /** Idempotente — solo la primera llamada dispara el flujo. */
 export function ensureToolsSetupStarted(): void {
@@ -66,12 +71,24 @@ export function ensureToolsSetupStarted(): void {
   void runSetup()
 }
 
-/** Reintento manual (botón "Reintentar" en la función bloqueada). */
+/** Reintento manual (botón "Reintentar" en la función bloqueada). Ignora clicks
+ *  mientras ya hay un intento en curso. */
 export function retryToolsSetup(): void {
+  if (running) return
   void runSetup()
 }
 
 async function runSetup(): Promise<void> {
+  if (running) return
+  running = true
+  try {
+    await runSetupInner()
+  } finally {
+    running = false
+  }
+}
+
+async function runSetupInner(): Promise<void> {
   if (localStorage.getItem(SETUP_VERSION_KEY) === SETUP_VERSION) {
     setState({ status: 'ready', step: 'done', message: 'Entorno listo', percent: 100, error: null })
     return

@@ -74,11 +74,11 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   // Envío con "crear-antes-de-enviar": si no hay conversación activa, la creamos
   // para tener un id real (cada conversación necesita su propia sesión en el main).
-  const doSend = useCallback(async (fullPrompt: string): Promise<void> => {
+  const doSend = useCallback(async (fullPrompt: string, options?: { skipUserEcho?: boolean }): Promise<void> => {
     let id = activeConversationId
     if (!id) id = await ensureConversation(buildConversationTitle(fullPrompt))
     if (!id) return
-    storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined, modelChoiceRef.current)
+    storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined, modelChoiceRef.current, options)
   }, [activeConversationId, ensureConversation, activeContextId])
 
   useEffect(() => {
@@ -259,12 +259,15 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   // Regenerar (Ola 1) — reenvía el ÚLTIMO prompt del usuario por el flujo normal
   // (doSend), en la MISMA conversación/sesión del SDK (no crea ni reinicia sesión).
+  // skipUserEcho: true porque lastUserMessage.content YA está en `messages` (y ya
+  // persistido) de la vez anterior — sin esto, doSend agregaba Y persistía un
+  // segundo mensaje de usuario idéntico, duplicando la burbuja en el chat y en la DB.
   const handleRegenerate = useCallback(() => {
     if (isStreaming || isPending || pendingQuestions) return
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
     if (!lastUserMessage) return
     addToast('info', 'Reintentando…')
-    doSend(lastUserMessage.content)
+    doSend(lastUserMessage.content, { skipUserEcho: true })
   }, [messages, isStreaming, isPending, pendingQuestions, doSend, addToast])
 
   const isEmpty = messages.length === 0
