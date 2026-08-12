@@ -1,3 +1,21 @@
+/** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
+export type ModelChoice = 'auto' | 'fast' | 'powerful'
+
+/** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
+export interface AttachmentFile {
+  path: string
+  name: string
+  ext: string
+  sizeBytes: number
+}
+
+/** Resultado de `dictation:transcribe`. */
+export interface DictationTranscribeResult {
+  text?: string
+  language?: string
+  error?: 'auth' | 'network' | 'validation'
+}
+
 export interface AskUserQuestionOption {
   label: string
   description: string
@@ -19,6 +37,9 @@ export type QuoteFirewallEvent =
 
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
+  // Delta de streaming token a token (Ola 2) — solo del mensaje de nivel
+  // superior; los deltas de subagentes van por `subagent_text` aparte.
+  | { type: 'text_delta'; text: string; index: number }
   | { type: 'tool_start'; toolUseId: string; name: string; input?: string }
   | { type: 'tool_done'; toolUseId: string; output?: string; isError?: boolean }
   | { type: 'thinking'; text: string }
@@ -69,6 +90,8 @@ export interface CustomAgent {
   createdAt: string
   updatedAt: string
 }
+
+export type ApiErrorCode = 'auth' | 'network'
 
 export interface ConversationSummary {
   _id: string
@@ -169,13 +192,15 @@ export interface CreditLedgerEntry {
 
 export interface CreditsLedgerResponse {
   entries: CreditLedgerEntry[]
+  error?: ApiErrorCode
 }
 
 interface CerpAPI {
   login(): Promise<AuthState>
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
-  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }>
+  onSessionExpired(callback: () => void): () => void
+  sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>; modelChoice?: ModelChoice }): Promise<{ started: boolean; error?: string; code?: string }>
   abortAgent(conversationId?: string): Promise<void>
   resetSession(conversationId?: string): Promise<void>
   setPlanMode(enabled: boolean): Promise<void>
@@ -183,7 +208,9 @@ interface CerpAPI {
   setTurboMode(enabled: boolean): Promise<void>
   getTurboMode(): Promise<boolean>
   selectFolder(): Promise<string | null>
-  selectPdf(): Promise<string | null>
+  selectAttachments(): Promise<AttachmentFile[]>
+  getPathForFile(file: File): string
+  transcribeDictation(buffer: ArrayBuffer, mimeType: string): Promise<DictationTranscribeResult>
   onAskUserQuestion(callback: (questions: AskUserQuestionItem[], conversationId: string) => void): () => void
   submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
   onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void
@@ -198,8 +225,8 @@ interface CerpAPI {
   createCustomAgent(agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>): Promise<CustomAgent>
   updateCustomAgent(id: string, updates: Partial<CustomAgent>): Promise<CustomAgent | null>
   deleteCustomAgent(id: string): Promise<boolean>
-  listConversations(page?: number, limit?: number): Promise<{ data: ConversationSummary[]; pagination: { currentPage: number; totalPages: number; totalItems: number } }>
-  getConversation(id: string): Promise<{ data: ConversationFull } | null>
+  listConversations(page?: number, limit?: number): Promise<{ data: ConversationSummary[]; pagination: { currentPage: number; totalPages: number; totalItems: number }; error?: ApiErrorCode }>
+  getConversation(id: string): Promise<{ data: ConversationFull | null; error?: ApiErrorCode }>
   createConversation(data: { title: string; agentName: string; sessionId?: string; activeContextId?: string; metadata?: Record<string, unknown> }): Promise<{ data: ConversationFull } | null>
   appendConversationMessage(conversationId: string, message: Record<string, unknown>, metadata?: Record<string, unknown>): Promise<boolean>
   deleteConversation(id: string): Promise<boolean>
@@ -213,13 +240,14 @@ interface CerpAPI {
     prepaidCredits: number
     unlimited: boolean
     blockedReason?: 'no_subscription' | 'subscription_inactive'
-  } | null>
+  } | { error: ApiErrorCode } | null>
   consumeUnlimitedQuote(): Promise<{ quote: Record<string, unknown> } | null>
   listQuotes(page?: number, pageSize?: number): Promise<{
     items: Array<Record<string, unknown>>
     page: number
     pageSize: number
     total: number
+    error?: ApiErrorCode
   }>
   getCreditsBalance(): Promise<CreditsBalance | null>
   getCreditsLedger(limit?: number): Promise<CreditsLedgerResponse | null>
@@ -236,6 +264,7 @@ interface CerpAPI {
   checkGit(): Promise<{ installed: boolean; version?: string }>
   installGit(): Promise<boolean>
   onGitProgress(callback: (data: { message: string; percent: number }) => void): () => void
+  exportConversationMarkdown(defaultFileName: string, content: string): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
 }
 
 declare global {

@@ -1,12 +1,29 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { ConversationSummary, ConversationFull } from '../../../preload/index'
+import type { ConversationSummary, ConversationFull, ApiErrorCode } from '../../../preload/index'
 import type { ChatMessage } from './useAgent'
 import { useToast } from './useToast'
+
+/**
+ * El backend guarda `status` como string libre. Al RESTAURAR una conversación de
+ * la DB, 'running' nunca es un estado válido — no puede haber una tool corriendo en
+ * un turno que ya terminó (persistió). Puede quedar así si el usuario abortó a mitad
+ * de una tool call: el `abort()` del store no siempre alcanza a marcarla 'done'/'error'
+ * antes de persistir. Mapeamos 'running' → 'done' acá para que no quede una tool
+ * congelada en spinner infinito al reabrir la conversación; 'error' SÍ se preserva
+ * (una tool que falló de verdad no debe mostrarse como exitosa).
+ */
+function normalizeToolStatus(status: unknown): 'running' | 'done' | 'error' {
+  return status === 'error' ? status : 'done'
+}
 
 export function useConversations() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // 'network' → mostrar estado de error con reintento en el panel (no fingir
+  // lista vacía). 'auth' → el modal global de sesión expirada ya se está
+  // mostrando, no duplicar el aviso acá.
+  const [conversationsError, setConversationsError] = useState<ApiErrorCode | null>(null)
   const creatingRef = useRef(false)
   const { addToast } = useToast()
 
@@ -17,8 +34,10 @@ export function useConversations() {
       if (result?.data) {
         setConversations(result.data)
       }
+      setConversationsError(result?.error ?? null)
     } catch (err) {
       console.error('Failed to load conversations:', err)
+      setConversationsError('network')
       addToast('error', 'No se pudieron cargar las conversaciones')
     } finally {
       setLoading(false)
@@ -59,7 +78,7 @@ export function useConversations() {
       return null
     } catch (err) {
       console.error('Failed to create conversation:', err)
-      addToast('error', 'No se pudo crear la conversacion')
+      addToast('error', 'No se pudo crear la conversación')
       return null
     } finally {
       creatingRef.current = false
@@ -95,6 +114,10 @@ export function useConversations() {
         startTime: t.startTime,
         endTime: t.endTime,
         agentName: t.agentName,
+        // Antes se descartaban al persistir — el tipo del backend ya los contempla
+        // (ver ipc/types.ts ConversationMessage), pero nadie los mandaba en el payload.
+        subagentSteps: t.subagentSteps,
+        subagentText: t.subagentText,
       })),
       timestamp: message.timestamp,
     }
@@ -128,19 +151,37 @@ export function useConversations() {
             name: t.name,
             input: t.input,
             output: t.output,
-            status: 'done' as const, // Force done — restored conversations have no running tools
+            // Antes esto forzaba 'done' siempre — las tools que habían fallado
+            // quedaban en verde al recargar la conversación. Preservamos el status
+            // real persistido; solo caemos a 'done' si el campo directamente falta
+            // (registros viejos, previos a que se guardara este dato).
+            status: normalizeToolStatus(t.status),
             timestamp: t.startTime || m.timestamp,
             startTime: t.startTime || m.timestamp,
             endTime: t.endTime || t.startTime || m.timestamp,
             agentName: t.agentName,
+            subagentSteps: t.subagentSteps?.map((s: any) => ({
+              toolUseId: s.toolUseId,
+              name: s.name,
+              input: s.input,
+              output: s.output,
+              status: normalizeToolStatus(s.status),
+              startTime: s.startTime,
+              endTime: s.endTime,
+            })),
+            subagentText: t.subagentText,
           })),
           timestamp: m.timestamp,
         }))
       }
+      // 'auth' ya dispara el modal global de sesión expirada — no duplicar el aviso.
+      if (result?.error && result.error !== 'auth') {
+        addToast('error', 'No se pudo cargar la conversación')
+      }
       return null
     } catch (err) {
       console.error('Failed to load conversation:', err)
-      addToast('error', 'No se pudo cargar la conversacion')
+      addToast('error', 'No se pudo cargar la conversación')
       return null
     }
   }, [addToast])
@@ -170,6 +211,7 @@ export function useConversations() {
     conversations,
     activeConversationId,
     loading,
+    conversationsError,
     loadConversations,
     createConversation,
     appendMessage,

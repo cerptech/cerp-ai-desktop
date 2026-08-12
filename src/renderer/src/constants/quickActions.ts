@@ -2,17 +2,22 @@ export interface QuickAction {
   label: string
   prompt: string
   icon: string
+  /** true = termina invocando el script de Python (cerp_budget_pdf.py) para el PDF
+   *  final — se gatea sobre useToolsSetup en vez de ejecutarse a ciegas mientras
+   *  Git/Python todavía se están preparando en background (Ola 3). */
+  requiresTools?: boolean
 }
 
 export const QUICK_ACTIONS: QuickAction[] = [
   {
-    label: 'Crear cotizacion de obra',
-    prompt: 'Quiero crear un presupuesto/cotizacion de obra. Analiza los archivos de mi carpeta de trabajo y genera el presupuesto en CERP.',
+    label: 'Crear cotización de obra',
+    prompt: 'Quiero crear un presupuesto/cotización de obra. Analiza los archivos de mi carpeta de trabajo y genera el presupuesto en CERP.',
     icon: 'document',
+    requiresTools: true,
   },
   {
-    label: 'Analizar archivos de licitacion',
-    prompt: 'Analiza los archivos de mi carpeta de trabajo. Identifica capitulos, partidas, cantidades y precios. Muestra un resumen estructurado.',
+    label: 'Analizar archivos de licitación',
+    prompt: 'Analiza los archivos de mi carpeta de trabajo. Identifica capítulos, partidas, cantidades y precios. Muestra un resumen estructurado.',
     icon: 'search',
   },
   {
@@ -22,17 +27,17 @@ export const QUICK_ACTIONS: QuickAction[] = [
   },
   {
     label: 'Cashflow de proyecto',
-    prompt: 'Cual es el estado financiero de mi proyecto principal? Muestrame el cashflow',
+    prompt: '¿Cuál es el estado financiero de mi proyecto principal? Muéstrame el cashflow',
     icon: 'chart',
   },
   {
     label: 'Pedidos pendientes',
-    prompt: 'Muestrame las ordenes de compra pendientes de aprobacion',
+    prompt: 'Muéstrame las órdenes de compra pendientes de aprobación',
     icon: 'cart',
   },
   {
     label: 'Materiales con stock bajo',
-    prompt: 'Que materiales tengo con stock por debajo del minimo?',
+    prompt: '¿Qué materiales tengo con stock por debajo del mínimo?',
     icon: 'alert',
   },
 ]

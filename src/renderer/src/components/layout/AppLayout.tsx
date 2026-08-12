@@ -17,15 +17,21 @@ interface AppLayoutProps {
 
 export function AppLayout({ children, userName, onLogout, sessionActive = false, onShowOnboarding }: AppLayoutProps) {
   const [showHistory, setShowHistory] = useState(false)
+  // Ventana única (Ola 2): sin barra de título nativa — este header ES la barra
+  // de arrastre. `titleBarOverlay` (Windows/Linux) dibuja min/max/cerrar sobre
+  // la esquina superior derecha; `hiddenInset` (macOS) deja el semáforo a la
+  // izquierda. Reservamos espacio a cada lado para no dibujar debajo.
+  const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
-      {/* Title bar */}
-      <header className="flex items-center justify-between px-4 py-2 bg-white border-b border-slate-200 shrink-0 gap-3"
+    <div className="flex flex-col h-screen bg-sidebar">
+      {/* Title bar — altura fija de 40px, igual al `height` del titleBarOverlay */}
+      <header
+        className={`flex h-10 items-center justify-between border-b border-sidebar-border bg-sidebar shrink-0 gap-3 ${isMac ? 'pl-20 pr-4' : 'pl-4 pr-[140px]'}`}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <div className="flex items-center gap-2.5 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <img src={cerpLogo} alt="CERP" className="w-7 h-7 object-contain" />
-          <span className="font-semibold text-slate-800 text-sm">CERP AI</span>
+          <img src={cerpLogo} alt="CERP" className="w-6 h-6 object-contain" />
+          <span className="font-semibold text-brand-black text-[13px]">CERP AI</span>
         </div>
 
         {/* Session activity indicator in center */}
@@ -63,7 +69,7 @@ export function AppLayout({ children, userName, onLogout, sessionActive = false,
                 onClick={onLogout}
                 className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
               >
-                Cerrar sesion
+                Cerrar sesión
               </button>
             )}
           </div>

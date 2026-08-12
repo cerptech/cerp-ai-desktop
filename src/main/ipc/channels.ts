@@ -3,6 +3,9 @@ export const IPC_CHANNELS = {
   AUTH_LOGIN: 'auth:login',
   AUTH_LOGOUT: 'auth:logout',
   AUTH_GET_STATUS: 'auth:get-status',
+  // main → renderer: la sesión murió (refresh token ausente o inválido) y no
+  // se pudo renovar sola. El renderer muestra el modal de sesión expirada.
+  AUTH_SESSION_EXPIRED: 'auth:session-expired',
 
   // Agent
   AGENT_SEND_PROMPT: 'agent:send-prompt',
@@ -16,7 +19,14 @@ export const IPC_CHANNELS = {
 
   // Files
   SELECT_FOLDER: 'dialog:select-folder',
-  SELECT_PDF: 'dialog:select-pdf',
+  // Ola 1 — reemplaza al viejo SELECT_PDF (un solo PDF): multiselección + más tipos.
+  SELECT_ATTACHMENTS: 'dialog:select-attachments',
+  // Ola 3 — exporta una conversación a Markdown (dialog:showSaveDialog + escritura).
+  EXPORT_CONVERSATION: 'dialog:export-conversation',
+
+  // Dictado por voz (Ola 1) — el renderer manda los bytes crudos, el main hace el
+  // POST multipart con el Bearer (el renderer no tiene el token).
+  DICTATION_TRANSCRIBE: 'dictation:transcribe',
 
   // Custom agents/contexts
   CUSTOM_CONTEXTS_LIST: 'custom:contexts:list',

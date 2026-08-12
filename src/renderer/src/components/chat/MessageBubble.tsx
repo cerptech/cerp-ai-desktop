@@ -15,6 +15,10 @@ interface MessageBubbleProps {
   onToggleThoughts?: () => void
   /** Callback to abort the running agent */
   onStop?: () => void
+  /** Reenvía el último prompt del usuario (Ola 1) — solo se pasa en el último mensaje del asistente */
+  onRegenerate?: () => void
+  /** True mientras hay un turno en vuelo (cualquier conversación en esta pestaña) */
+  regenerateDisabled?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -41,7 +45,7 @@ function CopyMessageButton({ text }: CopyMessageButtonProps) {
       aria-label="Copiar mensaje"
       title="Copiar mensaje"
       className={[
-        'absolute top-2 right-2 flex items-center gap-1 rounded px-1.5 py-1',
+        'flex items-center gap-1 rounded px-1.5 py-1',
         'text-[10px] transition-all duration-150',
         'bg-white/80 border border-slate-200 shadow-sm',
         copied
@@ -69,6 +73,38 @@ function CopyMessageButton({ text }: CopyMessageButtonProps) {
 }
 
 // ---------------------------------------------------------------------------
+// RegenerateButton — reenvía el último prompt del usuario (Ola 1)
+// ---------------------------------------------------------------------------
+
+interface RegenerateButtonProps {
+  onClick: () => void
+  disabled?: boolean
+}
+
+function RegenerateButton({ onClick, disabled }: RegenerateButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Regenerar respuesta"
+      title={disabled ? 'Esperá a que termine la respuesta actual' : 'Regenerar respuesta'}
+      className={[
+        'flex items-center gap-1 rounded px-1.5 py-1',
+        'text-[10px] transition-all duration-150',
+        'bg-white/80 border border-slate-200 shadow-sm',
+        'text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-600',
+        'disabled:cursor-not-allowed disabled:hover:text-slate-400',
+      ].join(' ')}
+    >
+      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h5M20 20v-5h-5M4.5 9a8 8 0 0113.5-3.5L20 8M19.5 15a8 8 0 01-13.5 3.5L4 16" />
+      </svg>
+      Regenerar
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // StreamingCursor — blinking pipe shown at the end of streaming content
 // Uses CSS animation defined in tailwind.css (@keyframes blink-cursor).
 // ---------------------------------------------------------------------------
@@ -81,14 +117,16 @@ function StreamingCursor() {
 // MessageBubble — main export
 // ---------------------------------------------------------------------------
 
-export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts, onStop }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts, onStop, onRegenerate, regenerateDisabled }: MessageBubbleProps) {
   const isUser = message.role === 'user'
 
   if (isUser) {
+    // Burbuja asimétrica (converge con ai.cerp.es): usuario a la derecha con
+    // fondo gris claro, sin burbuja del lado del asistente (ver más abajo).
     return (
       <div className="flex justify-end mb-4">
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-brand-orange text-white px-4 py-3">
-          <div className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</div>
+        <div className="max-w-[85%] rounded-3xl rounded-br-lg bg-[#f4f5f7] px-4 py-2.5 text-[15px] leading-relaxed text-brand-black whitespace-pre-wrap">
+          {message.content}
         </div>
       </div>
     )
@@ -105,12 +143,18 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
   const showCopyButton = !!message.content && !isStreaming
 
   return (
-    <div className="flex justify-start mb-4">
-      {/* group class enables hover-based opacity on CopyMessageButton */}
-      <div className="relative group max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 text-slate-800 px-4 py-3 shadow-sm">
+    <div className="flex justify-start mb-5">
+      {/* Sin burbuja del lado del asistente (converge con ai.cerp.es): texto
+          suelto a ancho completo, `group` habilita el hover de los botones. */}
+      <div className="relative group w-full text-[15px] leading-relaxed text-brand-black">
 
-        {/* Copy message button (hover reveal, top-right) */}
-        {showCopyButton && <CopyMessageButton text={message.content} />}
+        {/* Copy + Regenerate buttons (hover reveal, top-right) */}
+        {(showCopyButton || onRegenerate) && (
+          <div className="absolute top-2 right-2 flex items-center gap-1">
+            {onRegenerate && <RegenerateButton onClick={onRegenerate} disabled={regenerateDisabled} />}
+            {showCopyButton && <CopyMessageButton text={message.content} />}
+          </div>
+        )}
 
         {/* Thinking loader (default during streaming, when showThoughts is off) */}
         {showThinkingLoader && (

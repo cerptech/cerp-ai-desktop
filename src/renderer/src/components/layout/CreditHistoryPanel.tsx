@@ -100,7 +100,7 @@ function outcome(q: QuoteRow): { label: string; tone: string; detail?: string } 
 function formatDate(iso?: string): string {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })
+    return new Date(iso).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
   } catch {
     return ''
   }
@@ -130,7 +130,12 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
       if (mode !== 'off') {
         try {
           const ledger = await window.cerpAPI.getCreditsLedger(30)
-          if (!cancelled) setLedgerEntries(ledger?.entries ?? [])
+          if (!cancelled) {
+            // 'auth' ya dispara el modal global de sesión expirada — no marcar
+            // error acá también (evita un mensaje redundante debajo del modal).
+            if (ledger?.error && ledger.error !== 'auth') setError(true)
+            setLedgerEntries(ledger?.entries ?? [])
+          }
         } catch {
           if (!cancelled) setError(true)
         }
@@ -141,7 +146,10 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
       window.cerpAPI
         .listQuotes(1, 30)
         .then((res) => {
-          if (!cancelled) setRows((res?.items as unknown as QuoteRow[]) ?? [])
+          if (!cancelled) {
+            if (res?.error && res.error !== 'auth') setError(true)
+            setRows((res?.items as unknown as QuoteRow[]) ?? [])
+          }
         })
         .catch(() => {
           if (!cancelled) setError(true)
@@ -191,7 +199,7 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
           )}
 
           {!error && !loading && usingLedger && ledgerEntries?.length === 0 && (
-            <p className="text-xs text-slate-500 p-4 text-center">Todavía no tenés movimientos de créditos.</p>
+            <p className="text-xs text-slate-500 p-4 text-center">Todavía no tienes movimientos de créditos.</p>
           )}
           {!error && usingLedger && ledgerEntries?.map((entry) => (
             <div key={entry.id} className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md hover:bg-slate-50">

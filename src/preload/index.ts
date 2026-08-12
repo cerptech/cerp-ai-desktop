@@ -1,9 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const IPC = {
   AUTH_LOGIN: 'auth:login',
   AUTH_LOGOUT: 'auth:logout',
   AUTH_GET_STATUS: 'auth:get-status',
+  AUTH_SESSION_EXPIRED: 'auth:session-expired',
   AGENT_SEND_PROMPT: 'agent:send-prompt',
   AGENT_ABORT: 'agent:abort',
   AGENT_RESET_SESSION: 'agent:reset-session',
@@ -18,7 +19,9 @@ const IPC = {
   AGENT_STREAM_DONE: 'agent:stream:done',
   AGENT_STREAM_ERROR: 'agent:stream:error',
   SELECT_FOLDER: 'dialog:select-folder',
-  SELECT_PDF: 'dialog:select-pdf',
+  SELECT_ATTACHMENTS: 'dialog:select-attachments',
+  EXPORT_CONVERSATION: 'dialog:export-conversation',
+  DICTATION_TRANSCRIBE: 'dictation:transcribe',
   CUSTOM_CONTEXTS_LIST: 'custom:contexts:list',
   CUSTOM_CONTEXT_CREATE: 'custom:context:create',
   CUSTOM_CONTEXT_UPDATE: 'custom:context:update',
@@ -77,6 +80,26 @@ export interface OnboardingProgressUpdate {
   relaunch?: boolean
 }
 
+/** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
+export type ModelChoice = 'auto' | 'fast' | 'powerful'
+
+/** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
+export interface AttachmentFile {
+  path: string
+  name: string
+  ext: string
+  sizeBytes: number
+}
+
+/** Resultado de `dictation:transcribe`. 'auth' ya disparó AUTH_SESSION_EXPIRED (el modal
+ *  global de sesión expirada ya se está mostrando); 'network' es cualquier otra falla;
+ *  'validation' es un problema con el audio en sí (vacío o > 25 MB). */
+export interface DictationTranscribeResult {
+  text?: string
+  language?: string
+  error?: 'auth' | 'network' | 'validation'
+}
+
 export interface AskUserQuestionOption {
   label: string
   description: string
@@ -102,6 +125,9 @@ export type QuoteFirewallEvent =
 // results as `type:'user'` messages with tool_result content blocks carrying tool_use_id.
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
+  // Delta de streaming token a token (Ola 2) — solo del mensaje de nivel
+  // superior; los deltas de subagentes van por `subagent_text` aparte.
+  | { type: 'text_delta'; text: string; index: number }
   | { type: 'tool_start'; toolUseId: string; name: string; input?: string }
   | { type: 'tool_done'; toolUseId: string; output?: string; isError?: boolean }
   | { type: 'thinking'; text: string }
@@ -156,6 +182,12 @@ export interface CustomAgent {
   createdAt: string
   updatedAt: string
 }
+
+/** Distingue por qué falló una llamada al backend: 'auth' ya disparó el modal
+ *  global de sesión expirada (el renderer no debe mostrar un error propio
+ *  además); 'network' es cualquier otra falla (red, 5xx) — ahí sí corresponde
+ *  un estado de error visible con reintento. */
+export type ApiErrorCode = 'auth' | 'network'
 
 export interface ConversationSummary {
   _id: string
@@ -234,6 +266,7 @@ export interface CreditLedgerEntry {
 
 export interface CreditsLedgerResponse {
   entries: CreditLedgerEntry[]
+  error?: ApiErrorCode
 }
 
 const api = {
@@ -241,9 +274,16 @@ const api = {
   login: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_LOGIN),
   logout: (): Promise<void> => ipcRenderer.invoke(IPC.AUTH_LOGOUT),
   getAuthStatus: (): Promise<AuthState> => ipcRenderer.invoke(IPC.AUTH_GET_STATUS),
+  // La sesión murió y no se pudo renovar sola (refresh token ausente/inválido).
+  // El renderer muestra el modal de "Tu sesión expiró".
+  onSessionExpired: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on(IPC.AUTH_SESSION_EXPIRED, handler)
+    return () => ipcRenderer.removeListener(IPC.AUTH_SESSION_EXPIRED, handler)
+  },
 
   // Agent
-  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }> }): Promise<{ started: boolean; error?: string; code?: string }> =>
+  sendPrompt: (payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>; modelChoice?: ModelChoice }): Promise<{ started: boolean; error?: string; code?: string }> =>
     ipcRenderer.invoke(IPC.AGENT_SEND_PROMPT, payload),
   abortAgent: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_ABORT, conversationId),
   resetSession: (conversationId?: string): Promise<void> => ipcRenderer.invoke(IPC.AGENT_RESET_SESSION, conversationId),
@@ -254,7 +294,15 @@ const api = {
 
   // Files
   selectFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_FOLDER),
-  selectPdf: (): Promise<string | null> => ipcRenderer.invoke(IPC.SELECT_PDF),
+  selectAttachments: (): Promise<AttachmentFile[]> => ipcRenderer.invoke(IPC.SELECT_ATTACHMENTS),
+  // Ruta real en disco de un File del navegador (drag&drop) — Electron 32+ ya no expone
+  // File.path directamente por seguridad; este es el reemplazo oficial documentado para
+  // usar vía contextBridge.
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  // Dictado por voz (Ola 1) — el renderer manda los bytes crudos (no tiene el Bearer).
+  transcribeDictation: (buffer: ArrayBuffer, mimeType: string): Promise<DictationTranscribeResult> =>
+    ipcRenderer.invoke(IPC.DICTATION_TRANSCRIBE, { buffer, mimeType }),
 
   // ask_user_question: listener for incoming questions + sender for user answers.
   // Both carry conversationId so each conversation routes to its own widget.
@@ -308,9 +356,12 @@ const api = {
   deleteCustomAgent: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.CUSTOM_AGENT_DELETE, id),
 
   // Conversations
-  listConversations: (page?: number, limit?: number): Promise<any> =>
-    ipcRenderer.invoke(IPC.CONVERSATION_LIST, { page, limit }),
-  getConversation: (id: string): Promise<any> =>
+  listConversations: (page?: number, limit?: number): Promise<{
+    data: ConversationSummary[]
+    pagination: { currentPage: number; totalPages: number; totalItems: number }
+    error?: ApiErrorCode
+  }> => ipcRenderer.invoke(IPC.CONVERSATION_LIST, { page, limit }),
+  getConversation: (id: string): Promise<{ data: ConversationFull | null; error?: ApiErrorCode }> =>
     ipcRenderer.invoke(IPC.CONVERSATION_GET, id),
   createConversation: (data: { title: string; agentName: string; sessionId?: string; activeContextId?: string; metadata?: Record<string, unknown> }): Promise<any> =>
     ipcRenderer.invoke(IPC.CONVERSATION_CREATE, data),
@@ -330,7 +381,7 @@ const api = {
     prepaidCredits: number
     unlimited: boolean
     blockedReason?: 'no_subscription' | 'subscription_inactive'
-  } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
+  } | { error: ApiErrorCode } | null> => ipcRenderer.invoke(IPC.QUOTES_GET_ELIGIBILITY),
   consumeUnlimitedQuote: (): Promise<{ quote: Record<string, unknown> } | null> =>
     ipcRenderer.invoke(IPC.QUOTES_CONSUME_UNLIMITED),
   listQuotes: (page?: number, pageSize?: number): Promise<{
@@ -338,6 +389,7 @@ const api = {
     page: number
     pageSize: number
     total: number
+    error?: ApiErrorCode
   }> => ipcRenderer.invoke(IPC.QUOTES_LIST, { page, pageSize }),
 
   // Credits (Modelo CERP — créditos de IA)
@@ -388,6 +440,11 @@ const api = {
     ipcRenderer.on(IPC.GIT_INSTALL_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC.GIT_INSTALL_PROGRESS, handler)
   },
+
+  // Export conversation (Ola 3) — el renderer arma el Markdown, el main muestra el
+  // diálogo nativo de guardado y escribe el archivo.
+  exportConversationMarkdown: (defaultFileName: string, content: string): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.EXPORT_CONVERSATION, { defaultFileName, content }),
 }
 
 contextBridge.exposeInMainWorld('cerpAPI', api)

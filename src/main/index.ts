@@ -13,34 +13,22 @@ if (!process.env.AUTH0_AUDIENCE) process.env.AUTH0_AUDIENCE = 'https://api.cerp.
 
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
-import { registerIpcHandlers, handleCallback } from './ipc/handlers'
+import { registerIpcHandlers } from './ipc/handlers'
 import { initAutoUpdate } from './updater'
 import { logger } from './utils/logger'
 
 let mainWindow: BrowserWindow | null = null
 
-// Register custom protocol for Auth0 callback
-if (process.defaultApp) {
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('cerp-ai', process.execPath, [process.argv[1]])
-  }
-} else {
-  app.setAsDefaultProtocolClient('cerp-ai')
-}
-
-// Single instance lock — required for custom protocol on Windows
+// Single instance lock — sigue siendo necesario para no abrir dos ventanas si el
+// usuario lanza la app dos veces. El login usa un servidor HTTP local en vez del
+// protocolo cerp-ai:// (ver auth0Client.ts), así que ya no hay nada que registrar
+// como cliente de protocolo por defecto acá.
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
   app.quit()
 } else {
-  app.on('second-instance', (_event, commandLine) => {
-    // Handle cerp-ai:// protocol from second instance
-    const url = commandLine.find((arg) => arg.startsWith('cerp-ai://'))
-    if (url) {
-      handleCallback(url)
-    }
-
+  app.on('second-instance', () => {
     // Focus existing window
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -67,6 +55,13 @@ if (!gotTheLock) {
 }
 
 function createWindow(): void {
+  // Ventana única (Ola 2): sin barra de título nativa — el header propio de
+  // AppLayout hace de barra de arrastre. En Windows/Linux se superponen los
+  // controles nativos (min/max/cerrar) sobre el header con `titleBarOverlay`;
+  // en macOS se usa `hiddenInset`, que ya deja el semáforo flotando sobre
+  // cualquier contenido sin necesitar overlay color.
+  const isMac = process.platform === 'darwin'
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 750,
@@ -74,6 +69,16 @@ function createWindow(): void {
     minHeight: 600,
     title: 'CERP AI',
     icon: join(__dirname, '../../resources/icon.png'),
+    titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    ...(isMac
+      ? {}
+      : {
+          titleBarOverlay: {
+            color: '#fafafa',
+            symbolColor: '#1e1e1e',
+            height: 40,
+          },
+        }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -99,11 +104,6 @@ function createWindow(): void {
     mainWindow = null
   })
 }
-
-// Handle cerp-ai:// on macOS
-app.on('open-url', (_event, url) => {
-  handleCallback(url)
-})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

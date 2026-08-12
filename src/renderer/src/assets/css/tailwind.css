@@ -1,21 +1,39 @@
 @import "tailwindcss";
 
 @theme {
-  /* CERP Brand Colors */
-  --color-brand-orange: #FE700B;
-  --color-brand-orange-light: #FF8B3D;
-  --color-brand-black: #1E1E1E;
-  --color-brand-white: #F5F5F5;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* CERP brand (converged with ai.cerp.es / cerp-ai-frontend globals.css) */
+  --color-brand-black: #1e1e1e;
+  --color-brand-white: #f5f5f5;
   --color-brand-gray: #747474;
+  --color-brand-gray-light: #a8a8a8;
+  --color-brand-gray-dark: #5a5a5a;
+  --color-brand-orange: #fe700b;
+  --color-brand-orange-light: #ff8b3d;
+  --color-brand-orange-dark: #e55a00;
+
+  /* Primary scale (brand palette, mirrors cerp-frontend / ai.cerp.es) */
+  --color-primary-50: #fff4e6;
+  --color-primary-100: #ffe4cc;
+  --color-primary-200: #ffc999;
+  --color-primary-300: #ffad66;
+  --color-primary-400: #ff9233;
+  --color-primary-500: #fe700b;
+  --color-primary-600: #e55a00;
+  --color-primary-700: #cc4400;
+  --color-primary-800: #b32f00;
+  --color-primary-900: #991a00;
+
+  /* CERP IA surfaces (from ai.cerp.es) */
+  --color-sidebar: #fafafa;
+  --color-sidebar-border: #ececec;
+  --color-composer-border: #e4e7ec;
 
   /* Semantic */
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
-
-  /* Primary alias */
-  --color-primary-500: #FE700B;
-  --color-primary-600: #e56400;
 
   /* Animations */
   --animate-slide-in: slide-in 0.25s ease-out;
@@ -47,4 +65,27 @@
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: blink-cursor 1s step-end infinite;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased;
+  }
+}
+
+/* Thin scrollbar (8px, subtle thumb) — used across the whole app shell,
+   converged with the .cerp-scroll pattern from ai.cerp.es. */
+.cerp-scroll::-webkit-scrollbar,
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.cerp-scroll::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+}
+.cerp-scroll::-webkit-scrollbar-track,
+::-webkit-scrollbar-track {
+  background: transparent;
 }

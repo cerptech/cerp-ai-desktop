@@ -2,7 +2,13 @@ import { shell } from 'electron'
 import { randomBytes, createHash } from 'crypto'
 import { createServer, Server } from 'http'
 import { tokenStore } from './tokenStore'
+import { clearApiKey } from './apiKeyManager'
 import { logger } from '../utils/logger'
+
+// Margen de seguridad: un token que expira dentro de este umbral se trata
+// como expirado, para no arrancar una request con un token que muere a mitad
+// de camino en el servidor.
+const EXPIRY_MARGIN_MS = 60 * 1000
 
 // Read env vars lazily (dotenv loads after imports are evaluated)
 function getAuth0Config() {
@@ -15,6 +21,35 @@ function getAuth0Config() {
 
 const CALLBACK_PORT = 18973 // Fixed port for local callback server
 const LOCAL_REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
+
+/**
+ * Página HTML de la ventana de callback (Ola 2) — sigue siendo inline (no hay
+ * bundler para esta ruta, el servidor HTTP local la sirve tal cual) pero
+ * converge con el resto de la UI: tarjeta centrada rounded-2xl, círculo con
+ * ícono SVG, tipografía del sistema, tildes correctas.
+ */
+function renderCallbackPage(opts: { success: boolean; title: string; message: string }): string {
+  const circleColor = opts.success ? '#FE700B' : '#ef4444'
+  const iconPath = opts.success
+    ? '<path d="M20 6 9 17l-5-5" />'
+    : '<path d="M18 6 6 18" /><path d="M6 6l12 12" />'
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>CERP AI</title>
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(to bottom,#f8fafc,#ffffff);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="text-align:center;background:#ffffff;border:1px solid #e4e7ec;border-radius:24px;padding:40px 48px;box-shadow:0 4px 18px rgba(16,24,40,0.08);max-width:360px;">
+    <div style="width:56px;height:56px;border-radius:9999px;background:${circleColor};display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg>
+    </div>
+    <h2 style="color:#1e1e1e;margin:0 0 8px;font-size:18px;font-weight:600;">${opts.title}</h2>
+    <p style="color:#747474;margin:0;font-size:14px;line-height:1.5;">${opts.message}</p>
+  </div>
+</body>
+</html>`
+}
 
 let codeVerifier: string | null = null
 let callbackServer: Server | null = null
@@ -74,16 +109,24 @@ export async function login(): Promise<string> {
 
       if (error) {
         const desc = url.searchParams.get('error_description') || error
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Error de autenticacion</h2><p>Puedes cerrar esta ventana.</p></body></html>')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderCallbackPage({
+          success: false,
+          title: 'No se pudo iniciar sesión',
+          message: 'Ocurrió un error al autenticar. Ya puedes cerrar esta ventana y volver a intentarlo.',
+        }))
         cleanup()
         reject(new Error(`Auth0 error: ${desc}`))
         return
       }
 
       if (!code || !codeVerifier) {
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Error</h2><p>Codigo de autorizacion no recibido.</p></body></html>')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderCallbackPage({
+          success: false,
+          title: 'No se pudo iniciar sesión',
+          message: 'No se recibió el código de autorización. Ya puedes cerrar esta ventana.',
+        }))
         cleanup()
         reject(new Error('Missing authorization code'))
         return
@@ -105,14 +148,22 @@ export async function login(): Promise<string> {
 
         if (!tokenResponse.ok) {
           const body = await tokenResponse.text()
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end('<html><body><h2>Error</h2><p>No se pudo completar el login. Puedes cerrar esta ventana.</p></body></html>')
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(renderCallbackPage({
+            success: false,
+            title: 'No se pudo iniciar sesión',
+            message: 'No se pudo completar el inicio de sesión. Ya puedes cerrar esta ventana.',
+          }))
           cleanup()
           reject(new Error(`Token exchange failed: ${body}`))
           return
         }
 
-        const { access_token } = (await tokenResponse.json()) as { access_token: string }
+        const { access_token, refresh_token, expires_in } = (await tokenResponse.json()) as {
+          access_token: string
+          refresh_token?: string
+          expires_in?: number
+        }
 
         // Fetch user info
         const userInfoRes = await fetch(`https://${domain}/userinfo`, {
@@ -130,26 +181,34 @@ export async function login(): Promise<string> {
           })
         }
 
-        tokenStore.setAccessToken(access_token)
+        tokenStore.setSession({
+          accessToken: access_token,
+          refreshToken: refresh_token ?? null,
+          expiresAt: Date.now() + (expires_in ?? 3600) * 1000,
+        })
+
+        if (!refresh_token) {
+          logger.warn('Auth0 no devolvió refresh_token — revisar que "Allow Offline Access" esté habilitado en la Application/API de Auth0')
+        }
 
         // Success page
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-        res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc">
-          <div style="text-align:center">
-            <div style="width:60px;height:60px;border-radius:16px;background:#FE700B;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
-              <span style="color:white;font-size:28px;font-weight:bold">C</span>
-            </div>
-            <h2 style="color:#1e293b;margin:0 0 8px">Login exitoso</h2>
-            <p style="color:#64748b">Puedes cerrar esta ventana y volver a CERP AI.</p>
-          </div>
-        </body></html>`)
+        res.end(renderCallbackPage({
+          success: true,
+          title: 'Sesión iniciada correctamente',
+          message: 'Ya puedes volver a la aplicación.',
+        }))
 
         logger.info('Auth0 login successful')
         cleanup()
         resolve(access_token)
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Error</h2><p>Error inesperado. Puedes cerrar esta ventana.</p></body></html>')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderCallbackPage({
+          success: false,
+          title: 'No se pudo iniciar sesión',
+          message: 'Ocurrió un error inesperado. Ya puedes cerrar esta ventana.',
+        }))
         cleanup()
         reject(err instanceof Error ? err : new Error(String(err)))
       }
@@ -162,7 +221,9 @@ export async function login(): Promise<string> {
         response_type: 'code',
         client_id: clientId,
         redirect_uri: LOCAL_REDIRECT_URI,
-        scope: 'openid profile email',
+        // offline_access → Auth0 emite refresh_token (requiere "Allow Offline Access"
+        // habilitado en la Application y en la API de Auth0; ver README de config).
+        scope: 'openid profile email offline_access',
         audience: audience,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
@@ -194,16 +255,97 @@ export async function login(): Promise<string> {
   }
 }
 
-// Keep for production use with custom protocol
-export async function handleCallback(_url: string): Promise<void> {
-  // Not used in dev mode (local HTTP server handles callback)
-}
-
 export function logout(): void {
   tokenStore.clearAll()
+  clearApiKey()
   logger.info('User logged out')
 }
 
-export function isAuthenticated(): boolean {
-  return tokenStore.getAccessToken() !== null
+/**
+ * Refresh en vuelo (memoizado): `ensureFreshToken()` y el `onTokenExpired` del
+ * httpClient pueden disparar un refresh casi al mismo tiempo (p.ej. una llamada de
+ * red en curso recibe 401 justo cuando AUTH_GET_STATUS también decide refrescar).
+ * Con Refresh Token Rotation, DOS llamadas concurrentes con el mismo refresh_token
+ * revocan la familia entera en Auth0 y desloguean al usuario. Todos los callers
+ * comparten esta única promesa mientras hay un refresh en curso.
+ */
+let inflightRefresh: Promise<string> | null = null
+
+/**
+ * Intercambia el refresh token guardado por un accessToken nuevo. Auth0 puede
+ * rotar el refresh token (Refresh Token Rotation) — si viene uno nuevo en la
+ * respuesta lo persistimos; si no, mantenemos el actual.
+ */
+export function refreshAccessToken(): Promise<string> {
+  if (inflightRefresh) return inflightRefresh
+
+  inflightRefresh = doRefreshAccessToken().finally(() => {
+    inflightRefresh = null
+  })
+  return inflightRefresh
+}
+
+async function doRefreshAccessToken(): Promise<string> {
+  const { domain, clientId } = getAuth0Config()
+  const refreshToken = tokenStore.getRefreshToken()
+
+  if (!domain || !clientId || !refreshToken) {
+    throw new Error('No hay refresh token disponible para renovar la sesión')
+  }
+
+  const res = await fetch(`https://${domain}/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: refreshToken,
+    }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`No se pudo renovar el token: ${res.status} ${body}`)
+  }
+
+  const data = (await res.json()) as { access_token: string; refresh_token?: string; expires_in?: number }
+
+  tokenStore.setSession({
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token ?? refreshToken,
+    expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+  })
+
+  logger.info('Access token renovado correctamente')
+  return data.access_token
+}
+
+/**
+ * Devuelve un accessToken válido, refrescándolo primero si está por vencer.
+ * `null` significa "no hay sesión utilizable" — ni token vigente ni refresh
+ * posible (sin refresh token, o el refresh falló porque fue revocado/venció).
+ * Usar esto en cualquier punto que vaya a hacer una llamada de red real.
+ */
+export async function ensureFreshToken(): Promise<string | null> {
+  const token = tokenStore.getAccessToken()
+  if (!token) return null
+
+  const expiresAt = tokenStore.getExpiresAt()
+  if (expiresAt === null) {
+    logger.warn('Token sin fecha de expiración guardada (credenciales antiguas) — se requiere un nuevo login')
+    return null
+  }
+
+  if (Date.now() < expiresAt - EXPIRY_MARGIN_MS) return token
+
+  try {
+    return await refreshAccessToken()
+  } catch (err) {
+    logger.warn('No se pudo refrescar el token de acceso:', err)
+    // El accessToken guardado ya está muerto (venció y el refresh falló) — lo
+    // limpiamos para que httpClient no lo siga mandando en requests directos
+    // (uploadFile/downloadFile no pasan por ensureFreshToken) hasta el próximo login.
+    tokenStore.clearAccessToken()
+    return null
+  }
 }

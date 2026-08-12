@@ -73,6 +73,11 @@ interface AgentSession {
   messageQueue: MessageQueue
   cwd: string
   contextId: string | null
+  // Modelo con el que arrancó esta sesión (Ola 1 — selector de modelo). Igual que
+  // cwd/contextId: si el usuario cambia de modelo mientras la conversación sigue
+  // abierta, reiniciamos SOLO esa sesión para que el próximo mensaje use el modelo
+  // nuevo (sendFollowUp no puede cambiarlo — el SDK fija el modelo al crear la query).
+  model: string
   processingTurn: boolean
   // Registro de delegaciones activas: Agent/Task tool_use_id → agentName. Por-sesión
   // para que los eventos internos de subagentes resuelvan el nombre correcto.
@@ -223,9 +228,9 @@ export async function runAgent(
 
   let session = sessions.get(conversationId)
 
-  // If THIS conversation's session exists but cwd/context changed, restart only it.
-  // Other conversations' sessions are untouched — that's the point of concurrency.
-  if (session && (cwd !== session.cwd || contextId !== session.contextId)) {
+  // If THIS conversation's session exists but cwd/context/model changed, restart only
+  // it. Other conversations' sessions are untouched — that's the point of concurrency.
+  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
     closeSession(conversationId)
     session = undefined
@@ -446,6 +451,7 @@ async function startSession(
     messageQueue,
     cwd,
     contextId,
+    model,
     processingTurn: false,
     activeDelegations: new Map(),
     heartbeat: null,
@@ -846,6 +852,19 @@ function extractToolResultOutput(content: unknown): string {
 function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string, string>, session?: AgentSession): AgentStreamEvent | AgentStreamEvent[] | null {
   const type = msg.type as string
   const subtype = msg.subtype as string | undefined
+
+  // Streaming raw event (Ola 2 — token a token). Only messages with
+  // parent_tool_use_id === null reach here: subagent stream_events are
+  // intercepted earlier in processStreamLoop (parentToolUseId branch, which
+  // `continue`s past mapMessage entirely) — so this is always the top-level
+  // assistant's own stream, never a delegated subagent's.
+  if (type === 'stream_event') {
+    const event = msg.event as { type?: string; index?: number; delta?: { type?: string; text?: string } } | undefined
+    if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+      return { type: 'text_delta', text: event.delta.text, index: event.index ?? 0 }
+    }
+    return null
+  }
 
   // Assistant message with text and/or tool_use blocks
   if (type === 'assistant') {

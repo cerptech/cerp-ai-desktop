@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react'
-import type { AskUserQuestionItem, UserAnswerPayload } from '../../../preload/index'
+import type { AskUserQuestionItem, UserAnswerPayload, ModelChoice } from '../../../preload/index'
 import {
   getRuntime,
   subscribe,
@@ -74,8 +74,8 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
   )
 
   const sendPrompt = useCallback(
-    (prompt: string, cwd?: string, activeContextId?: string) =>
-      storeSendPrompt(conversationId, prompt, cwd, activeContextId),
+    (prompt: string, cwd?: string, activeContextId?: string, modelChoice?: ModelChoice) =>
+      storeSendPrompt(conversationId, prompt, cwd, activeContextId, modelChoice),
     [conversationId],
   )
 
