@@ -17,6 +17,8 @@ permissions:
 jobs:
   build:
     strategy:
+      # Un fallo de red en una plataforma no debe cancelar las demás
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -44,23 +46,47 @@ jobs:
       - name: Build app
         run: npm run build
 
+      # La descarga del zip de Electron desde los releases de GitHub falla de forma
+      # intermitente (EOF) en los runners — visto el 2026-08-12, 4 intentos seguidos.
+      # Reintentar el paso completo con backoff resuelve el caso sin cambiar de CDN.
       - name: Build installer (Windows)
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --config
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            npx electron-builder --win --config && exit 0
+            echo "electron-builder falló (intento $i/5) — reintento en 90s"
+            sleep 90
+          done
+          exit 1
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build installer (macOS)
         if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --config
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            npx electron-builder --mac --config && exit 0
+            echo "electron-builder falló (intento $i/5) — reintento en 90s"
+            sleep 90
+          done
+          exit 1
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build installer (Linux)
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --config
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            npx electron-builder --linux --config && exit 0
+            echo "electron-builder falló (intento $i/5) — reintento en 90s"
+            sleep 90
+          done
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
