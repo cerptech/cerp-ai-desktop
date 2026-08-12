@@ -105,7 +105,6 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
     activeAgentDelegation: rt.activeAgentDelegation,
     promptSuggestions: rt.promptSuggestions,
     statusMessage: rt.statusMessage,
-    sessionCost: rt.sessionCost,
     sessionTokensIn: rt.sessionTokensIn,
     sessionTokensOut: rt.sessionTokensOut,
     pendingQuestions: rt.pendingQuestions as AskUserQuestionItem[] | null,

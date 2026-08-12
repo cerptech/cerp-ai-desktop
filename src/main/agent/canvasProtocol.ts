@@ -22,7 +22,11 @@ import { logger } from '../utils/logger'
 
 export const CANVAS_PROTOCOL_SCHEME = 'cerp-canvas'
 
-const CANVAS_CSP =
+/** Exportada para reutilizar el MISMO string en `canvas:open-external` (handlers.ts)
+ *  — el HTML que se escribe a disco para abrir en el navegador del sistema no pasa
+ *  por este protocolo (no hay header de respuesta posible en un archivo local), así
+ *  que necesita la CSP como `<meta>` tag. Debe ser la misma política, no una copia. */
+export const CANVAS_CSP =
   "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'"
 
 /**
@@ -54,8 +58,11 @@ const HEIGHT_REPORTER = `<script>
 
 /** Envuelve el HTML del agente en un documento con base tipográfica sobria.
  *  La CSP va SOLO por header (ver CANVAS_CSP en el Response) — no hace falta
- *  duplicarla en un meta tag acá, la respuesta ya no depende de eso. */
-function buildCanvasDocument(html: string): string {
+ *  duplicarla en un meta tag acá, la respuesta ya no depende de eso.
+ *  Exportada: `canvas:open-external` (handlers.ts) la reutiliza para no duplicar
+ *  el armado del documento, y le inyecta la CSP como `<meta>` tag aparte (ver
+ *  comentario de CANVAS_CSP arriba). */
+export function buildCanvasDocument(html: string): string {
   return `<!doctype html>
 <html lang="es">
 <head>
