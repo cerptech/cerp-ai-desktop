@@ -3,6 +3,12 @@ import type { ConversationSummary, ConversationFull, ApiErrorCode } from '../../
 import type { ChatMessage } from './useAgent'
 import { useToast } from './useToast'
 
+/** El backend guarda `status` como string libre — nos quedamos con el valor real si
+ *  es uno de los tres válidos, y caemos a 'done' solo cuando el campo falta del todo. */
+function normalizeToolStatus(status: unknown): 'running' | 'done' | 'error' {
+  return status === 'running' || status === 'error' || status === 'done' ? status : 'done'
+}
+
 export function useConversations() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -101,6 +107,10 @@ export function useConversations() {
         startTime: t.startTime,
         endTime: t.endTime,
         agentName: t.agentName,
+        // Antes se descartaban al persistir — el tipo del backend ya los contempla
+        // (ver ipc/types.ts ConversationMessage), pero nadie los mandaba en el payload.
+        subagentSteps: t.subagentSteps,
+        subagentText: t.subagentText,
       })),
       timestamp: message.timestamp,
     }
@@ -134,11 +144,25 @@ export function useConversations() {
             name: t.name,
             input: t.input,
             output: t.output,
-            status: 'done' as const, // Force done — restored conversations have no running tools
+            // Antes esto forzaba 'done' siempre — las tools que habían fallado
+            // quedaban en verde al recargar la conversación. Preservamos el status
+            // real persistido; solo caemos a 'done' si el campo directamente falta
+            // (registros viejos, previos a que se guardara este dato).
+            status: normalizeToolStatus(t.status),
             timestamp: t.startTime || m.timestamp,
             startTime: t.startTime || m.timestamp,
             endTime: t.endTime || t.startTime || m.timestamp,
             agentName: t.agentName,
+            subagentSteps: t.subagentSteps?.map((s: any) => ({
+              toolUseId: s.toolUseId,
+              name: s.name,
+              input: s.input,
+              output: s.output,
+              status: normalizeToolStatus(s.status),
+              startTime: s.startTime,
+              endTime: s.endTime,
+            })),
+            subagentText: t.subagentText,
           })),
           timestamp: m.timestamp,
         }))

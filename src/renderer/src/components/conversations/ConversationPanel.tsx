@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback, type MutableRefObject } from 'react'
-import { MessageCircle, Trash2, ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-react'
+import { MessageCircle, Trash2, Download, ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-react'
 import type { ConversationSummary, ApiErrorCode } from '../../../../preload/index'
 import { AGENTS } from '@/components/agents/agentConfig'
 import { AgentIconGlyph, type AgentIconType } from '@/components/agents/AgentIcon'
@@ -22,6 +22,8 @@ interface ConversationPanelProps {
   onSelectConversation: (id: string) => void
   onNewConversation: () => void
   onDeleteConversation: (id: string) => void
+  /** Exporta la conversación a un archivo Markdown vía diálogo de guardado nativo. */
+  onExportConversation: (id: string) => void
   /** Ref that external callers can use to focus the search input (e.g. Ctrl+K) */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
 }
@@ -57,6 +59,7 @@ export function ConversationPanel({
   onSelectConversation,
   onNewConversation,
   onDeleteConversation,
+  onExportConversation,
   searchInputRef,
 }: ConversationPanelProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
@@ -239,19 +242,32 @@ export function ConversationPanel({
                     <span className="text-[11px] text-slate-300">{conv.messageCount} msg</span>
                   </div>
                 </div>
-                {/* Eliminar (hover) — botón HERMANO del contenedor, no anidado */}
+                {/* Exportar + eliminar (hover) — botones HERMANOS del contenedor, no anidados */}
                 {isHovered && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteConversation(conv._id)
-                    }}
-                    className="absolute right-1.5 top-1.5 p-0.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                    title="Eliminar"
-                  >
-                    <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
-                  </button>
+                  <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onExportConversation(conv._id)
+                      }}
+                      className="p-0.5 rounded text-slate-400 hover:text-brand-orange hover:bg-orange-50 transition-colors"
+                      title="Exportar a Markdown"
+                    >
+                      <Download className="size-3" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteConversation(conv._id)
+                      }}
+                      className="p-0.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

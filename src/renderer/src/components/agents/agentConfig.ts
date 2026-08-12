@@ -1,5 +1,4 @@
 import { Building2, Database, FileSpreadsheet, Box, Ruler, Hammer, BookOpen, FileText } from 'lucide-react'
-import type { CustomAgent } from '../../../../preload/index'
 import type { AgentIconType } from './AgentIcon'
 
 export interface AgentInfo {
@@ -69,17 +68,3 @@ export const AGENTS: AgentInfo[] = [
     shortDescription: 'Generar reportes',
   },
 ]
-
-export function mergeAgentConfigs(customAgents: CustomAgent[]): AgentInfo[] {
-  const custom: AgentInfo[] = customAgents.map((a) => ({
-    name: a.name,
-    label: a.label,
-    description: a.description,
-    // Los agentes custom siguen siendo emoji libre elegido por el usuario
-    // (CustomAgentModal) — no se fuerzan a un ícono lucide.
-    icon: a.icon,
-    shortDescription: a.description.substring(0, 40),
-    isCustom: true,
-  }))
-  return [...AGENTS, ...custom]
-}

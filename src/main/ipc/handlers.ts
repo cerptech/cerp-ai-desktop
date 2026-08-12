@@ -1,8 +1,8 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron'
-import { statSync } from 'fs'
+import { statSync, writeFileSync } from 'fs'
 import { basename, extname } from 'path'
 import { IPC_CHANNELS } from './channels'
-import { login, logout, ensureFreshToken, refreshAccessToken, handleCallback } from '../auth/auth0Client'
+import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, NoCreditsError } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, setTurboMode, getTurboMode } from '../agent/agentManager'
@@ -252,6 +252,32 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     },
   )
 
+  // Dialog: Export conversation to Markdown (Ola 3) — el renderer arma el contenido,
+  // acá solo mostramos el diálogo nativo y escribimos el archivo elegido.
+  ipcMain.handle(
+    IPC_CHANNELS.EXPORT_CONVERSATION,
+    async (_event, { defaultFileName, content }: { defaultFileName: string; content: string }): Promise<{ success: boolean; path?: string }> => {
+      const mainWindow = getMainWindow()
+      if (!mainWindow) return { success: false }
+
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Exportar conversación',
+        defaultPath: defaultFileName,
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      })
+
+      if (result.canceled || !result.filePath) return { success: false }
+
+      try {
+        writeFileSync(result.filePath, content, 'utf-8')
+        return { success: true, path: result.filePath }
+      } catch (err) {
+        logger.error(`Failed to export conversation to ${result.filePath}:`, err)
+        return { success: false }
+      }
+    },
+  )
+
   // Dialog: Select folder
   ipcMain.handle(IPC_CHANNELS.SELECT_FOLDER, async (): Promise<string | null> => {
     const mainWindow = getMainWindow()
@@ -485,5 +511,3 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     })
   })
 }
-
-export { handleCallback }

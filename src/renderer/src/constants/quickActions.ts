@@ -2,6 +2,10 @@ export interface QuickAction {
   label: string
   prompt: string
   icon: string
+  /** true = termina invocando el script de Python (cerp_budget_pdf.py) para el PDF
+   *  final — se gatea sobre useToolsSetup en vez de ejecutarse a ciegas mientras
+   *  Git/Python todavía se están preparando en background (Ola 3). */
+  requiresTools?: boolean
 }
 
 export const QUICK_ACTIONS: QuickAction[] = [
@@ -9,6 +13,7 @@ export const QUICK_ACTIONS: QuickAction[] = [
     label: 'Crear cotización de obra',
     prompt: 'Quiero crear un presupuesto/cotización de obra. Analiza los archivos de mi carpeta de trabajo y genera el presupuesto en CERP.',
     icon: 'document',
+    requiresTools: true,
   },
   {
     label: 'Analizar archivos de licitación',

@@ -8,8 +8,10 @@ import { AddCustomMenu } from '@/components/settings/AddCustomMenu'
 import { useCustomAgents } from '@/hooks/useCustomAgents'
 import { useConversations } from '@/hooks/useConversations'
 import { useOnboarding } from '@/hooks/useOnboarding'
+import { useToast } from '@/hooks/useToast'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import { getRuntime, restoreMessages as storeRestore, clearRuntime, setPersistHandler } from '@/stores/agentRuntimeStore'
+import { buildConversationMarkdown, sanitizeFileName } from '@/utils/exportConversation'
 import type { CustomAgent, CustomContext } from '../../../preload/index'
 
 interface ChatPageProps {
@@ -18,8 +20,6 @@ interface ChatPageProps {
 }
 
 export function ChatPage({ userName, onLogout }: ChatPageProps) {
-  const [activeAgents, setActiveAgents] = useState<string[]>([])
-  const [doneAgents, setDoneAgents] = useState<string[]>([])
   // Whether the agent session is actively working — surfaced as a badge in
   // the top bar so the user always knows if the AI is thinking or idle.
   const [sessionActive, setSessionActive] = useState(false)
@@ -86,30 +86,13 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     return () => setPersistHandler(null)
   }, [appendMessage])
 
-  const handleAgentActivity = (agentName: string, status: 'active' | 'done' | 'idle') => {
-    if (status === 'active') {
-      setActiveAgents((prev) => [...new Set([...prev, agentName])])
-      setDoneAgents((prev) => prev.filter((a) => a !== agentName))
-    } else if (status === 'done') {
-      setActiveAgents((prev) => prev.filter((a) => a !== agentName))
-      setDoneAgents((prev) => [...new Set([...prev, agentName])])
-    } else {
-      setActiveAgents((prev) => prev.filter((a) => a !== agentName))
-      setDoneAgents((prev) => prev.filter((a) => a !== agentName))
-    }
-  }
-
   const handleNewConversation = useCallback(() => {
-    setActiveAgents([])
-    setDoneAgents([])
     // active=null muestra la pantalla nueva vacía. Las otras conversaciones
     // siguen corriendo en el store; NO se cierra ninguna sesión.
     clearActiveConversation()
   }, [clearActiveConversation])
 
   const handleSelectConversation = useCallback(async (id: string) => {
-    setActiveAgents([])
-    setDoneAgents([])
     // Si la conversación ya está viva en el store (corriendo o ya cargada), solo
     // la mostramos — NO la recargamos de la DB para no pisar su estado en vivo.
     const rt = getRuntime(id)
@@ -126,6 +109,25 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     await deleteConv(id)
     clearRuntime(id)
   }, [deleteConv])
+
+  // Exportar conversación a Markdown (Ola 3) — trae la conversación completa de la
+  // DB (no el runtime local, que puede no tener los mensajes si nunca se abrió en
+  // esta sesión) y deja que el main muestre el diálogo nativo de guardado. `success:
+  // false` cubre tanto "el usuario canceló el diálogo" como una falla real de
+  // escritura — no distinguimos ambos casos con un toast de error para no alarmar
+  // por algo tan común como cancelar el diálogo.
+  const { addToast } = useToast()
+  const handleExportConversation = useCallback(async (id: string) => {
+    const result = await window.cerpAPI.getConversation(id)
+    if (!result?.data) {
+      addToast('error', 'No se pudo exportar la conversación')
+      return
+    }
+    const markdown = buildConversationMarkdown(result.data)
+    const fileName = `${sanitizeFileName(result.data.title)}.md`
+    const saved = await window.cerpAPI.exportConversationMarkdown(fileName, markdown)
+    if (saved.success) addToast('success', 'Conversación exportada')
+  }, [addToast])
 
   // Crea una conversación si no hay activa, devolviendo su id real para enviar.
   const ensureConversation = useCallback(async (title: string): Promise<string | null> => {
@@ -201,6 +203,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           onSelectConversation={handleSelectConversation}
           onNewConversation={handleNewConversation}
           onDeleteConversation={handleDeleteConversation}
+          onExportConversation={handleExportConversation}
           searchInputRef={searchInputRef}
         />
         <ChatContainer
@@ -208,7 +211,6 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           activeContextId={activeContextId}
           activeConversationId={activeConversationId}
           ensureConversation={ensureConversation}
-          onAgentActivity={handleAgentActivity}
           onNewConversation={handleNewConversation}
           searchInputRef={searchInputRef}
           onSessionActiveChange={setSessionActive}

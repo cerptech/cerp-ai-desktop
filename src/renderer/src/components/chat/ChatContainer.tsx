@@ -16,6 +16,9 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useDictation, type DictationError } from '@/hooks/useDictation'
 import { useAttachments, MAX_ATTACHMENTS, type AttachmentFile } from '@/hooks/useAttachments'
 import { useModelChoice } from '@/hooks/useModelChoice'
+import { useToolsSetup } from '@/hooks/useToolsSetup'
+import { buildConversationTitle } from '@/utils/conversationTitle'
+import { formatSessionCost } from '@/utils/formatCost'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -31,7 +34,6 @@ interface ChatContainerProps {
   activeConversationId?: string | null
   /** Garantiza que exista una conversación para enviar; crea una si no hay activa. */
   ensureConversation: (title: string) => Promise<string | null>
-  onAgentActivity: (agentName: string, status: 'active' | 'done' | 'idle') => void
   onNewConversation: () => void
   /** Ref to the sidebar search input — used by Ctrl/Cmd+K to focus it */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
@@ -43,14 +45,17 @@ interface ChatContainerProps {
   setInputRef?: MutableRefObject<((text: string) => void) | null>
 }
 
-export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onAgentActivity, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
+export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
-  const { messages, isStreaming, isPending, activeTool, activeAgentDelegation, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
+  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, sessionCost, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { turboMode, toggleTurboMode } = useTurboMode()
   const { modelChoice, setModelChoice } = useModelChoice()
+  // Ola 3 — Git/Python se preparan en background tras el login; esto gatea solo las
+  // quick actions que realmente los necesitan (ver QUICK_ACTIONS.requiresTools).
+  const toolsSetup = useToolsSetup()
   const { attachments, addFiles, removeAttachment, clearAttachments } = useAttachments()
   const [input, setInput] = useState('')
   const [cwd, setCwd] = useState<string | null>(null)
@@ -71,7 +76,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // para tener un id real (cada conversación necesita su propia sesión en el main).
   const doSend = useCallback(async (fullPrompt: string): Promise<void> => {
     let id = activeConversationId
-    if (!id) id = await ensureConversation(fullPrompt.slice(0, 50) || 'Nueva conversación')
+    if (!id) id = await ensureConversation(buildConversationTitle(fullPrompt))
     if (!id) return
     storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined, modelChoiceRef.current)
   }, [activeConversationId, ensureConversation, activeContextId])
@@ -100,19 +105,6 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   useEffect(() => {
     onSessionActiveChange?.(isStreaming || isPending || !!pendingQuestions)
   }, [isStreaming, isPending, pendingQuestions, onSessionActiveChange])
-
-  // Track agent activity from delegation events
-  useEffect(() => {
-    if (activeAgentDelegation) {
-      onAgentActivity(activeAgentDelegation.agentName, 'active')
-    }
-    if (isStreaming) {
-      onAgentActivity('orchestrator', 'active')
-    }
-    if (!isStreaming && !activeTool) {
-      onAgentActivity('orchestrator', messages.length > 0 ? 'done' : 'idle')
-    }
-  }, [activeAgentDelegation, isStreaming, activeTool, messages.length, onAgentActivity])
 
   // Expose folder + input setters so the onboarding wizard can wire step 3
   // (connect folder) and step 4 (inject a pre-armed prompt) to the real chat.
@@ -321,7 +313,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
                 Tu asistente para cotizaciones y licitaciones de obra. Arrastra tus archivos o selecciona una carpeta para empezar.
               </p>
             </div>
-            <QuickActions onSelect={handleQuickAction} disabled={isStreaming} />
+            <QuickActions onSelect={handleQuickAction} disabled={isStreaming} toolsSetup={toolsSetup} />
             <p className="text-xs text-slate-400 mt-2">
               Arrastra archivos al chat o selecciona una carpeta de trabajo
             </p>
@@ -454,7 +446,15 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
           />
 
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-[11px] text-slate-300">v{appVersion}</span>
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] text-slate-300">v{appVersion}</span>
+              {/* Costo de sesión (Ola 3) — discreto, solo si ya se acumuló algo. */}
+              {sessionCost > 0 && (
+                <span className="text-[11px] text-slate-400" title="Costo estimado de esta conversación">
+                  Sesión: {formatSessionCost(sessionCost)}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-3">
               {messages.length > 0 && (
                 <button

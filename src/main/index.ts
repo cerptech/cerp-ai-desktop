@@ -13,34 +13,22 @@ if (!process.env.AUTH0_AUDIENCE) process.env.AUTH0_AUDIENCE = 'https://api.cerp.
 
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
-import { registerIpcHandlers, handleCallback } from './ipc/handlers'
+import { registerIpcHandlers } from './ipc/handlers'
 import { initAutoUpdate } from './updater'
 import { logger } from './utils/logger'
 
 let mainWindow: BrowserWindow | null = null
 
-// Register custom protocol for Auth0 callback
-if (process.defaultApp) {
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('cerp-ai', process.execPath, [process.argv[1]])
-  }
-} else {
-  app.setAsDefaultProtocolClient('cerp-ai')
-}
-
-// Single instance lock — required for custom protocol on Windows
+// Single instance lock — sigue siendo necesario para no abrir dos ventanas si el
+// usuario lanza la app dos veces. El login usa un servidor HTTP local en vez del
+// protocolo cerp-ai:// (ver auth0Client.ts), así que ya no hay nada que registrar
+// como cliente de protocolo por defecto acá.
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
   app.quit()
 } else {
-  app.on('second-instance', (_event, commandLine) => {
-    // Handle cerp-ai:// protocol from second instance
-    const url = commandLine.find((arg) => arg.startsWith('cerp-ai://'))
-    if (url) {
-      handleCallback(url)
-    }
-
+  app.on('second-instance', () => {
     // Focus existing window
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
@@ -116,11 +104,6 @@ function createWindow(): void {
     mainWindow = null
   })
 }
-
-// Handle cerp-ai:// on macOS
-app.on('open-url', (_event, url) => {
-  handleCallback(url)
-})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

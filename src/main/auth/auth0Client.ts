@@ -255,11 +255,6 @@ export async function login(): Promise<string> {
   }
 }
 
-// Keep for production use with custom protocol
-export async function handleCallback(_url: string): Promise<void> {
-  // Not used in dev mode (local HTTP server handles callback)
-}
-
 export function logout(): void {
   tokenStore.clearAll()
   clearApiKey()

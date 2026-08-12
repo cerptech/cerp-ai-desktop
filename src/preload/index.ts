@@ -20,6 +20,7 @@ const IPC = {
   AGENT_STREAM_ERROR: 'agent:stream:error',
   SELECT_FOLDER: 'dialog:select-folder',
   SELECT_ATTACHMENTS: 'dialog:select-attachments',
+  EXPORT_CONVERSATION: 'dialog:export-conversation',
   DICTATION_TRANSCRIBE: 'dictation:transcribe',
   CUSTOM_CONTEXTS_LIST: 'custom:contexts:list',
   CUSTOM_CONTEXT_CREATE: 'custom:context:create',
@@ -439,6 +440,11 @@ const api = {
     ipcRenderer.on(IPC.GIT_INSTALL_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC.GIT_INSTALL_PROGRESS, handler)
   },
+
+  // Export conversation (Ola 3) — el renderer arma el Markdown, el main muestra el
+  // diálogo nativo de guardado y escribe el archivo.
+  exportConversationMarkdown: (defaultFileName: string, content: string): Promise<{ success: boolean; path?: string }> =>
+    ipcRenderer.invoke(IPC.EXPORT_CONVERSATION, { defaultFileName, content }),
 }
 
 contextBridge.exposeInMainWorld('cerpAPI', api)

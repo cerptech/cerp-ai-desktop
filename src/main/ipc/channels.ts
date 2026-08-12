@@ -21,6 +21,8 @@ export const IPC_CHANNELS = {
   SELECT_FOLDER: 'dialog:select-folder',
   // Ola 1 — reemplaza al viejo SELECT_PDF (un solo PDF): multiselección + más tipos.
   SELECT_ATTACHMENTS: 'dialog:select-attachments',
+  // Ola 3 — exporta una conversación a Markdown (dialog:showSaveDialog + escritura).
+  EXPORT_CONVERSATION: 'dialog:export-conversation',
 
   // Dictado por voz (Ola 1) — el renderer manda los bytes crudos, el main hace el
   // POST multipart con el Bearer (el renderer no tiene el token).
