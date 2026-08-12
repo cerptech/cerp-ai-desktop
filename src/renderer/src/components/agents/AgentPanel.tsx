@@ -1,5 +1,6 @@
 import { AgentCard } from './AgentCard'
 import { ContextCard } from './ContextCard'
+import { AgentIconGlyph } from './AgentIcon'
 import { AGENTS } from './agentConfig'
 import cerpLogo from '@/assets/images/cerp-logo.png'
 import type { CustomAgent, CustomContext } from '../../../../preload/index'
@@ -55,7 +56,7 @@ export function AgentPanel({
               } ${isActive ? 'animate-pulse' : ''}`}
               title={agent.label}
             >
-              {agent.icon}
+              <AgentIconGlyph icon={agent.icon} className={typeof agent.icon === 'string' ? '' : 'size-4 text-slate-600'} />
               {isActive && <span className="absolute w-2 h-2 bg-brand-orange rounded-full -top-0.5 -right-0.5 shadow-[0_0_6px_rgba(254,112,11,0.4)]" />}
               {isDone && <span className="absolute text-[8px] text-emerald-500 -top-0.5 -right-0.5">&#10003;</span>}
             </button>

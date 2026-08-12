@@ -222,11 +222,11 @@ function StepBody({ step, connectedFolder, onConnect, onUsePrompt }: StepBodyPro
         <div className="space-y-4">
           <p className="text-sm text-slate-600">
             CERP AI trabaja sobre una carpeta local: ahí lee tus archivos y guarda lo que genera.
-            Conectala una vez y la IA sabrá dónde buscar.
+            Conéctala una vez y la IA sabrá dónde buscar.
           </p>
           <ol className="text-sm text-slate-600 space-y-1.5 list-decimal list-inside">
-            <li>Hacé click en <span className="font-medium">Conectar carpeta</span>.</li>
-            <li>Elegí la carpeta donde están los archivos de tu obra.</li>
+            <li>Haz click en <span className="font-medium">Conectar carpeta</span>.</li>
+            <li>Elige la carpeta donde están los archivos de tu obra.</li>
             <li>Listo: vas a verla indicada arriba del chat.</li>
           </ol>
           <div className="flex items-center gap-3">
@@ -246,7 +246,7 @@ function StepBody({ step, connectedFolder, onConnect, onUsePrompt }: StepBodyPro
       return (
         <div className="space-y-3">
           <p className="text-sm text-slate-600">
-            Elegí un punto de partida. Se va a cargar en el chat para que lo edites antes de enviarlo.
+            Elige un punto de partida. Se va a cargar en el chat para que lo edites antes de enviarlo.
           </p>
           <div className="grid sm:grid-cols-2 gap-2">
             {QUICK_ACTIONS.slice(0, 4).map((action) => (
@@ -283,7 +283,7 @@ function StepBody({ step, connectedFolder, onConnect, onUsePrompt }: StepBodyPro
     case 6:
       return (
         <div className="space-y-3">
-          <p className="text-sm text-slate-600">Ya estás listo. Algunas cosas que podés hacer ahora:</p>
+          <p className="text-sm text-slate-600">Ya estás listo. Algunas cosas que puedes hacer ahora:</p>
           <ul className="space-y-2">
             {ONBOARDING_NEXT_STEPS.map((s) => (
               <li key={s} className="flex items-start gap-2.5 text-sm text-slate-600">

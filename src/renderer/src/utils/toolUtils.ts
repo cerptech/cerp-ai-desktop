@@ -117,6 +117,43 @@ function humaniseSuffix(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// getVagueActivityLabel — "lenguaje de obra" (Ola 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mientras una tool corre, el usuario no necesita saber que se llamó
+ * `get_budgets` con tal filtro — necesita saber, en una frase de obra, qué
+ * está haciendo el agente. Esta función mapea grupos de tools técnicas a una
+ * etiqueta vaga y sin parámetros; el detalle técnico (nombre real + input)
+ * sigue disponible al expandir ("Ver detalles" en ToolIndicator).
+ *
+ * Deliberadamente vago: nunca interpola valores del input.
+ */
+const VAGUE_ACTIVITY_RULES: Array<{ test: RegExp; label: string }> = [
+  { test: /budget|presupuesto/i, label: 'Consultando presupuestos…' },
+  { test: /construction_site|construction_order|obra/i, label: 'Revisando la obra…' },
+  { test: /material|warehouse|stock|inventario/i, label: 'Buscando materiales…' },
+  { test: /^(read|write|edit)$/i, label: 'Leyendo el documento…' },
+  { test: /^(glob|grep)$/i, label: 'Buscando archivos…' },
+  { test: /project|task|tarea/i, label: 'Revisando el proyecto…' },
+  { test: /cashflow|expense|gasto|purchase_order|orden.*compra/i, label: 'Revisando las finanzas…' },
+  { test: /contact|contacto/i, label: 'Buscando contactos…' },
+  { test: /^(websearch|webfetch)$/i, label: 'Buscando en internet…' },
+  { test: /^bash$/i, label: 'Ejecutando un paso…' },
+]
+
+export function getVagueActivityLabel(toolName: string, agentName?: string): string {
+  if (toolName === 'Agent' || toolName === 'Task') {
+    return agentName ? `Trabajando con ${agentName}…` : 'Delegando…'
+  }
+  const baseName = toolName.replace(/^mcp__[^_]+__/, '')
+  for (const rule of VAGUE_ACTIVITY_RULES) {
+    if (rule.test.test(baseName)) return rule.label
+  }
+  return 'Trabajando…'
+}
+
+// ---------------------------------------------------------------------------
 // formatToolInput
 // ---------------------------------------------------------------------------
 

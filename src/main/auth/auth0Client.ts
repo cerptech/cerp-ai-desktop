@@ -22,6 +22,35 @@ function getAuth0Config() {
 const CALLBACK_PORT = 18973 // Fixed port for local callback server
 const LOCAL_REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
 
+/**
+ * Página HTML de la ventana de callback (Ola 2) — sigue siendo inline (no hay
+ * bundler para esta ruta, el servidor HTTP local la sirve tal cual) pero
+ * converge con el resto de la UI: tarjeta centrada rounded-2xl, círculo con
+ * ícono SVG, tipografía del sistema, tildes correctas.
+ */
+function renderCallbackPage(opts: { success: boolean; title: string; message: string }): string {
+  const circleColor = opts.success ? '#FE700B' : '#ef4444'
+  const iconPath = opts.success
+    ? '<path d="M20 6 9 17l-5-5" />'
+    : '<path d="M18 6 6 18" /><path d="M6 6l12 12" />'
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>CERP AI</title>
+</head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(to bottom,#f8fafc,#ffffff);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="text-align:center;background:#ffffff;border:1px solid #e4e7ec;border-radius:24px;padding:40px 48px;box-shadow:0 4px 18px rgba(16,24,40,0.08);max-width:360px;">
+    <div style="width:56px;height:56px;border-radius:9999px;background:${circleColor};display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg>
+    </div>
+    <h2 style="color:#1e1e1e;margin:0 0 8px;font-size:18px;font-weight:600;">${opts.title}</h2>
+    <p style="color:#747474;margin:0;font-size:14px;line-height:1.5;">${opts.message}</p>
+  </div>
+</body>
+</html>`
+}
+
 let codeVerifier: string | null = null
 let callbackServer: Server | null = null
 
@@ -80,16 +109,24 @@ export async function login(): Promise<string> {
 
       if (error) {
         const desc = url.searchParams.get('error_description') || error
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Error de autenticacion</h2><p>Puedes cerrar esta ventana.</p></body></html>')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderCallbackPage({
+          success: false,
+          title: 'No se pudo iniciar sesión',
+          message: 'Ocurrió un error al autenticar. Ya puedes cerrar esta ventana y volver a intentarlo.',
+        }))
         cleanup()
         reject(new Error(`Auth0 error: ${desc}`))
         return
       }
 
       if (!code || !codeVerifier) {
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Error</h2><p>Codigo de autorizacion no recibido.</p></body></html>')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderCallbackPage({
+          success: false,
+          title: 'No se pudo iniciar sesión',
+          message: 'No se recibió el código de autorización. Ya puedes cerrar esta ventana.',
+        }))
         cleanup()
         reject(new Error('Missing authorization code'))
         return
@@ -111,8 +148,12 @@ export async function login(): Promise<string> {
 
         if (!tokenResponse.ok) {
           const body = await tokenResponse.text()
-          res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end('<html><body><h2>Error</h2><p>No se pudo completar el login. Puedes cerrar esta ventana.</p></body></html>')
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(renderCallbackPage({
+            success: false,
+            title: 'No se pudo iniciar sesión',
+            message: 'No se pudo completar el inicio de sesión. Ya puedes cerrar esta ventana.',
+          }))
           cleanup()
           reject(new Error(`Token exchange failed: ${body}`))
           return
@@ -152,22 +193,22 @@ export async function login(): Promise<string> {
 
         // Success page
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-        res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8fafc">
-          <div style="text-align:center">
-            <div style="width:60px;height:60px;border-radius:16px;background:#FE700B;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
-              <span style="color:white;font-size:28px;font-weight:bold">C</span>
-            </div>
-            <h2 style="color:#1e293b;margin:0 0 8px">Login exitoso</h2>
-            <p style="color:#64748b">Puedes cerrar esta ventana y volver a CERP AI.</p>
-          </div>
-        </body></html>`)
+        res.end(renderCallbackPage({
+          success: true,
+          title: 'Sesión iniciada correctamente',
+          message: 'Ya puedes volver a la aplicación.',
+        }))
 
         logger.info('Auth0 login successful')
         cleanup()
         resolve(access_token)
       } catch (err) {
-        res.writeHead(200, { 'Content-Type': 'text/html' })
-        res.end('<html><body><h2>Error</h2><p>Error inesperado. Puedes cerrar esta ventana.</p></body></html>')
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(renderCallbackPage({
+          success: false,
+          title: 'No se pudo iniciar sesión',
+          message: 'Ocurrió un error inesperado. Ya puedes cerrar esta ventana.',
+        }))
         cleanup()
         reject(err instanceof Error ? err : new Error(String(err)))
       }

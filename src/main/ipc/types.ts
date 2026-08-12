@@ -58,6 +58,12 @@ export interface DictationTranscribeResult {
 // every tool_result carries the matching `tool_use_id`. We key on that everywhere.
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
+  // Delta de streaming token a token (Ola 2) — solo para el mensaje del asistente
+  // de NIVEL SUPERIOR (parent_tool_use_id null). Los deltas de subagentes se
+  // enrutan aparte vía `subagent_text` y nunca llegan como `text_delta`.
+  // `index` es el índice del content block dentro del mensaje (varios bloques de
+  // texto son raros pero posibles); el renderer acumula por índice.
+  | { type: 'text_delta'; text: string; index: number }
   | { type: 'tool_start'; toolUseId: string; name: string; input?: string }
   | { type: 'tool_done'; toolUseId: string; output?: string; isError?: boolean }
   | { type: 'thinking'; text: string }

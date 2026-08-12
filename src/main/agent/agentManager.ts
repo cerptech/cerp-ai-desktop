@@ -853,6 +853,19 @@ function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string,
   const type = msg.type as string
   const subtype = msg.subtype as string | undefined
 
+  // Streaming raw event (Ola 2 — token a token). Only messages with
+  // parent_tool_use_id === null reach here: subagent stream_events are
+  // intercepted earlier in processStreamLoop (parentToolUseId branch, which
+  // `continue`s past mapMessage entirely) — so this is always the top-level
+  // assistant's own stream, never a delegated subagent's.
+  if (type === 'stream_event') {
+    const event = msg.event as { type?: string; index?: number; delta?: { type?: string; text?: string } } | undefined
+    if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+      return { type: 'text_delta', text: event.delta.text, index: event.index ?? 0 }
+    }
+    return null
+  }
+
   // Assistant message with text and/or tool_use blocks
   if (type === 'assistant') {
     const content = msg.message as { content?: Array<{ type: string; id?: string; text?: string; name?: string; input?: unknown }> }

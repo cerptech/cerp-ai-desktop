@@ -121,10 +121,12 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
   const isUser = message.role === 'user'
 
   if (isUser) {
+    // Burbuja asimétrica (converge con ai.cerp.es): usuario a la derecha con
+    // fondo gris claro, sin burbuja del lado del asistente (ver más abajo).
     return (
       <div className="flex justify-end mb-4">
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-brand-orange text-white px-4 py-3">
-          <div className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</div>
+        <div className="max-w-[85%] rounded-3xl rounded-br-lg bg-[#f4f5f7] px-4 py-2.5 text-[15px] leading-relaxed text-brand-black whitespace-pre-wrap">
+          {message.content}
         </div>
       </div>
     )
@@ -141,9 +143,10 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
   const showCopyButton = !!message.content && !isStreaming
 
   return (
-    <div className="flex justify-start mb-4">
-      {/* group class enables hover-based opacity on CopyMessageButton */}
-      <div className="relative group max-w-[90%] rounded-2xl rounded-bl-md bg-white border border-slate-200 text-slate-800 px-4 py-3 shadow-sm">
+    <div className="flex justify-start mb-5">
+      {/* Sin burbuja del lado del asistente (converge con ai.cerp.es): texto
+          suelto a ancho completo, `group` habilita el hover de los botones. */}
+      <div className="relative group w-full text-[15px] leading-relaxed text-brand-black">
 
         {/* Copy + Regenerate buttons (hover reveal, top-right) */}
         {(showCopyButton || onRegenerate) && (

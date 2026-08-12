@@ -4,6 +4,7 @@ import { AGENTS } from '@/components/agents/agentConfig'
 import type { ToolExecution, SubagentStep } from '@/hooks/useAgent'
 import {
   getToolHumanLabel,
+  getVagueActivityLabel,
   formatToolInput,
   summarizeToolOutput,
 } from '@/utils/toolUtils'
@@ -135,9 +136,14 @@ function SubagentStepRow({ step }: { step: SubagentStep }) {
 function ToolStep({ tool }: { tool: ToolExecution }) {
   const [showOutput, setShowOutput] = useState(false)
   const [subStepsExpanded, setSubStepsExpanded] = useState(true)
+  // Etiquetas de actividad en lenguaje de obra (Ola 2): mientras la tool corre
+  // se muestra una frase vaga ("Consultando presupuestos…"), sin parámetros.
+  // El detalle técnico (nombre real + input) queda un click de distancia.
+  const [showTechnical, setShowTechnical] = useState(false)
   const duration = tool.endTime && tool.startTime ? tool.endTime - tool.startTime : null
 
   const isAgentTool = tool.name === 'Agent' || tool.name === 'Task'
+  const isVagueRunning = !isAgentTool && tool.status === 'running' && !showTechnical
 
   // Resolve agent name for Agent/Task delegation tools
   const resolvedAgentName = isAgentTool && tool.agentName
@@ -161,11 +167,13 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
         ? `${resolvedAgentName} · ${subSteps.length} paso${subSteps.length !== 1 ? 's' : ''}`
         : `${resolvedAgentName}`
     }
+  } else if (isVagueRunning) {
+    label = getVagueActivityLabel(tool.name, tool.agentName)
   } else {
     label = getToolHumanLabel(tool.name, tool.agentName)
   }
 
-  const inputFormatted = isAgentTool ? null : formatToolInput(tool.name, tool.input)
+  const inputFormatted = isAgentTool || isVagueRunning ? null : formatToolInput(tool.name, tool.input)
   const outputSummary =
     tool.status !== 'running' && !isAgentTool ? summarizeToolOutput(tool.name, tool.output) : null
 
@@ -182,12 +190,14 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
         onClick={() => {
           if (isAgentTool && hasSubSteps) {
             setSubStepsExpanded(!subStepsExpanded)
+          } else if (!isAgentTool && tool.status === 'running') {
+            setShowTechnical(!showTechnical)
           } else if (tool.output) {
             setShowOutput(!showOutput)
           }
         }}
-        className={`flex items-start gap-2 text-left w-full ${(isAgentTool && hasSubSteps) || tool.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors`}
-        title={inputFormatted?.tooltip}
+        className={`flex items-start gap-2 text-left w-full ${(isAgentTool && hasSubSteps) || tool.output || (!isAgentTool && tool.status === 'running') ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors`}
+        title={isVagueRunning ? 'Ver detalle técnico' : inputFormatted?.tooltip}
       >
         {/* Status icon */}
         <span className="shrink-0 mt-0.5">

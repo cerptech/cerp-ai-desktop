@@ -65,7 +65,7 @@ export function useConversations() {
       return null
     } catch (err) {
       console.error('Failed to create conversation:', err)
-      addToast('error', 'No se pudo crear la conversacion')
+      addToast('error', 'No se pudo crear la conversación')
       return null
     } finally {
       creatingRef.current = false

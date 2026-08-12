@@ -123,7 +123,7 @@ export function SetupPage({ onComplete }: SetupPageProps) {
             {/* Info text */}
             {status === 'installing' && (
               <p className="text-xs text-slate-400 mt-4">
-                La instalacion es automatica y solo ocurre la primera vez.
+                La instalación es automática y solo ocurre la primera vez.
               </p>
             )}
           </div>

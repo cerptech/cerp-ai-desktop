@@ -67,6 +67,13 @@ if (!gotTheLock) {
 }
 
 function createWindow(): void {
+  // Ventana única (Ola 2): sin barra de título nativa — el header propio de
+  // AppLayout hace de barra de arrastre. En Windows/Linux se superponen los
+  // controles nativos (min/max/cerrar) sobre el header con `titleBarOverlay`;
+  // en macOS se usa `hiddenInset`, que ya deja el semáforo flotando sobre
+  // cualquier contenido sin necesitar overlay color.
+  const isMac = process.platform === 'darwin'
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 750,
@@ -74,6 +81,16 @@ function createWindow(): void {
     minHeight: 600,
     title: 'CERP AI',
     icon: join(__dirname, '../../resources/icon.png'),
+    titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    ...(isMac
+      ? {}
+      : {
+          titleBarOverlay: {
+            color: '#fafafa',
+            symbolColor: '#1e1e1e',
+            height: 40,
+          },
+        }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

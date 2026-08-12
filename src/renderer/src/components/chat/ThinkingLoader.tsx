@@ -64,7 +64,7 @@ const AGENT_LABELS: Record<string, string> = {
   'revit-bim': 'Procesando modelo BIM',
   'autocad-agent': 'Leyendo planos AutoCAD',
   'sketchup-agent': 'Analizando modelo SketchUp',
-  'architecture': 'Revisando documentacion tecnica',
+  'architecture': 'Revisando documentación técnica',
   'report-generator': 'Generando documento',
 }
 
@@ -99,8 +99,9 @@ export function ThinkingLoader({ onToggleDetails, onStop, activeAgentName }: Thi
 
   return (
     <div className="py-1.5">
-      <div className="flex items-center gap-2.5">
-        <div className="flex gap-1">
+      <div role="status" className="flex items-center gap-2.5">
+        <span className="sr-only">{displayText}</span>
+        <div className="flex gap-1" aria-hidden="true">
           <span
             className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-bounce"
             style={{ animationDelay: '0ms', animationDuration: '1s' }}

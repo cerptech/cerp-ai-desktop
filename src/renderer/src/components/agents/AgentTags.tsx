@@ -1,4 +1,5 @@
 import { AGENTS } from './agentConfig'
+import { AgentIconGlyph } from './AgentIcon'
 import type { CustomAgent, CustomContext } from '../../../../preload/index'
 
 interface AgentTagsProps {
@@ -42,7 +43,7 @@ export function AgentTags({
             }`}
             title={agent.description}
           >
-            <span className="text-xs">{agent.icon}</span>
+            <AgentIconGlyph icon={agent.icon} className="size-3" />
             <span>{agent.label}</span>
             {isActive && (
               <span className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />

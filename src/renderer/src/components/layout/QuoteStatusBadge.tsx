@@ -121,7 +121,7 @@ export function QuoteStatusBadge() {
     return (
       <div
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs"
-        title={hasFree && credits > 0 ? 'Tenés la cotización gratis del mes y créditos comprados disponibles' : hasFree ? 'Tenés tu cotización gratis del mes' : 'Cotizaciones compradas disponibles'}
+        title={hasFree && credits > 0 ? 'Tienes la cotización gratis del mes y créditos comprados disponibles' : hasFree ? 'Tienes tu cotización gratis del mes' : 'Cotizaciones compradas disponibles'}
       >
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
         {label}

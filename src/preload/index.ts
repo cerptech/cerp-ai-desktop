@@ -124,6 +124,9 @@ export type QuoteFirewallEvent =
 // results as `type:'user'` messages with tool_result content blocks carrying tool_use_id.
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
+  // Delta de streaming token a token (Ola 2) — solo del mensaje de nivel
+  // superior; los deltas de subagentes van por `subagent_text` aparte.
+  | { type: 'text_delta'; text: string; index: number }
   | { type: 'tool_start'; toolUseId: string; name: string; input?: string }
   | { type: 'tool_done'; toolUseId: string; output?: string; isError?: boolean }
   | { type: 'thinking'; text: string }

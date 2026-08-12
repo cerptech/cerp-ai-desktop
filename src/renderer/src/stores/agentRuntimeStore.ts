@@ -171,6 +171,35 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
   let r: ConversationRuntime = { ...rt, lastEvent: now, isPending: false, waitingAfterAnswer: false }
 
   switch (event.type) {
+    // Delta de streaming (Ola 2) — SE ACUMULA (append), a diferencia de 'text'
+    // que reemplaza. Cuando llega el bloque completo ('text', más abajo) se
+    // reconcilia reemplazando el contenido acumulado por el texto autoritativo
+    // del SDK, evitando drift entre los deltas y la versión final.
+    case 'text_delta': {
+      if (r.needsNewAssistant) {
+        return {
+          ...r,
+          needsNewAssistant: false,
+          tools: [],
+          messages: [...r.messages, {
+            role: 'assistant',
+            content: event.text,
+            timestamp: now,
+            tools: [],
+            agentContext: r.currentDelegation || undefined,
+          }],
+        }
+      }
+      return {
+        ...r,
+        messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
+          ...msg,
+          content: (msg.content || '') + event.text,
+          tools: [...r.tools],
+          agentContext: r.currentDelegation || msg.agentContext,
+        })),
+      }
+    }
     case 'text': {
       if (r.needsNewAssistant) {
         return {
@@ -188,6 +217,9 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       }
       return {
         ...r,
+        // Reconciliación: el bloque completo del SDK reemplaza (no acumula) lo
+        // que hayan ido armando los `text_delta` previos — es la versión
+        // autoritativa, así que gana ella si hay cualquier diferencia.
         messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
           ...msg,
           content: event.text,

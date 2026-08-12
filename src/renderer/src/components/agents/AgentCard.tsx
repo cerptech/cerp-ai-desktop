@@ -1,8 +1,10 @@
+import { AgentIconGlyph, type AgentIconType } from './AgentIcon'
+
 interface AgentCardProps {
   name: string
   label: string
   description: string
-  icon: string
+  icon: AgentIconType
   status: 'idle' | 'active' | 'done'
   isSelected: boolean
   onSelect: () => void
@@ -35,7 +37,7 @@ export function AgentCard({ name, label, description, icon, status, isSelected, 
                 : 'bg-slate-100 group-hover:bg-slate-200/70'
           }`}
         >
-          {icon}
+          <AgentIconGlyph icon={icon} className={typeof icon === 'string' ? '' : `size-4 ${isSelected ? 'text-brand-orange' : 'text-slate-500'}`} />
         </div>
 
         <div className="min-w-0 flex-1">
