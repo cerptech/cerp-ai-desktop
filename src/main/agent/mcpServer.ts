@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { toolSchemas } from './toolDefinitions'
+import { createItemBankTools } from './itemBankTools'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
@@ -453,7 +454,14 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
   return createSdkMcpServer({
     name: 'cerp',
     version: '2.0.0',
-    tools: [askUserTool, attachBudgetPdfTool, downloadBudgetAttachmentTool, showHtmlTool, ...cerpApiTools],
+    tools: [
+      askUserTool,
+      attachBudgetPdfTool,
+      downloadBudgetAttachmentTool,
+      showHtmlTool,
+      ...createItemBankTools(httpClient),
+      ...cerpApiTools,
+    ],
   })
 }
 
