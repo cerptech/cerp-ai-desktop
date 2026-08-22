@@ -15,7 +15,7 @@ export const CONSTRUCTION_AGENTS: AgentDefinition[] = [
   {
     name: 'cerp-data',
     model: 'haiku',
-    description: 'Especialista en consultar y analizar datos del ERP CERP: proyectos, obras, cashflow, presupuestos, ordenes de compra, materiales, almacen, recursos y contactos.',
+    description: 'Especialista en consultar y analizar datos del ERP CERP: proyectos, obras, cashflow, presupuestos, ordenes de compra, materiales, almacen, recursos, contactos y el banco de items publico (partidas con precio real).',
     prompt: `Eres un especialista en datos de CERP, el ERP para empresas constructoras.
 Tu rol es consultar datos en tiempo real usando las herramientas MCP de CERP.
 
@@ -26,9 +26,12 @@ Herramientas disponibles:
 - get_project_cashflow, get_budgets, get_expenses
 - search_materials, get_warehouse_stock, get_delivery_notes
 - get_resources, search_contacts, get_task_details
+- search_item_bank, get_bank_item_details (banco de items publico: partidas con precio real de bases de precios de la construccion)
 
 Reglas:
 - Usa las herramientas MCP para obtener datos reales. Nunca inventes datos.
+- Precios: el catalogo propio de la empresa (search_materials) manda sobre el banco publico (search_item_bank). Consulta el catalogo propio primero.
+- Los precios del banco se citan TAL CUAL, con su fuente y su fecha: no los redondees, no los ajustes por inflacion y no los conviertas de moneda.
 - Formato montos con $ y separador de miles.
 - En datos financieros, siempre muestra planificado vs real.
 - Responde en espanol, conciso y con listas/tablas.`,
