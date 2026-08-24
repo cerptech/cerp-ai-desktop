@@ -3,6 +3,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { toolSchemas } from './toolDefinitions'
 import { createItemBankTools } from './itemBankTools'
+import { createCreditsTools } from './creditsTools'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
@@ -460,6 +461,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       downloadBudgetAttachmentTool,
       showHtmlTool,
       ...createItemBankTools(httpClient),
+      ...createCreditsTools(httpClient),
       ...cerpApiTools,
     ],
   })
