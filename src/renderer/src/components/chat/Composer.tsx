@@ -197,7 +197,11 @@ export function Composer({
           se dicta. */}
       {dictationStatus !== 'recording' && (
       <div className="mt-3.5 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
+        {/* Sin overflow-x-auto: un contenedor con overflow (aunque sea solo en x)
+            recorta TODO desborde vertical, y el menú de adjuntar se abre hacia
+            arriba (absolute bottom-full) desde adentro de esta fila — con el
+            overflow quedaba invisible y el click caía en el chat de atrás. */}
+        <div className="flex items-center gap-2 min-w-0">
           {/* "+" agrupa adjuntar archivos y seleccionar carpeta de trabajo */}
           <div ref={attachMenuRef} className="relative shrink-0">
             <button
