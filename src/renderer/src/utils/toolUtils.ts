@@ -75,6 +75,7 @@ const KNOWN_TOOL_LABELS: Record<string, string> = {
   create_expense: 'Registrando gasto',
   create_material: 'Registrando material',
   update_warehouse_stock: 'Actualizando inventario',
+  get_credit_balance: 'Consultando saldo de creditos',
 }
 
 /**
