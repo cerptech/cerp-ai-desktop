@@ -992,7 +992,7 @@ export const toolSchemas: Record<string, ToolDef> = {
   // QUOTES — Monetización de Cotización con IA
   // ============================================================
   quote_eligibility: {
-    description: 'OBLIGATORIO antes de generar una cotización. Devuelve si la empresa puede generar cotización ahora, si tiene una gratis disponible (trial o mensual), o si debe pagar €19,99. Bloquea si la subscripción no está activa.',
+    description: 'OBLIGATORIO antes de generar una cotización. Devuelve si la empresa puede cotizar ahora y si tiene una gratis disponible (trial o mensual). Cotizar NO tiene precio propio: si no hay gratis, sale de los créditos de IA del plan (`chargeModel: "credits"`, `priceCents: 0`). Bloquea si la subscripción no está activa.',
     schema: z.object({}),
     method: 'GET',
     endpoint: '/quotes/eligibility',
@@ -1011,15 +1011,9 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'POST',
     endpoint: '/quotes/consume-unlimited',
   },
-  quote_purchase_extra: {
-    description: 'Cobra €19,99 al método de pago guardado (off-session). PEDIR CONFIRMACIÓN AL USUARIO ANTES de llamar esto. Si Stripe pide autenticación adicional (SCA), devolverá fallbackCheckoutUrl que el usuario debe abrir.',
-    schema: z.object({}),
-    method: 'POST',
-    endpoint: '/quotes/purchase-extra',
-  },
   quote_reserve: {
     description:
-      'CORTAFUEGOS — Reserva un crédito para la cotización SIN cobrar ni consumir (deja un hold). Llamar UNA SOLA VEZ al arrancar el flujo de cotización, después de quote_eligibility y de la confirmación del usuario. El backend decide la fuente automáticamente (ilimitado → gratis → crédito prepago → pago €19,99 con autorización retenida). Devuelve { quoteId, source, lifecycle:"reserved", requiresAction }. Guardá el quoteId: lo usás en quote_commit al final. El cobro/consumo real recién ocurre en quote_commit, y SOLO si el entregable es válido.',
+      'CORTAFUEGOS — Reserva la cotización SIN consumir nada todavía (deja un hold). Llamar UNA SOLA VEZ al arrancar el flujo, después de quote_eligibility. NUNCA cobra: el backend elige la fuente automáticamente (ilimitado → gratis → crédito prepago → créditos del plan). Devuelve { quoteId, source, lifecycle:"reserved", requiresAction }. Guardá el quoteId: lo usás en quote_commit al final. El consumo real recién se confirma en quote_commit, y SOLO si el entregable es válido.',
     schema: z.object({}),
     method: 'POST',
     endpoint: '/quotes/reserve',
@@ -1052,7 +1046,7 @@ export const toolSchemas: Record<string, ToolDef> = {
   quote_register_files: {
     description: 'OBLIGATORIO al terminar de generar la cotización. Registra los paths locales del Excel y/o PDF generados, y opcionalmente metadata (projectName, totalAmount, lineItems).',
     schema: z.object({
-      id: z.string().describe('quoteId devuelto por consume-free o purchase-extra'),
+      id: z.string().describe('quoteId devuelto por quote_reserve'),
       excelPath: z.string().optional().describe('Ruta absoluta del .xlsx generado'),
       pdfPath: z.string().optional().describe('Ruta absoluta del .pdf/.docx generado'),
       metadata: z.object({

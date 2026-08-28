@@ -129,16 +129,19 @@ export function QuoteStatusBadge() {
     )
   }
 
+  // Sin gratis ni créditos prepagos NO hay nada que comprar: cotizar sale de los
+  // créditos de IA del plan, como cualquier otra acción del agente. El badge lo
+  // dice en vez de empujar a una compra que ya no existe.
   return (
     <a
       href="https://app.cerp.es/settings/subscription"
       target="_blank"
       rel="noopener noreferrer"
       className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs transition-colors"
-      title="Comprar cotizaciones desde el SaaS"
+      title="Cotizar consume créditos de IA de tu plan, como el resto de CERP IA. Click para ver tu saldo."
     >
       <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-      Comprar
+      Con créditos
     </a>
   )
 }
