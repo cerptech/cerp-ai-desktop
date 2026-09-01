@@ -235,7 +235,7 @@ export interface ConversationFull extends ConversationSummary {
     timestamp: number
   }>
   metadata?: {
-    cwd?: string
+    cwd?: string | null
     totalCostUsd?: number
     totalTurns?: number
   }

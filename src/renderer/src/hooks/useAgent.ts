@@ -89,7 +89,7 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
   )
 
   const restoreMessages = useCallback(
-    (msgs: ChatMessage[]) => storeRestoreMessages(conversationId, msgs),
+    (msgs: ChatMessage[], cwd?: string | null) => storeRestoreMessages(conversationId, msgs, cwd),
     [conversationId],
   )
 
@@ -109,6 +109,7 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
     sessionTokensOut: rt.sessionTokensOut,
     pendingQuestions: rt.pendingQuestions as AskUserQuestionItem[] | null,
     isSubmittingAnswers: rt.isSubmittingAnswers,
+    cwd: rt.cwd,
     sendPrompt,
     abort,
     submitAnswers,

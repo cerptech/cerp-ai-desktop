@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, DragEvent, MutableRefObject } from 'react'
 import { ClipboardCheck } from 'lucide-react'
 import { useAgent, type ChatMessage } from '@/hooks/useAgent'
-import { sendPrompt as storeSendPrompt } from '@/stores/agentRuntimeStore'
+import { sendPrompt as storeSendPrompt, setConversationCwd, getRuntime } from '@/stores/agentRuntimeStore'
 import { MessageBubble } from './MessageBubble'
 import { MessageList } from './MessageList'
 import { Composer } from './Composer'
@@ -46,7 +46,7 @@ interface ChatContainerProps {
 export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
-  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers } = useAgent(activeConversationId ?? '__default__')
+  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(activeConversationId ?? '__default__')
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { modelChoice, setModelChoice } = useModelChoice()
@@ -55,15 +55,20 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   const toolsSetup = useToolsSetup()
   const { attachments, addFiles, removeAttachment, clearAttachments } = useAttachments()
   const [input, setInput] = useState('')
-  const [cwd, setCwd] = useState<string | null>(null)
+  // La carpeta de trabajo REAL vive en el runtime de cada conversación (store) —
+  // antes era un estado único acá y la última carpeta elegida se aplicaba a todas
+  // las conversaciones. `draftCwd` cubre solo la pantalla nueva (sin id todavía):
+  // al crear la conversación en doSend, el draft se transfiere a su runtime.
+  const [draftCwd, setDraftCwd] = useState<string | null>(null)
+  const cwd = activeConversationId ? runtimeCwd : draftCwd
   const [isDragOver, setIsDragOver] = useState(false)
   const [showThoughts, setShowThoughts] = useState(true)
   const [appVersion, setAppVersion] = useState('...')
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // cwd en un ref para que doSend (callback estable) lea el valor actual sin recrearse.
-  const cwdRef = useRef<string | null>(cwd)
-  useEffect(() => { cwdRef.current = cwd }, [cwd])
+  // draftCwd en un ref para que doSend (callback estable) lea el valor actual sin recrearse.
+  const draftCwdRef = useRef<string | null>(draftCwd)
+  useEffect(() => { draftCwdRef.current = draftCwd }, [draftCwd])
 
   // modelChoice en un ref por el mismo motivo que cwd — doSend es un callback estable.
   const modelChoiceRef = useRef(modelChoice)
@@ -73,9 +78,19 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // para tener un id real (cada conversación necesita su propia sesión en el main).
   const doSend = useCallback(async (fullPrompt: string, options?: { skipUserEcho?: boolean }): Promise<void> => {
     let id = activeConversationId
-    if (!id) id = await ensureConversation(buildConversationTitle(fullPrompt))
-    if (!id) return
-    storeSendPrompt(id, fullPrompt, cwdRef.current || undefined, activeContextId || undefined, modelChoiceRef.current, options)
+    let cwdToUse: string | null
+    if (id) {
+      // Conversación existente: SU carpeta, no la última elegida en otra.
+      cwdToUse = getRuntime(id).cwd
+    } else {
+      id = await ensureConversation(buildConversationTitle(fullPrompt))
+      if (!id) return
+      // La carpeta elegida en la pantalla nueva pasa a ser de esta conversación.
+      cwdToUse = draftCwdRef.current
+      if (cwdToUse) setConversationCwd(id, cwdToUse)
+      setDraftCwd(null)
+    }
+    storeSendPrompt(id, fullPrompt, cwdToUse || undefined, activeContextId || undefined, modelChoiceRef.current, options)
   }, [activeConversationId, ensureConversation, activeContextId])
 
   useEffect(() => {
@@ -108,14 +123,19 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // El auto-resize del textarea ya no vive acá: lo maneja el propio Composer
   // vía un `useLayoutEffect` sobre `value`, así que alcanza con enfocarlo.
   useEffect(() => {
-    if (setCwdRef) setCwdRef.current = (path: string) => setCwd(path)
+    if (setCwdRef) {
+      setCwdRef.current = (path: string) => {
+        if (activeConversationId) setConversationCwd(activeConversationId, path)
+        else setDraftCwd(path)
+      }
+    }
     if (setInputRef) {
       setInputRef.current = (text: string) => {
         setInput(text)
         requestAnimationFrame(() => inputRef.current?.focus())
       }
     }
-  }, [setCwdRef, setInputRef])
+  }, [setCwdRef, setInputRef, activeConversationId])
 
   // --- Dictado por voz (Ola 1) ---
   // El texto SIEMPRE se concatena al textarea existente — nunca se envía solo, el
@@ -196,16 +216,21 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   const handleSelectFolder = async () => {
     const folder = await window.cerpAPI.selectFolder()
-    if (folder) setCwd(folder)
+    if (!folder) return
+    if (activeConversationId) setConversationCwd(activeConversationId, folder)
+    else setDraftCwd(folder)
   }
 
-  const handleClearFolder = () => setCwd(null)
+  const handleClearFolder = () => {
+    if (activeConversationId) setConversationCwd(activeConversationId, null)
+    else setDraftCwd(null)
+  }
 
   // "Nueva conversación" ya NO resetea ninguna sesión: las demás conversaciones
   // siguen corriendo en el store. Solo limpia la vista (el padre pone active=null,
   // que muestra una pantalla nueva vacía).
   const handleNewConversation = useCallback(() => {
-    setCwd(null)
+    setDraftCwd(null)
     onNewConversation()
   }, [onNewConversation])
 

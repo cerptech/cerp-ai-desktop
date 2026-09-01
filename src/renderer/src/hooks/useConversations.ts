@@ -146,13 +146,13 @@ export function useConversations() {
     )
   }, [activeConversationId, addToast])
 
-  const loadConversation = useCallback(async (id: string): Promise<ChatMessage[] | null> => {
+  const loadConversation = useCallback(async (id: string): Promise<{ messages: ChatMessage[]; cwd: string | null } | null> => {
     try {
       const result = await window.cerpAPI.getConversation(id)
       if (result?.data) {
         setActiveConversationId(id)
         // Convert backend messages to ChatMessage format
-        return result.data.messages.map((m: any) => ({
+        const messages: ChatMessage[] = result.data.messages.map((m: any) => ({
           role: m.role,
           content: m.content,
           agentContext: m.agentContext,
@@ -183,6 +183,10 @@ export function useConversations() {
           htmlCanvases: m.htmlCanvases,
           timestamp: m.timestamp,
         }))
+        // La carpeta de trabajo persistida de ESTA conversación (metadata.cwd) —
+        // se restaura junto con los mensajes para que el chip muestre la carpeta
+        // correcta y no la de la última conversación tocada.
+        return { messages, cwd: result.data.metadata?.cwd ?? null }
       }
       // 'auth' ya dispara el modal global de sesión expirada — no duplicar el aviso.
       if (result?.error && result.error !== 'auth') {
