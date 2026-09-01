@@ -30,8 +30,9 @@ interface ChatContainerProps {
   activeContextId?: string | null
   /** Conversación activa cuyo runtime se muestra. null = pantalla nueva (aún sin id). */
   activeConversationId?: string | null
-  /** Garantiza que exista una conversación para enviar; crea una si no hay activa. */
-  ensureConversation: (title: string) => Promise<string | null>
+  /** Garantiza que exista una conversación para enviar; crea una si no hay activa.
+   *  `cwd` siembra metadata.cwd en el create (agrupación del sidebar). */
+  ensureConversation: (title: string, cwd?: string | null) => Promise<string | null>
   onNewConversation: () => void
   /** Ref to the sidebar search input — used by Ctrl/Cmd+K to focus it */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
@@ -83,10 +84,13 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       // Conversación existente: SU carpeta, no la última elegida en otra.
       cwdToUse = getRuntime(id).cwd
     } else {
-      id = await ensureConversation(buildConversationTitle(fullPrompt))
+      // La carpeta del borrador se lee ANTES del await: si el usuario la cambia
+      // durante el round-trip del create, el próximo mensaje ya usará la nueva.
+      const draft = draftCwdRef.current
+      id = await ensureConversation(buildConversationTitle(fullPrompt), draft)
       if (!id) return
       // La carpeta elegida en la pantalla nueva pasa a ser de esta conversación.
-      cwdToUse = draftCwdRef.current
+      cwdToUse = draft
       if (cwdToUse) setConversationCwd(id, cwdToUse)
       setDraftCwd(null)
     }

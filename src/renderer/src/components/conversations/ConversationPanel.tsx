@@ -1,11 +1,12 @@
 import { useState, useMemo, useRef, useCallback, type MutableRefObject } from 'react'
-import { MessageCircle, Trash2, Download, ChevronLeft, ChevronRight, Plus, Search, X } from 'lucide-react'
+import { MessageCircle, Trash2, Download, ChevronLeft, ChevronRight, ChevronDown, Plus, Search, X, Folder } from 'lucide-react'
 import type { ConversationSummary, ApiErrorCode } from '../../../../preload/index'
 import { AGENTS } from '@/components/agents/agentConfig'
 import { AgentIconGlyph, type AgentIconType } from '@/components/agents/AgentIcon'
 import { useActiveConversationActivity } from '@/hooks/useActiveConversationActivity'
 
 const SIDEBAR_WIDTH_KEY = 'cerp-sidebar-width'
+const COLLAPSED_GROUPS_KEY = 'cerp-sidebar-collapsed-groups'
 const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 360
 const SIDEBAR_DEFAULT_WIDTH = 224
@@ -47,6 +48,58 @@ function formatRelativeDate(dateStr: string): string {
 function getAgentIcon(agentName: string): AgentIconType {
   const agent = AGENTS.find((a) => a.name === agentName)
   return agent?.icon || MessageCircle
+}
+
+/** Nombre visible del grupo: la última carpeta del path (= el proyecto/obra). */
+function folderLabel(cwd: string): string {
+  return cwd.split(/[\\/]/).filter(Boolean).pop() || cwd
+}
+
+/** Key estable del grupo: sin separadores finales, y case-insensitive en paths
+ *  Windows (con letra de unidad) — `C:\Obras\Casa`, `C:\Obras\Casa\` y
+ *  `c:\obras\casa` son la MISMA carpeta y deben ser un solo grupo. */
+function folderKey(cwd: string): string {
+  const trimmed = cwd.replace(/[\\/]+$/, '')
+  return /^[a-zA-Z]:/.test(trimmed) ? trimmed.toLowerCase() : trimmed
+}
+
+interface ConversationGroup {
+  /** Path completo de la carpeta, o '__none__' para las conversaciones sin carpeta. */
+  key: string
+  /** null = modo plano (ninguna conversación tiene carpeta: no mostrar headers). */
+  label: string | null
+  /** Path completo para el tooltip del header (null en "Sin carpeta"/plano). */
+  fullPath: string | null
+  items: ConversationSummary[]
+}
+
+const NO_FOLDER_KEY = '__none__'
+
+/**
+ * Agrupa por carpeta de trabajo (metadata.cwd). El orden de los grupos sigue el
+ * de la lista (updatedAt desc → el proyecto activo más reciente arriba), con
+ * "Sin carpeta" siempre al final. Si NINGUNA conversación tiene carpeta
+ * (usuarios previos al fix de cwd por conversación), devuelve un único grupo
+ * plano sin header para no ensuciar el sidebar.
+ */
+function groupByFolder(conversations: ConversationSummary[]): ConversationGroup[] {
+  const byKey = new Map<string, ConversationGroup>()
+  for (const conv of conversations) {
+    const cwd = conv.metadata?.cwd || null
+    const key = cwd ? folderKey(cwd) : NO_FOLDER_KEY
+    let group = byKey.get(key)
+    if (!group) {
+      group = { key, label: cwd ? folderLabel(cwd) : 'Sin carpeta', fullPath: cwd, items: [] }
+      byKey.set(key, group)
+    }
+    group.items.push(conv)
+  }
+  const groups = [...byKey.values()]
+  if (groups.length === 1 && groups[0].key === NO_FOLDER_KEY) {
+    return [{ ...groups[0], label: null }]
+  }
+  // "Sin carpeta" al final, el resto conserva el orden de aparición.
+  return [...groups.filter((g) => g.key !== NO_FOLDER_KEY), ...groups.filter((g) => g.key === NO_FOLDER_KEY)]
 }
 
 export function ConversationPanel({
@@ -103,11 +156,46 @@ export function ConversationPanel({
     document.addEventListener('mouseup', handleMouseUp)
   }, [width])
 
+  // Un solo predicado de búsqueda: el filtro y la supresión del colapso deben
+  // coincidir (con `!search` a secas, un input de solo espacios mostraba la
+  // lista sin filtrar pero con todos los grupos forzados a expandirse).
+  const isSearching = !!search.trim()
+
   const filteredConversations = useMemo(() => {
     if (!search.trim()) return conversations
     const q = search.toLowerCase()
-    return conversations.filter((c) => c.title.toLowerCase().includes(q))
+    // La búsqueda también matchea el nombre de la carpeta/proyecto del grupo.
+    return conversations.filter(
+      (c) => c.title.toLowerCase().includes(q) || (c.metadata?.cwd && folderLabel(c.metadata.cwd).toLowerCase().includes(q)),
+    )
   }, [conversations, search])
+
+  // Agrupación por carpeta de trabajo (proyecto/obra) — ver groupByFolder.
+  const groups = useMemo(() => groupByFolder(filteredConversations), [filteredConversations])
+
+  // Grupos colapsados, persistidos en localStorage (misma técnica que el ancho).
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(COLLAPSED_GROUPS_KEY) || '[]')
+      return new Set(Array.isArray(stored) ? stored.filter((k): k is string => typeof k === 'string') : [])
+    } catch {
+      return new Set()
+    }
+  })
+
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      try {
+        localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...next]))
+      } catch {
+        // localStorage lleno o bloqueado — el colapso funciona igual en la sesión.
+      }
+      return next
+    })
+  }, [])
 
   if (collapsed) {
     return (
@@ -179,7 +267,9 @@ export function ConversationPanel({
       )}
 
       {/* Conversation list */}
-      <div className="flex-1 overflow-y-auto cerp-scroll p-1.5 space-y-0.5">
+      {/* El espaciado vertical vive en cada wrapper de grupo (space-y interno +
+          mt-2 entre grupos) — un space-y acá pelearía con ese mt-2 por el margen. */}
+      <div className="flex-1 overflow-y-auto cerp-scroll p-1.5">
         {loading && conversations.length === 0 && (
           <p className="text-[11px] text-slate-400 text-center py-4">Cargando…</p>
         )}
@@ -211,81 +301,106 @@ export function ConversationPanel({
           <p className="text-[11px] text-slate-400 text-center py-4">Sin resultados</p>
         )}
 
-        {filteredConversations.map((conv) => {
-          const isActive = activeConversationId === conv._id
-          const isHovered = hoveredId === conv._id
-          const isWorking = activeConversationIds.has(conv._id)
+        {groups.map((group, groupIndex) => {
+          // Durante una búsqueda los grupos no se colapsan: un match escondido
+          // detrás de un header colapsado parece un resultado que no existe.
+          const isGroupCollapsed = !isSearching && group.label !== null && collapsedGroups.has(group.key)
           return (
-            // `role="button"` en un div, NO un <button> anidando otro <button>
-            // (el de eliminar): un botón dentro de otro botón es HTML inválido
-            // y algunos lectores de pantalla solo exponen el interior.
-            <div
-              key={conv._id}
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelectConversation(conv._id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onSelectConversation(conv._id)
-                }
-              }}
-              onMouseEnter={() => setHoveredId(conv._id)}
-              onMouseLeave={() => setHoveredId(null)}
-              className={`w-full text-left px-2.5 py-2 rounded-lg transition-all duration-150 group relative cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
-                isActive
-                  ? 'bg-white shadow-sm border border-sidebar-border'
-                  : 'hover:bg-white/70 border border-transparent'
-              }`}
-            >
-              <div className="flex items-start gap-2">
-                <AgentIconGlyph icon={getAgentIcon(conv.agentName)} className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <p className={`text-[13px] font-medium truncate ${isActive ? 'text-slate-800' : 'text-slate-600'}`}>
-                      {conv.title}
-                    </p>
-                    {isWorking && (
-                      <span
-                        className="w-2 h-2 rounded-full bg-brand-orange animate-pulse shrink-0"
-                        title="Trabajando…"
-                        aria-label="Trabajando…"
-                      />
-                    )}
+            <div key={group.key} className={`space-y-0.5${groupIndex > 0 ? ' mt-2' : ''}`}>
+              {group.label !== null && (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  title={group.fullPath ?? undefined}
+                  aria-expanded={!isGroupCollapsed}
+                  className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-md hover:bg-black/5 transition-colors text-left outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40"
+                >
+                  {isGroupCollapsed
+                    ? <ChevronRight className="size-3 shrink-0 text-slate-400" strokeWidth={2} aria-hidden="true" />
+                    : <ChevronDown className="size-3 shrink-0 text-slate-400" strokeWidth={2} aria-hidden="true" />}
+                  <Folder className="size-3 shrink-0 text-slate-400" strokeWidth={2} aria-hidden="true" />
+                  <span className="text-[11px] font-semibold text-slate-500 truncate flex-1">{group.label}</span>
+                  <span className="text-[10px] text-slate-400 shrink-0">{group.items.length}</span>
+                </button>
+              )}
+              {!isGroupCollapsed && group.items.map((conv) => {
+                const isActive = activeConversationId === conv._id
+                const isHovered = hoveredId === conv._id
+                const isWorking = activeConversationIds.has(conv._id)
+                return (
+                  // `role="button"` en un div, NO un <button> anidando otro <button>
+                  // (el de eliminar): un botón dentro de otro botón es HTML inválido
+                  // y algunos lectores de pantalla solo exponen el interior.
+                  <div
+                    key={conv._id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelectConversation(conv._id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onSelectConversation(conv._id)
+                      }
+                    }}
+                    onMouseEnter={() => setHoveredId(conv._id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    className={`w-full text-left px-2.5 py-2 rounded-lg transition-all duration-150 group relative cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
+                      isActive
+                        ? 'bg-white shadow-sm border border-sidebar-border'
+                        : 'hover:bg-white/70 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <AgentIconGlyph icon={getAgentIcon(conv.agentName)} className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <p className={`text-[13px] font-medium truncate ${isActive ? 'text-slate-800' : 'text-slate-600'}`}>
+                            {conv.title}
+                          </p>
+                          {isWorking && (
+                            <span
+                              className="w-2 h-2 rounded-full bg-brand-orange animate-pulse shrink-0"
+                              title="Trabajando…"
+                              aria-label="Trabajando…"
+                            />
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[11px] text-slate-400">{formatRelativeDate(conv.updatedAt)}</span>
+                          <span className="text-[11px] text-slate-300">{conv.messageCount} msg</span>
+                        </div>
+                      </div>
+                      {/* Exportar + eliminar (hover) — botones HERMANOS del contenedor, no anidados */}
+                      {isHovered && (
+                        <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onExportConversation(conv._id)
+                            }}
+                            className="p-0.5 rounded text-slate-400 hover:text-brand-orange hover:bg-orange-50 transition-colors"
+                            title="Exportar a Markdown"
+                          >
+                            <Download className="size-3" strokeWidth={2} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDeleteConversation(conv._id)
+                            }}
+                            className="p-0.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="text-[11px] text-slate-400">{formatRelativeDate(conv.updatedAt)}</span>
-                    <span className="text-[11px] text-slate-300">{conv.messageCount} msg</span>
-                  </div>
-                </div>
-                {/* Exportar + eliminar (hover) — botones HERMANOS del contenedor, no anidados */}
-                {isHovered && (
-                  <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onExportConversation(conv._id)
-                      }}
-                      className="p-0.5 rounded text-slate-400 hover:text-brand-orange hover:bg-orange-50 transition-colors"
-                      title="Exportar a Markdown"
-                    >
-                      <Download className="size-3" strokeWidth={2} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDeleteConversation(conv._id)
-                      }}
-                      className="p-0.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                      title="Eliminar"
-                    >
-                      <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
-                    </button>
-                  </div>
-                )}
-              </div>
+                )
+              })}
             </div>
           )
         })}
