@@ -72,8 +72,10 @@ export function useConversations() {
       if (result?.data) {
         const conv = result.data
         setActiveConversationId(conv._id)
+        // metadata (p.ej. cwd) entra al summary local desde el nacimiento: así la
+        // conversación nueva aparece en el grupo de su carpeta, no en "Sin carpeta".
         setConversations((prev) => [
-          { _id: conv._id, title: conv.title, agentName: conv.agentName, updatedAt: conv.updatedAt || new Date().toISOString(), messageCount: 0 },
+          { _id: conv._id, title: conv.title, agentName: conv.agentName, updatedAt: conv.updatedAt || new Date().toISOString(), messageCount: 0, metadata: conv.metadata },
           ...prev,
         ])
         return conv._id
@@ -136,11 +138,23 @@ export function useConversations() {
       addToast('warning', 'No se pudo guardar el mensaje en el historial')
     })
 
-    // Update local summary
+    // Update local summary. Si el mensaje viaja con metadata.cwd, el summary
+    // local también lo refleja: así el sidebar re-agrupa la conversación en su
+    // carpeta al instante, sin esperar un reload de la lista.
     setConversations((prev) =>
       prev.map((c) =>
         c._id === convId
-          ? { ...c, updatedAt: new Date().toISOString(), messageCount: c.messageCount + 1 }
+          ? {
+              ...c,
+              updatedAt: new Date().toISOString(),
+              messageCount: c.messageCount + 1,
+              // Mismo criterio que el server (metadata.cwd !== undefined, ver
+              // desktopConversationController): un {cwd: undefined} no debe
+              // blanquear el grupo localmente mientras el server conserva el valor.
+              ...(metadata && metadata.cwd !== undefined && (typeof metadata.cwd === 'string' || metadata.cwd === null)
+                ? { metadata: { ...c.metadata, cwd: metadata.cwd } }
+                : {}),
+            }
           : c,
       ),
     )

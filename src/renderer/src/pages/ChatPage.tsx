@@ -135,9 +135,11 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   }, [addToast])
 
   // Crea una conversación si no hay activa, devolviendo su id real para enviar.
-  const ensureConversation = useCallback(async (title: string): Promise<string | null> => {
+  // `cwd` (la carpeta elegida en la pantalla nueva) viaja en metadata desde el
+  // create: la conversación nace en el grupo de su carpeta en el sidebar.
+  const ensureConversation = useCallback(async (title: string, cwd?: string | null): Promise<string | null> => {
     if (activeConversationId) return activeConversationId
-    return await createConversation(title, 'orchestrator') // setea active
+    return await createConversation(title, 'orchestrator', undefined, undefined, cwd ? { cwd } : undefined) // setea active
   }, [activeConversationId, createConversation])
 
   const handleAddCustom = () => setShowAddMenu(true)

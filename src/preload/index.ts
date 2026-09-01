@@ -204,6 +204,11 @@ export interface ConversationSummary {
   agentName: string
   updatedAt: string
   messageCount: number
+  /** El listado del server hace select('-messages'), así que metadata SÍ viaja.
+   *  cwd agrupa el sidebar por carpeta de trabajo (proyecto/obra). */
+  metadata?: {
+    cwd?: string | null
+  }
 }
 
 export interface ConversationFull extends ConversationSummary {
