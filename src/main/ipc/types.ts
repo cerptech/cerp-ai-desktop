@@ -198,7 +198,7 @@ export interface ConversationFull extends ConversationSummary {
   activeContextId?: string
   messages: ConversationMessage[]
   metadata?: {
-    cwd?: string
+    cwd?: string | null
     totalCostUsd?: number
     totalTurns?: number
   }

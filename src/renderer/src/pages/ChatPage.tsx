@@ -80,8 +80,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   // El store persiste TODOS los mensajes (incluidas conversaciones de fondo) vía
   // appendMessage. Registramos el handler una vez.
   useEffect(() => {
-    setPersistHandler((conversationId, message) => {
-      appendMessage(message, undefined, conversationId)
+    setPersistHandler((conversationId, message, metadata) => {
+      appendMessage(message, metadata, conversationId)
     })
     return () => setPersistHandler(null)
   }, [appendMessage])
@@ -100,9 +100,10 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
       setActiveConversation(id)
       return
     }
-    // Primera vez que se abre en esta sesión: cargar de la DB y sembrar el runtime.
-    const messages = await loadConversation(id) // setea active + devuelve mensajes
-    if (messages) storeRestore(id, messages)
+    // Primera vez que se abre en esta sesión: cargar de la DB y sembrar el runtime
+    // (mensajes + carpeta de trabajo persistida de esa conversación).
+    const loaded = await loadConversation(id) // setea active + devuelve mensajes
+    if (loaded) storeRestore(id, loaded.messages, loaded.cwd)
   }, [loadConversation, setActiveConversation])
 
   const handleDeleteConversation = useCallback(async (id: string) => {

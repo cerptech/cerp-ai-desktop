@@ -45,6 +45,14 @@ export interface ConversationRuntime {
    * `textAccumulator` más abajo para el detalle del bug que esto arregla).
    */
   textAccumulator: TextAccumulator
+  /**
+   * Carpeta de trabajo de ESTA conversación. Antes vivía como estado único en
+   * ChatContainer, así que la última carpeta elegida se aplicaba a TODAS las
+   * conversaciones (el cliente con 3 licitaciones en 3 conversaciones veía las
+   * tres apuntando a la última carpeta). Se persiste en metadata.cwd de la
+   * conversación y se restaura al reabrirla.
+   */
+  cwd: string | null
 }
 
 /**
@@ -98,6 +106,7 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   needsNewAssistant: false,
   waitingAfterAnswer: false,
   textAccumulator: EMPTY_TEXT_ACCUMULATOR,
+  cwd: null,
 })
 
 function freshRuntime(): ConversationRuntime {
@@ -115,7 +124,9 @@ const globalListeners = new Set<() => void>()
 // Persistencia: claves ya guardadas por conversación (timestamp:role).
 const persistedKeys = new Map<string, Set<string>>()
 // Callback opcional para crear/registrar persistencia — set por el provider.
-let persistFn: ((conversationId: string, message: ChatMessage) => void) | null = null
+// metadata viaja junto con el mensaje de usuario (hoy: cwd de la conversación,
+// que el server mergea en metadata.cwd — ver desktopConversationController).
+let persistFn: ((conversationId: string, message: ChatMessage, metadata?: { cwd?: string | null }) => void) | null = null
 
 const msgKey = (m: ChatMessage): string => `${m.timestamp}:${m.role}`
 
@@ -184,7 +195,7 @@ function update(conversationId: string, fn: (rt: ConversationRuntime) => Convers
 
 // ── Persistencia ──────────────────────────────────────────────────────────
 
-export function setPersistHandler(fn: ((conversationId: string, message: ChatMessage) => void) | null): void {
+export function setPersistHandler(fn: ((conversationId: string, message: ChatMessage, metadata?: { cwd?: string | null }) => void) | null): void {
   persistFn = fn
 }
 
@@ -202,7 +213,10 @@ function persistNewMessages(conversationId: string, rt: ConversationRuntime): vo
     if (seen.has(key)) continue
     if (msg.role === 'user') {
       seen.add(key)
-      persistFn(conversationId, msg)
+      // La carpeta de trabajo viaja con cada mensaje de usuario: el server hace
+      // $set de metadata.cwd (aditivo, no toca los mensajes), y al reabrir la
+      // conversación se restaura la carpeta que tenía.
+      persistFn(conversationId, msg, { cwd: rt.cwd })
     } else if (msg.role === 'assistant' && !rt.isStreaming && (msg.content?.trim() || msg.tools?.length)) {
       // Igual que en ChatContainer: el assistant se persiste cuando el turno terminó.
       seen.add(key)
@@ -599,6 +613,9 @@ export async function sendPrompt(
     waitingAfterAnswer: false,
     tools: [],
     textAccumulator: EMPTY_TEXT_ACCUMULATOR,
+    // Sincroniza la carpeta de la conversación cuando el caller la pasa explícita
+    // (ChatContainer ya la fija vía setConversationCwd; esto cubre otros callers).
+    cwd: cwd !== undefined ? cwd : rt.cwd,
     messages: skipUserEcho ? rt.messages : [...rt.messages, { role: 'user', content: prompt, timestamp: Date.now() }],
   }))
   // Persistir el mensaje del usuario inmediatamente (salvo regeneración: ya está persistido).
@@ -667,11 +684,17 @@ export async function submitAnswers(
   }
 }
 
-/** Restaura mensajes de una conversación cargada de la DB (no re-persistir). */
-export function restoreMessages(conversationId: string, messages: ChatMessage[]): void {
+/** Restaura mensajes de una conversación cargada de la DB (no re-persistir).
+ *  `cwd` restaura la carpeta de trabajo persistida en metadata.cwd. */
+export function restoreMessages(conversationId: string, messages: ChatMessage[], cwd?: string | null): void {
   ensureIpcWired()
   seedPersisted(conversationId, messages)
-  update(conversationId, () => ({ ...freshRuntime(), messages }))
+  update(conversationId, () => ({ ...freshRuntime(), messages, cwd: cwd ?? null }))
+}
+
+/** Fija la carpeta de trabajo de UNA conversación (per-conversación, no global). */
+export function setConversationCwd(conversationId: string, cwd: string | null): void {
+  update(conversationId, (rt) => ({ ...rt, cwd }))
 }
 
 /** Limpia el runtime de una conversación (al borrarla, p.ej.). */
