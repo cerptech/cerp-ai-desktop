@@ -157,10 +157,11 @@ async function installGitLinux(
  * Check if Python 3 is available on the system
  */
 export async function checkPython(): Promise<PythonStatus> {
-  const commands =
-    process.platform === 'win32'
-      ? ['python --version', 'python3 --version', 'py -3 --version']
-      : ['python3 --version', 'python --version']
+  if (process.platform === 'win32') {
+    return checkPythonWindows()
+  }
+
+  const commands = ['python3 --version', 'python --version']
 
   for (const cmd of commands) {
     try {
@@ -182,6 +183,83 @@ export async function checkPython(): Promise<PythonStatus> {
   }
 
   return { installed: false, pipInstalled: false }
+}
+
+/**
+ * Windows-only Python detection.
+ *
+ * When Python isn't actually installed, Windows registers `python.exe` /
+ * `python3.exe` (and now `py.exe`, via the Store's "Python Install Manager")
+ * as app execution aliases under WindowsApps. Running those stubs doesn't
+ * fail — it launches the Microsoft Store instead. So we resolve each
+ * candidate with `where` (a pure PATH lookup, doesn't execute the target)
+ * and skip anything that resolves into WindowsApps before ever running
+ * `--version` on it.
+ */
+async function checkPythonWindows(): Promise<PythonStatus> {
+  const candidates: Array<{ cmd: string; versionArgs: string }> = [
+    { cmd: 'python', versionArgs: '--version' },
+    { cmd: 'python3', versionArgs: '--version' },
+    { cmd: 'py', versionArgs: '-3 --version' },
+  ]
+
+  for (const { cmd, versionArgs } of candidates) {
+    const resolvedPath = await resolveWindowsCommandPath(cmd)
+    if (!resolvedPath || isWindowsStoreAlias(resolvedPath)) {
+      continue
+    }
+
+    try {
+      const { stdout } = await execAsync(`${cmd} ${versionArgs}`, { timeout: 10_000 })
+      const version = stdout.trim()
+      if (version.match(/Python 3\.\d+/)) {
+        const pipCmd = cmd === 'py' ? 'py -3' : cmd
+        try {
+          await execAsync(`${pipCmd} -m pip --version`, { timeout: 10_000 })
+          return { installed: true, version, pipInstalled: true }
+        } catch {
+          return { installed: true, version, pipInstalled: false }
+        }
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return { installed: false, pipInstalled: false }
+}
+
+/**
+ * Resolve a command to its target path via `where`, without executing it.
+ */
+async function resolveWindowsCommandPath(cmd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(`where ${cmd}`, { timeout: 5_000 })
+    const first = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean)
+    return first ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * True only for the bare app execution alias stub (e.g.
+ * "...\WindowsApps\python.exe"), not for a real Python distribution the
+ * user installed from the Store (e.g.
+ * "...\WindowsApps\PythonSoftwareFoundation.Python.3.12_.../python.exe").
+ * The alias sits directly inside WindowsApps; a real Store install lives
+ * one package-folder level deeper.
+ */
+function isWindowsStoreAlias(resolvedPath: string): boolean {
+  const marker = '\\windowsapps\\'
+  const normalized = resolvedPath.toLowerCase()
+  const idx = normalized.indexOf(marker)
+  if (idx === -1) return false
+  const afterMarker = normalized.slice(idx + marker.length)
+  return !afterMarker.includes('\\')
 }
 
 /**
