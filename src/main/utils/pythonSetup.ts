@@ -245,8 +245,21 @@ async function resolveWindowsCommandPath(cmd: string): Promise<string | null> {
   }
 }
 
+/**
+ * True only for the bare app execution alias stub (e.g.
+ * "...\WindowsApps\python.exe"), not for a real Python distribution the
+ * user installed from the Store (e.g.
+ * "...\WindowsApps\PythonSoftwareFoundation.Python.3.12_.../python.exe").
+ * The alias sits directly inside WindowsApps; a real Store install lives
+ * one package-folder level deeper.
+ */
 function isWindowsStoreAlias(resolvedPath: string): boolean {
-  return resolvedPath.toLowerCase().includes('\\windowsapps\\')
+  const marker = '\\windowsapps\\'
+  const normalized = resolvedPath.toLowerCase()
+  const idx = normalized.indexOf(marker)
+  if (idx === -1) return false
+  const afterMarker = normalized.slice(idx + marker.length)
+  return !afterMarker.includes('\\')
 }
 
 /**
