@@ -336,10 +336,13 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets',
   },
   add_budget_chapter: {
-    description: 'Agrega un capitulo (agrupacion) al presupuesto. Para guardar la descripcion del capitulo, siempre llamar a update_budget_item despues con el ID devuelto.',
+    description: 'Agrega un capitulo (rubro) o SUBCAPITULO (sub-rubro) al presupuesto. Para crear un sub-rubro, pasar parentItemId con el ID del capitulo padre — la jerarquia se anida sin limite de niveles (1, 1.1, 1.1.1...). Para guardar la descripcion del capitulo, siempre llamar a update_budget_item despues con el ID devuelto.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       name: z.string().describe('Nombre del capitulo'),
+      parentItemId: z.string().optional().describe('ID del capitulo padre bajo el cual anidar este capitulo, para crear un SUBCAPITULO (sub-rubro). El padre debe ser un chapter, no un item hoja. Omitir para crear un capitulo raiz del presupuesto.'),
+      startDate: z.string().optional().describe('Fecha de inicio planificada del capitulo en formato ISO (YYYY-MM-DD). Opcional.'),
+      endDate: z.string().optional().describe('Fecha de fin planificada del capitulo en formato ISO (YYYY-MM-DD). Opcional.'),
     }),
     method: 'POST',
     endpoint: '/budgets/:budgetId/chapters',

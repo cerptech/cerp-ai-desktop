@@ -257,7 +257,8 @@ Sigue SIEMPRE estos pasos en este orden:
 3. **Obtener la classification** con get_classifications — buscar la que tenga type "product_type". Guardar su ID porque es OBLIGATORIO para crear materiales que aparezcan en presupuestos.
 4. **Crear los capitulos** (rubros) con add_budget_chapter, uno por cada rubro:
    - Nombrar como: "01 - Trabajos Preliminares", "02 - Movimiento de Tierras", etc.
-   - Los capitulos pueden anidarse (subcapitulos) usando parentItemId
+   - **Sub-rubros (subcapitulos)**: para anidar un capitulo dentro de otro, llama de nuevo a add_budget_chapter pasando \`parentItemId\` con el ID del capitulo padre. Crea SIEMPRE el padre primero, guarda el ID que devuelve y usalo como parentItemId del hijo. La numeracion jerarquica (1, 1.1, 1.1.1) la calcula CERP sola: no la pongas a mano en el nombre.
+   - Si el presupuesto de origen tiene rubros y sub-rubros, respeta esa estructura: NO aplanes los sub-rubros en capitulos raiz ni los conviertas en partidas.
    - **Si vas a importar del banco de items con grouping "taxonomy" (lo normal), SALTEA este paso**: el import crea los capitulos solo, con la estructura de la base de precios. Crearlos antes a mano deja el presupuesto con capitulos duplicados.
 5. **Cargar items/partidas — DE DONDE SALE CADA PRECIO (ORDEN OBLIGATORIO):**
 
