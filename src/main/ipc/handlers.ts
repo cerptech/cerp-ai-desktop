@@ -44,14 +44,24 @@ const POWERFUL_MODEL = 'claude-opus-5'
  * empresa: si el techo (`maxTier`) no llega a `powerful`, "Potente" se degrada a
  * "Auto" — y devolvemos ESA elección para que agentManager tampoco aplique el
  * effort xhigh / workflows / techo de presupuesto del modo Potente.
+ *
+ * Sin política conocida (config no cacheada porque el core no respondió, o un
+ * core anterior que no la manda) "Potente" TAMPOCO cae a Opus: el modo caro
+ * exige una política que lo permita explícitamente. Fallar cerrado en coste es
+ * el punto de ADR 016; un arranque sin red no puede abrir la puerta a Opus con
+ * la API key persistida.
  */
 function resolveModel(choice?: ModelChoice): { model: string; choice: ModelChoice } {
   const models = getConfiguredModels()
   const policy = getModelPolicy()
   if (choice === 'fast') return { model: models?.fast || FAST_MODEL, choice: 'fast' }
   if (choice === 'powerful') {
-    if (policy && policy.maxTier !== 'powerful') {
-      logger.warn(`"Potente" no disponible por la política de modelo (techo ${policy.maxTier}) — se usa Auto`)
+    if (!policy || policy.maxTier !== 'powerful') {
+      logger.warn(
+        policy
+          ? `"Potente" no disponible por la política de modelo (techo ${policy.maxTier}) — se usa Auto`
+          : '"Potente" sin política de modelo conocida (config no disponible) — se usa Auto',
+      )
       return { model: getConfiguredModel() || DEFAULT_MODEL, choice: 'auto' }
     }
     return { model: models?.powerful || POWERFUL_MODEL, choice: 'powerful' }
@@ -163,6 +173,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         if (token) {
           try {
             await fetchApiKey(httpClient)
+            // La key puede haber rotado del lado del core: usar la recién recibida.
+            apiKey = getApiKey() ?? apiKey
           } catch (err) {
             if (err instanceof NoCreditsError) {
               return { started: false, error: err.message, code: 'NO_CREDITS' }
