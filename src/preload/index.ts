@@ -43,6 +43,7 @@ const IPC = {
   ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
   ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
   APP_GET_VERSION: 'app:get-version',
+  AGENT_GET_MODEL_POLICY: 'agent:get-model-policy',
   UPDATE_AVAILABLE: 'update:available',
   UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
   UPDATE_DOWNLOADED: 'update:downloaded',
@@ -82,6 +83,14 @@ export interface OnboardingProgressUpdate {
 
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
 export type ModelChoice = 'auto' | 'fast' | 'powerful'
+
+/** Política de modelo de la empresa (ADR 016 del core). Ver `main/ipc/types.ts`. */
+export type AiModelTier = 'economy' | 'standard' | 'powerful'
+export interface AiModelPolicy {
+  tier: AiModelTier
+  maxTier: AiModelTier
+  degraded: boolean
+}
 
 /** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
 export interface AttachmentFile {
@@ -428,6 +437,8 @@ const api = {
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
+  // Política de modelo (ADR 016): null si el backend no la informa o no hay sesión.
+  getModelPolicy: (): Promise<AiModelPolicy | null> => ipcRenderer.invoke(IPC.AGENT_GET_MODEL_POLICY),
 
   // Auto-update
   onUpdateAvailable: (callback: (data: { version: string }) => void): (() => void) => {

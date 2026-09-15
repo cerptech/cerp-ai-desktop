@@ -104,12 +104,33 @@ export interface AuthState {
   }
 }
 
+/** Política de modelo de la empresa (ADR 016 del core) — ver `modelPolicy` en DesktopConfig. */
+export type AiModelTier = 'economy' | 'standard' | 'powerful'
+
+export interface AiModelPolicy {
+  /** Tier que aplica ahora a "Auto". */
+  tier: AiModelTier
+  /** Techo del selector: con `maxTier !== 'powerful'`, "Potente" no está disponible. */
+  maxTier: AiModelTier
+  /** true si la empresa bajó de tier por su umbral de consumo del período. */
+  degraded: boolean
+}
+
 export interface DesktopConfig {
   apiKey: string
   companyId: string
   userId: string
   maxBudgetPerQuery: number
+  /** Modelo de "Auto" — ya resuelto por la política de la empresa en el core. */
   model: string
+  /**
+   * Modelos de "Rápido" y "Potente", recortados por el techo de la política
+   * (con techo `standard`, `powerful` trae el modelo standard). Puede faltar
+   * si el backend desplegado es anterior — el caller usa su fallback.
+   */
+  models?: { fast?: string; powerful?: string }
+  /** Ausente en un backend anterior → sin política (todo disponible). */
+  modelPolicy?: AiModelPolicy
   /**
    * Techo de coste por sesión según el plan de la empresa (Modelo CERP / créditos).
    * Puede faltar si el backend desplegado aún no incluye este campo — el caller

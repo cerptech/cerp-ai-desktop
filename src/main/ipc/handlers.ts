@@ -4,7 +4,7 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, NoCreditsError } from '../auth/apiKeyManager'
+import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, getConfiguredModels, getModelPolicy, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
@@ -13,7 +13,7 @@ import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
-import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 /**
@@ -29,19 +29,34 @@ function isAuthError(err: unknown): boolean {
   return err instanceof HttpError && err.status === 401
 }
 
-// Ola 1 — selector de modelo. "Auto" usa el que informa /desktop/api-key (config por
-// plan/empresa); si todavía no se cacheó, cae en el hardcode legacy que ya usaba runAgent.
+// Ola 1 — selector de modelo. Los tres modelos los informa /desktop/api-key (el core
+// los resuelve con la política de modelo de la empresa, ADR 016); estos hardcodes son
+// SOLO el fallback para cuando todavía no se cacheó la config o el backend es anterior.
 // "Potente" absorbió el antiguo Modo Turbo (pill separada, eliminada): además de fijar
 // este modelo, agentManager le aplica effort 'xhigh', habilita la tool Workflow y sube
 // el techo de presupuesto — ver `payload.modelChoice === 'powerful'` en agentManager.ts.
-const DEFAULT_MODEL = 'claude-sonnet-4-6'
-const FAST_MODEL = 'claude-haiku-4-5-20251001'
-const POWERFUL_MODEL = 'claude-opus-4-8'
+const DEFAULT_MODEL = 'claude-sonnet-5'
+const FAST_MODEL = 'claude-haiku-4-5'
+const POWERFUL_MODEL = 'claude-opus-5'
 
-function resolveModel(choice?: ModelChoice): string {
-  if (choice === 'fast') return FAST_MODEL
-  if (choice === 'powerful') return POWERFUL_MODEL
-  return getConfiguredModel() || DEFAULT_MODEL
+/**
+ * Traduce la elección del selector al modelo a usar, aplicando la política de la
+ * empresa: si el techo (`maxTier`) no llega a `powerful`, "Potente" se degrada a
+ * "Auto" — y devolvemos ESA elección para que agentManager tampoco aplique el
+ * effort xhigh / workflows / techo de presupuesto del modo Potente.
+ */
+function resolveModel(choice?: ModelChoice): { model: string; choice: ModelChoice } {
+  const models = getConfiguredModels()
+  const policy = getModelPolicy()
+  if (choice === 'fast') return { model: models?.fast || FAST_MODEL, choice: 'fast' }
+  if (choice === 'powerful') {
+    if (policy && policy.maxTier !== 'powerful') {
+      logger.warn(`"Potente" no disponible por la política de modelo (techo ${policy.maxTier}${policy.degraded ? ', empresa degradada por consumo' : ''}) — se usa Auto`)
+      return { model: getConfiguredModel() || DEFAULT_MODEL, choice: 'auto' }
+    }
+    return { model: models?.powerful || POWERFUL_MODEL, choice: 'powerful' }
+  }
+  return { model: getConfiguredModel() || DEFAULT_MODEL, choice: 'auto' }
 }
 
 // Ola 1 — adjuntos: mismos tipos que puede leer el agente localmente del disco (no hay
@@ -138,6 +153,24 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       if (!mainWindow) return { started: false, error: 'No window' }
 
       let apiKey = getApiKey()
+      // Política de modelo (ADR 016): la config (modelo de Auto, techo, degradación)
+      // puede haber cambiado desde la última lectura — y tras un reinicio la API key
+      // persistida hace que este handler ni la pida. Con config vieja se refresca
+      // ANTES de resolver el modelo; si el refresco falla se sigue con la cacheada
+      // (o con el camino de abajo si no había nada), salvo que sea el paywall.
+      if (apiKey && isConfigStale()) {
+        const token = await ensureFreshToken()
+        if (token) {
+          try {
+            await fetchApiKey(httpClient)
+          } catch (err) {
+            if (err instanceof NoCreditsError) {
+              return { started: false, error: err.message, code: 'NO_CREDITS' }
+            }
+            logger.warn(`No se pudo refrescar la config de modelo — se usa la cacheada: ${err}`)
+          }
+        }
+      }
       if (!apiKey) {
         // Si no hay token utilizable (p.ej. el usuario cerró el modal de sesión
         // expirada sin volver a loguearse), cortamos acá: evita una llamada de
@@ -172,14 +205,32 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         }
       }
 
-      const resolvedModel = resolveModel(payload.modelChoice)
-      runAgent(payload, apiKey, resolvedModel, httpClient, mainWindow).catch((err) => {
+      const resolved = resolveModel(payload.modelChoice)
+      const effectivePayload: SendPromptPayload =
+        resolved.choice === (payload.modelChoice ?? 'auto') ? payload : { ...payload, modelChoice: resolved.choice }
+      runAgent(effectivePayload, apiKey, resolved.model, httpClient, mainWindow).catch((err) => {
         logger.error('Agent run error:', err)
       })
 
       return { started: true }
     },
   )
+
+  // Agent: política de modelo de la empresa (ADR 016) para el selector del composer.
+  // Con config vieja (o ninguna) y sesión viva la vuelve a pedir; si falla devuelve
+  // la última conocida (null si nunca hubo) — el renderer solo la usa para hints.
+  ipcMain.handle(IPC_CHANNELS.AGENT_GET_MODEL_POLICY, async (): Promise<AiModelPolicy | null> => {
+    if (isConfigStale()) {
+      const token = await ensureFreshToken()
+      if (!token) return getModelPolicy()
+      try {
+        await fetchApiKey(httpClient)
+      } catch (err) {
+        logger.warn(`No se pudo refrescar la política de modelo: ${err}`)
+      }
+    }
+    return getModelPolicy()
+  })
 
   // Agent: Interrupt (graceful stop) — per conversation
   ipcMain.handle(IPC_CHANNELS.AGENT_ABORT, async (_event, conversationId?: string): Promise<void> => {

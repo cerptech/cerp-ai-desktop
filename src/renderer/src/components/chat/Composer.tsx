@@ -16,6 +16,7 @@ import {
   ClipboardCheck,
 } from 'lucide-react'
 import type { ModelChoice } from '@/hooks/useModelChoice'
+import { useModelPolicy } from '@/hooks/useModelPolicy'
 import type { DictationStatus } from '@/hooks/useDictation'
 import type { AttachmentFile } from '@/hooks/useAttachments'
 import { AttachmentCard } from './AttachmentCard'
@@ -159,6 +160,20 @@ export function Composer({
   }, [value, textareaRef])
 
   const currentModel = MODEL_OPTIONS.find((o) => o.value === modelChoice) ?? MODEL_OPTIONS[0]
+  // Política de modelo de la empresa (ADR 016): el main ya recorta "Potente" al
+  // enviar; acá solo se refleja en la UI para que el usuario entienda por qué.
+  const modelPolicy = useModelPolicy()
+  const powerfulBlocked = !!modelPolicy && modelPolicy.maxTier !== 'powerful'
+  const economyMode = !!modelPolicy && modelPolicy.degraded
+  const optionHint = (value: ModelChoice, fallback: string): string => {
+    if (value === 'powerful' && powerfulBlocked) {
+      return economyMode
+        ? 'No disponible: tu empresa superó el consumo de IA del período'
+        : 'No disponible en el plan de tu empresa'
+    }
+    if (value === 'auto' && economyMode) return 'Modo económico hasta el próximo período de facturación'
+    return fallback
+  }
   const CurrentModelIcon = currentModel.icon
 
   return (
@@ -284,20 +299,24 @@ export function Composer({
                 {MODEL_OPTIONS.map((option) => {
                   const Icon = option.icon
                   const isActive = option.value === modelChoice
+                  const blocked = option.value === 'powerful' && powerfulBlocked
                   return (
                     <button
                       key={option.value}
                       type="button"
+                      disabled={blocked}
                       onClick={() => {
                         onModelChange(option.value)
                         setOpenMenu(null)
                       }}
-                      className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-black/5 transition-colors"
+                      className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-black/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       <Icon className="size-4 mt-0.5 shrink-0 text-slate-500" strokeWidth={2} aria-hidden="true" />
                       <span className="flex flex-col min-w-0">
                         <span className="text-sm text-slate-800">{option.label}</span>
-                        <span className="text-xs text-slate-400">{option.hint}</span>
+                        <span className={`text-xs ${blocked || (option.value === 'auto' && economyMode) ? 'text-amber-600' : 'text-slate-400'}`}>
+                          {optionHint(option.value, option.hint)}
+                        </span>
                       </span>
                       {isActive && <Check className="ml-auto size-4 shrink-0 text-brand-orange" strokeWidth={2.5} aria-hidden="true" />}
                     </button>
