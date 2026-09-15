@@ -51,7 +51,7 @@ function resolveModel(choice?: ModelChoice): { model: string; choice: ModelChoic
   if (choice === 'fast') return { model: models?.fast || FAST_MODEL, choice: 'fast' }
   if (choice === 'powerful') {
     if (policy && policy.maxTier !== 'powerful') {
-      logger.warn(`"Potente" no disponible por la política de modelo (techo ${policy.maxTier}${policy.degraded ? ', empresa degradada por consumo' : ''}) — se usa Auto`)
+      logger.warn(`"Potente" no disponible por la política de modelo (techo ${policy.maxTier}) — se usa Auto`)
       return { model: getConfiguredModel() || DEFAULT_MODEL, choice: 'auto' }
     }
     return { model: models?.powerful || POWERFUL_MODEL, choice: 'powerful' }

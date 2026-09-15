@@ -45,7 +45,7 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
       maxBudgetUsdTurbo?: number
     }>('/desktop/api-key')
 
-    logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}${response.modelPolicy?.degraded ? ' (degraded)' : ''}`)
+    logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}`)
 
     tokenStore.setApiKey(response.apiKey)
 
