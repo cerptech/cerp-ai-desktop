@@ -1,9 +1,17 @@
 import { tokenStore } from './tokenStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
-import type { DesktopConfig } from '../ipc/types'
+import type { AiModelPolicy, DesktopConfig } from '../ipc/types'
 
 let cachedConfig: DesktopConfig | null = null
+let cachedConfigAt = 0
+
+/**
+ * La política de modelo de la empresa cambia sola (cruza el umbral de consumo
+ * a mitad de período, o el período resetea): la config se considera vieja
+ * pasados 5 min y el envío de un prompt la refresca antes de resolver el modelo.
+ */
+const CONFIG_TTL_MS = 5 * 60 * 1000
 
 /**
  * La empresa no tiene créditos disponibles (Modelo CERP). El backend responde
@@ -31,11 +39,13 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
       userId: string
       maxBudgetPerQuery: number
       model: string
+      models?: { fast?: string; powerful?: string }
+      modelPolicy?: AiModelPolicy
       maxBudgetUsd?: number
       maxBudgetUsdTurbo?: number
     }>('/desktop/api-key')
 
-    logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}`)
+    logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}${response.modelPolicy?.degraded ? ' (degraded)' : ''}`)
 
     tokenStore.setApiKey(response.apiKey)
 
@@ -48,9 +58,12 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
       userId: response.userId,
       maxBudgetPerQuery: response.maxBudgetPerQuery,
       model: response.model,
+      models: response.models,
+      modelPolicy: response.modelPolicy,
       maxBudgetUsd: response.maxBudgetUsd,
       maxBudgetUsdTurbo: response.maxBudgetUsdTurbo,
     }
+    cachedConfigAt = Date.now()
 
     logger.info('API key fetched and stored successfully')
     return cachedConfig
@@ -93,6 +106,29 @@ export function getConfiguredModel(): string | undefined {
   return cachedConfig?.model
 }
 
+/**
+ * Modelos de "Rápido" / "Potente" informados por el backend (ya recortados por la
+ * política de la empresa). Ausentes con un backend anterior o sin config cacheada.
+ */
+export function getConfiguredModels(): { fast?: string; powerful?: string } | undefined {
+  return cachedConfig?.models
+}
+
+/** Política de modelo de la empresa (ADR 016), si el backend la informó. */
+export function getModelPolicy(): AiModelPolicy | null {
+  return cachedConfig?.modelPolicy ?? null
+}
+
+/** true si ya hay config cacheada (para no pegarle al backend de más). */
+export function hasCachedConfig(): boolean {
+  return cachedConfig !== null
+}
+
+/** true si no hay config o pasó el TTL: hay que volver a pedirla al backend. */
+export function isConfigStale(): boolean {
+  return cachedConfig === null || Date.now() - cachedConfigAt > CONFIG_TTL_MS
+}
+
 /** Techo de coste por sesión (modo normal) informado por el backend, si ya se cacheó. */
 export function getMaxBudgetUsd(): number | undefined {
   return cachedConfig?.maxBudgetUsd
@@ -109,5 +145,6 @@ export function getMaxBudgetUsdTurbo(): number | undefined {
 
 export function clearApiKey(): void {
   cachedConfig = null
+  cachedConfigAt = 0
   tokenStore.clearApiKey()
 }

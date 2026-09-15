@@ -61,6 +61,9 @@ export const IPC_CHANNELS = {
   // Plan Mode
   AGENT_SET_PLAN_MODE: 'agent:set-plan-mode',
   AGENT_GET_PLAN_MODE: 'agent:get-plan-mode',
+  // Política de modelo de la empresa (ADR 016): el renderer la lee para
+  // desactivar "Potente" cuando el techo lo bloquea y avisar del modo económico.
+  AGENT_GET_MODEL_POLICY: 'agent:get-model-policy',
 
   // ask_user_question tool — structured clarification widget
   AGENT_ASK_USER_QUESTION: 'agent:ask_user_question',

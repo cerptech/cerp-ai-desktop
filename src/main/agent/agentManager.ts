@@ -303,12 +303,16 @@ async function startSession(
     powerful,
   )
 
-  // Build subagent definitions (with model overrides for cost optimization)
+  // Build subagent definitions (with model overrides for cost optimization).
+  // Política de modelo (ADR 016): si el modelo principal es el económico (Haiku),
+  // los especialistas 'sonnet'/'opus' también bajan a 'haiku' — si no, la
+  // degradación por umbral de consumo se escaparía por los subagentes.
+  const economy = /haiku/i.test(model)
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
     name: a.name,
     description: a.description,
     instructions: a.prompt,
-    ...(a.model && a.model !== 'inherit' ? { model: a.model } : {}),
+    ...(a.model && a.model !== 'inherit' ? { model: economy ? 'haiku' : a.model } : {}),
   }))
   const customAgentDefs = customAgentStore.getAgents()
   const customSdkAgents = customAgentDefs.map((a) => ({

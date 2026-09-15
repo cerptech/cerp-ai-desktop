@@ -1,6 +1,13 @@
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
 export type ModelChoice = 'auto' | 'fast' | 'powerful'
 
+export type AiModelTier = 'economy' | 'standard' | 'powerful'
+export interface AiModelPolicy {
+  tier: AiModelTier
+  maxTier: AiModelTier
+  degraded: boolean
+}
+
 /** Adjunto validado (path real en disco + metadata) — dialog multiselección o drag&drop. */
 export interface AttachmentFile {
   path: string
@@ -269,6 +276,8 @@ interface CerpAPI {
   getOnboardingProgress(): Promise<OnboardingProgressResponse>
   updateOnboardingProgress(payload: OnboardingProgressUpdate): Promise<OnboardingProgressResponse>
   getVersion(): Promise<string>
+  /** Política de modelo de la empresa (ADR 016): null sin sesión o con un backend anterior. */
+  getModelPolicy(): Promise<AiModelPolicy | null>
   onUpdateAvailable(callback: (data: { version: string }) => void): () => void
   onUpdateDownloadProgress(callback: (data: { percent: number }) => void): () => void
   onUpdateDownloaded(callback: (data: { version: string }) => void): () => void
