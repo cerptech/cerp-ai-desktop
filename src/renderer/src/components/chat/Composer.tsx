@@ -161,19 +161,14 @@ export function Composer({
 
   const currentModel = MODEL_OPTIONS.find((o) => o.value === modelChoice) ?? MODEL_OPTIONS[0]
   // Política de modelo de la empresa (ADR 016): el main ya recorta "Potente" al
-  // enviar; acá solo se refleja en la UI para que el usuario entienda por qué.
+  // enviar; acá solo se deshabilita la opción. A propósito NO se explica el
+  // motivo (umbral de consumo, modo económico): es política comercial interna
+  // y la empresa no debe verla — decisión de Eze, 2026-09-15. `degraded` no
+  // se usa en la UI.
   const modelPolicy = useModelPolicy()
   const powerfulBlocked = !!modelPolicy && modelPolicy.maxTier !== 'powerful'
-  const economyMode = !!modelPolicy && modelPolicy.degraded
-  const optionHint = (value: ModelChoice, fallback: string): string => {
-    if (value === 'powerful' && powerfulBlocked) {
-      return economyMode
-        ? 'No disponible: tu empresa superó el consumo de IA del período'
-        : 'No disponible en el plan de tu empresa'
-    }
-    if (value === 'auto' && economyMode) return 'Modo económico hasta el próximo período de facturación'
-    return fallback
-  }
+  const optionHint = (value: ModelChoice, fallback: string): string =>
+    value === 'powerful' && powerfulBlocked ? 'No disponible en el plan de tu empresa' : fallback
   const CurrentModelIcon = currentModel.icon
 
   return (
@@ -314,7 +309,7 @@ export function Composer({
                       <Icon className="size-4 mt-0.5 shrink-0 text-slate-500" strokeWidth={2} aria-hidden="true" />
                       <span className="flex flex-col min-w-0">
                         <span className="text-sm text-slate-800">{option.label}</span>
-                        <span className={`text-xs ${blocked || (option.value === 'auto' && economyMode) ? 'text-amber-600' : 'text-slate-400'}`}>
+                        <span className="text-xs text-slate-400">
                           {optionHint(option.value, option.hint)}
                         </span>
                       </span>
