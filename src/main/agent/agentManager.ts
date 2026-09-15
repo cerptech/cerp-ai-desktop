@@ -304,15 +304,22 @@ async function startSession(
   )
 
   // Build subagent definitions (with model overrides for cost optimization).
-  // Política de modelo (ADR 016): si el modelo principal es el económico (Haiku),
-  // los especialistas 'sonnet'/'opus' también bajan a 'haiku' — si no, la
-  // degradación por umbral de consumo se escaparía por los subagentes.
-  const economy = /haiku/i.test(model)
+  // Política de modelo (ADR 016): ningún subagente puede correr por encima del
+  // tier del modelo principal (que ya llega resuelto por la política: Auto,
+  // techo y umbral). Con el principal en Haiku, 'sonnet'/'opus' bajan a
+  // 'haiku'; con el principal en Sonnet, 'opus' baja a 'sonnet' — si no, la
+  // degradación o el techo se escaparían por los especialistas.
+  const mainTierRank = /haiku/i.test(model) ? 0 : /opus/i.test(model) ? 2 : 1
+  const clampSubagentModel = (m: 'sonnet' | 'opus' | 'haiku'): 'sonnet' | 'opus' | 'haiku' => {
+    const rank = m === 'haiku' ? 0 : m === 'sonnet' ? 1 : 2
+    const clamped = Math.min(rank, mainTierRank)
+    return clamped === 0 ? 'haiku' : clamped === 1 ? 'sonnet' : 'opus'
+  }
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
     name: a.name,
     description: a.description,
     instructions: a.prompt,
-    ...(a.model && a.model !== 'inherit' ? { model: economy ? 'haiku' : a.model } : {}),
+    ...(a.model && a.model !== 'inherit' ? { model: clampSubagentModel(a.model) } : {}),
   }))
   const customAgentDefs = customAgentStore.getAgents()
   const customSdkAgents = customAgentDefs.map((a) => ({

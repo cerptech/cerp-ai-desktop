@@ -28,6 +28,30 @@ export class NoCreditsError extends Error {
   }
 }
 
+/**
+ * Allowlist cerrada, como en cerp-ai-service: una política malformada (p.ej.
+ * sin `maxTier` por un bug de serialización) se descarta ENTERA. Si se
+ * aceptara a medias, `resolveModel` bloquearía "Potente" para todas las
+ * empresas o, peor, lo dejaría pasar sin techo.
+ */
+function isTier(v: unknown): v is AiModelPolicy['tier'] {
+  return v === 'economy' || v === 'standard' || v === 'powerful'
+}
+function parseModelPolicy(raw: unknown): AiModelPolicy | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { tier, maxTier, degraded } = raw as Record<string, unknown>
+  if (!isTier(tier) || !isTier(maxTier)) return undefined
+  return { tier, maxTier, degraded: degraded === true }
+}
+function parseModels(raw: unknown): { fast?: string; powerful?: string } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const { fast, powerful } = raw as Record<string, unknown>
+  const out: { fast?: string; powerful?: string } = {}
+  if (typeof fast === 'string' && fast) out.fast = fast
+  if (typeof powerful === 'string' && powerful) out.powerful = powerful
+  return out
+}
+
 export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig> {
   const token = tokenStore.getAccessToken()
   logger.info(`Fetching API key from backend... (has token: ${!!token})`)
@@ -58,8 +82,8 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
       userId: response.userId,
       maxBudgetPerQuery: response.maxBudgetPerQuery,
       model: response.model,
-      models: response.models,
-      modelPolicy: response.modelPolicy,
+      models: parseModels(response.models),
+      modelPolicy: parseModelPolicy(response.modelPolicy),
       maxBudgetUsd: response.maxBudgetUsd,
       maxBudgetUsdTurbo: response.maxBudgetUsdTurbo,
     }
@@ -117,11 +141,6 @@ export function getConfiguredModels(): { fast?: string; powerful?: string } | un
 /** Política de modelo de la empresa (ADR 016), si el backend la informó. */
 export function getModelPolicy(): AiModelPolicy | null {
   return cachedConfig?.modelPolicy ?? null
-}
-
-/** true si ya hay config cacheada (para no pegarle al backend de más). */
-export function hasCachedConfig(): boolean {
-  return cachedConfig !== null
 }
 
 /** true si no hay config o pasó el TTL: hay que volver a pedirla al backend. */

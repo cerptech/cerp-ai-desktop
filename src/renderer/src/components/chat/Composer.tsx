@@ -169,6 +169,12 @@ export function Composer({
   const powerfulBlocked = !!modelPolicy && modelPolicy.maxTier !== 'powerful'
   const optionHint = (value: ModelChoice, fallback: string): string =>
     value === 'powerful' && powerfulBlocked ? 'No disponible en el plan de tu empresa' : fallback
+  // Una preferencia "Potente" guardada en localStorage no puede quedar
+  // seleccionada cuando el techo la bloquea: la pill diría "Potente" mientras
+  // el main manda Auto, y la opción deshabilitada no se puede des-seleccionar.
+  useEffect(() => {
+    if (powerfulBlocked && modelChoice === 'powerful') onModelChange('auto')
+  }, [powerfulBlocked, modelChoice, onModelChange])
   const CurrentModelIcon = currentModel.icon
 
   return (
