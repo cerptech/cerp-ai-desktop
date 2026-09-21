@@ -3,6 +3,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { toolSchemas } from './toolDefinitions'
 import { createItemBankTools } from './itemBankTools'
+import { createCatalogTools } from './catalogTools'
 import { createCreditsTools } from './creditsTools'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
@@ -359,7 +360,12 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
             return { content: [{ type: 'text' as const, text }] }
           }
 
-          const { url, body } = buildRequest(def.endpoint, def.method, args, def.fieldMap)
+          // `transformArgs` reforma los args cuando la diferencia con el API no es un
+          // simple renombre (ids planos -> array de subdocumentos, campo plano ->
+          // subdocumento anidado). Corre ANTES de buildRequest para que el resultado
+          // pase por el mismo armado de URL y fieldMap que el resto.
+          const apiArgs = def.transformArgs ? def.transformArgs(args) : args
+          const { url, body } = buildRequest(def.endpoint, def.method, apiArgs, def.fieldMap)
           logger.info(`MCP ${def.method} ${name} → ${url}`)
 
           // Auto-inject companyId into all operations
@@ -460,6 +466,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       attachBudgetPdfTool,
       downloadBudgetAttachmentTool,
       showHtmlTool,
+      ...createCatalogTools(httpClient),
       ...createItemBankTools(httpClient),
       ...createCreditsTools(httpClient),
       ...cerpApiTools,
