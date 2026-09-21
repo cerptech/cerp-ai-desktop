@@ -480,6 +480,11 @@ export const toolSchemas: Record<string, ToolDef> = {
           description: z.string().optional(),
           classification: z.string().optional().describe('ID classification product_type'),
           defaultCost: z.number().optional().describe('Costo unitario directo. Ignorado si se envia materialsRequired/resourcesRequired (el backend recalcula desde el BOM).'),
+          subcontractMode: z.enum(['none', 'labor_only', 'full']).optional().describe(
+            'Tipo de partida (default "none"). "full": 100% subcontratada — REQUIERE costoUnitario, NO lleva materialsRequired/resourcesRequired y su costo va entero al rubro Subcontratado. ' +
+            '"labor_only": la mano de obra la pone un tercero (sus recursos tienen que estar marcados como subcontratables).',
+          ),
+          costoUnitario: z.number().min(0).optional().describe('Precio cerrado del subcontrato por unidad. OBLIGATORIO cuando subcontractMode es "full".'),
           costBreakdown: z.object({
             materials: z.number().optional(),
             labor: z.number().optional(),
@@ -749,29 +754,36 @@ export const toolSchemas: Record<string, ToolDef> = {
   },
   create_material: {
     description:
-      'Crea un articulo nuevo en el catalogo de la empresa: un material, un producto o un servicio 100% subcontratado. ' +
-      'code es OBLIGATORIO y unico por empresa (el backend rechaza el alta sin codigo) — buscar antes con search_materials. ' +
-      'classification es obligatoria para que el articulo aparezca en presupuestos (get_classifications, tipo "product_type"). ' +
-      'SUBCONTRATADO: para una partida que hace un tercero y se compra hecha, mandar subcontractMode "full" + costoUnitario. ' +
-      'Solo asi el costo se imputa al rubro Subcontratado (y no a Materiales) y la orden de compra no exige almacen. ' +
-      'El desglose de costos NO se manda a mano: lo calcula el backend a partir del modo de subcontratacion y del costo unitario.',
+      'Crea un MATERIAL en el catalogo de la empresa: un insumo suelto que se compra y se consume (cemento, chapa, tornillos, arena). ' +
+      'Tiene stock, proveedores y precio; NO tiene composicion. ' +
+      'NO es lo mismo que una PARTIDA (un trabajo: "muro de ladrillo hueco", "sustitucion de peldaños", cualquier cosa subcontratada): para eso esta create_item. ' +
+      'Ante la duda: si se mide en unidades de compra y entra al almacen, es material; si es un trabajo que se presupuesta y se ejecuta, es una partida. ' +
+      'code es OBLIGATORIO y unico por empresa (el backend rechaza el alta sin codigo) — buscar antes con search_materials para no duplicar.',
     schema: z.object({
-      name: z.string().describe('Nombre del articulo'),
-      code: z.string().min(1).describe('Codigo unico en la empresa (ej: "AMH75-01"). OBLIGATORIO.'),
+      name: z.string().describe('Nombre del material'),
+      code: z.string().min(1).describe('Codigo unico en la empresa (ej: "CEM-PORT-50"). OBLIGATORIO.'),
       unit: z.string().optional().describe('Unidad (kg, m, m2, m3, ml, ud, gl, etc.)'),
-      description: z.string().optional().describe('Descripcion detallada (se hereda al presupuesto cuando se usa el articulo)'),
-      classification: z.string().optional().describe('ID de la clasificacion (OBLIGATORIO para que aparezca en presupuestos). Usar get_classifications para obtener el ID de tipo product_type.'),
-      nature: z.enum(['material', 'item']).optional().describe('"material" (insumo de obra, default) o "item" (producto/partida)'),
-      defaultCost: z.number().optional().describe('Costo unitario de referencia. Para subcontractMode "full" lo pisa costoUnitario.'),
-      subcontractMode: z.enum(['none', 'labor_only', 'full']).optional().describe(
-        'Modo de subcontratacion. "none" (default): articulo propio. "full": 100% subcontratado, todo su costo va al rubro Subcontratado (REQUIERE costoUnitario). "labor_only": solo la mano de obra es subcontratada.',
-      ),
-      costoUnitario: z.number().min(0).optional().describe('Costo unitario del servicio subcontratado. OBLIGATORIO cuando subcontractMode es "full" (el backend rechaza el alta sin el).'),
+      description: z.string().optional().describe('Descripcion detallada (se hereda al presupuesto cuando se usa el material)'),
+      classification: z.string().optional().describe('ID de la clasificacion (get_classifications). Para materiales, la de tipo "material_type".'),
+      defaultCost: z.number().optional().describe('Costo unitario de referencia'),
       category: z.string().optional().describe('ID de una categoria del catalogo (ObjectId). NO es texto libre: mandar un nombre hace fallar el alta.'),
-      minimumStock: z.number().optional().describe('Bajo este nivel el articulo figura como stock bajo'),
+      unitValue: z.object({
+        value: z.number().describe('Cuanto trae el formato de compra (ej: 50 para una bolsa de 50 kg)'),
+        unit: z.string().describe('Unidad de ese contenido (kg, l, m...)'),
+      }).optional().describe('Contenido del formato de compra, cuando el material se compra por bulto/bolsa/rollo.'),
+      suppliers: z.array(z.object({
+        supplierId: z.string().describe('ID del contacto proveedor (search_contacts)'),
+        providerCode: z.string().optional().describe('Codigo con el que el proveedor identifica este material'),
+      })).optional().describe('Proveedores habituales del material.'),
+      minimumStock: z.number().optional().describe('Bajo este nivel el material figura como stock bajo'),
     }),
     method: 'POST',
     endpoint: '/items',
+    // `nature` fijo. Si no viaja explicito el backend lo DERIVA (itemNatureCategory.ts:
+    // con una classification de tipo product_type el alta termina del lado de las
+    // PARTIDAS, no de los materiales) — y de que lado del catalogo queda una entrada
+    // no puede depender de que campos se acordo de mandar el modelo.
+    transformArgs: (args) => ({ ...args, nature: 'material' }),
   },
   get_classifications: {
     description: 'Obtiene las clasificaciones de productos de la empresa. Buscar la que tenga type "product_type" — su ID es OBLIGATORIO al crear materiales para que aparezcan en presupuestos.',
@@ -839,13 +851,21 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/resources',
   },
   create_resource: {
-    description: 'Crea un nuevo recurso (trabajador, maquinaria, herramienta).',
+    description:
+      'Crea un recurso productivo: mano de obra (oficial, peon, especialista) o maquinaria/herramienta. ' +
+      'code, costRate y costRateType son OBLIGATORIOS — el modelo los exige y sin ellos el alta falla. ' +
+      'Buscar antes con search_resources para no duplicar.',
     schema: z.object({
-      name: z.string().describe('Nombre del recurso'),
-      type: z.enum(['labor', 'tools_machinery']),
-      status: z.enum(['available', 'occupied', 'maintenance', 'retired']).optional(),
-      costPerHour: z.number().optional(),
-      costPerDay: z.number().optional(),
+      name: z.string().describe('Nombre del recurso (ej: "Oficial albañil", "Retroexcavadora CAT 320")'),
+      code: z.string().min(1).describe('Codigo unico en la empresa (ej: "MO-OF-001"). OBLIGATORIO.'),
+      type: z.enum(['labor', 'tools_machinery']).describe('"labor" para personas, "tools_machinery" para maquinaria y herramientas'),
+      costRate: z.number().min(0).describe('Tarifa del recurso en la unidad de costRateType. OBLIGATORIO: preguntarsela al usuario, NUNCA inventarla.'),
+      costRateType: z.enum(['hourly', 'daily', 'fixed', 'unit', 'm2', 'm3']).describe('Unidad de la tarifa: por hora, por dia, fija, por unidad producida, por m2 o por m3.'),
+      hoursPerDay: z.number().min(0.5).max(24).optional().describe('Horas que representa un dia. Solo para costRateType "daily" (default 8).'),
+      canBeSubcontracted: z.boolean().optional().describe('true si el recurso lo puede aportar un subcontratista. OBLIGATORIO en true para usarlo en una partida con subcontractMode "labor_only".'),
+      status: z.enum(['available', 'occupied', 'maintenance', 'retired']).optional().describe('Estado (default "available")'),
+      description: z.string().optional(),
+      currency: z.string().optional().describe('Moneda de la tarifa (default EUR)'),
     }),
     method: 'POST',
     endpoint: '/resources',
