@@ -17,6 +17,16 @@ export interface ToolDef {
    * SIEMPRE camelCase al modelo y este mapa absorbe la diferencia.
    */
   fieldMap?: Record<string, string>
+  /**
+   * Reforma los args del schema cuando la diferencia con el API NO es un simple
+   * renombre (`fieldMap`): armar un array de objetos a partir de una lista de ids,
+   * anidar un campo plano dentro de un subdocumento, etc.
+   *
+   * Corre ANTES de resolver los `:placeholders` de la URL, asi que puede devolver
+   * (o conservar) las claves de ruta. Debe ser pura: devolver un objeto nuevo y no
+   * mutar el que recibe.
+   */
+  transformArgs?: (args: Record<string, unknown>) => Record<string, unknown>
 }
 
 // ============================================================
@@ -204,10 +214,12 @@ export const toolSchemas: Record<string, ToolDef> = {
   // PURCHASE ORDERS — Read & Write
   // ============================================================
   get_purchase_orders: {
-    description: 'Lista ordenes de compra con numero, proveedor, estado, monto y fecha de entrega.',
+    description: 'Lista ordenes de compra con numero, proveedor, estado, monto y fecha de entrega. Por defecto el backend devuelve solo 10: mandar limit para ver mas.',
     schema: z.object({
       status: z.enum(['draft', 'pending', 'approved', 'ordered', 'received', 'partial_received', 'cancelled']).optional(),
-      limit: z.number().min(1).max(50).optional(),
+      supplierId: z.string().optional().describe('Filtrar por proveedor (ID de contacto)'),
+      constructionSiteId: z.string().optional().describe('Filtrar por obra'),
+      limit: z.number().min(1).max(50).optional().describe('Cuantas devolver (default 10 del backend)'),
     }),
     method: 'GET',
     endpoint: '/purchases',
@@ -221,25 +233,57 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/purchases/:purchaseOrderId',
   },
   create_purchase_order: {
-    description: 'Crea una nueva orden de compra.',
+    description:
+      'Crea una orden de compra a uno o varios proveedores. Antes de llamarla hay que resolver los IDs: la obra con get_construction_sites, ' +
+      'el proveedor con search_contacts (o create_contact si no existe) y CADA articulo con search_materials (o create_material si no existe). Nunca inventar un ID. ' +
+      'IMPUESTOS: si una linea no trae taxRate el backend le aplica 21% de IVA. Para una orden a base imponible (sin impuesto) hay que mandar taxRate: 0 en TODAS las lineas. ' +
+      'ESTADO: sin el permiso de aprobar compras la orden nace en "draft" aunque se pida otro estado — es correcto (pedir una compra no es autorizarla); hay que contarle al usuario en que estado quedo. ' +
+      'ALMACEN: warehouseId solo hace falta para aprobar u ordenar material fisico; una orden 100% subcontratada (articulos con subcontractMode "full") no lo necesita.',
     schema: z.object({
-      constructionSiteId: z.string().describe('ID de la obra'),
-      supplierId: z.string().optional().describe('ID del proveedor'),
+      supplierIds: z.array(z.string()).min(1).describe(
+        'IDs de los proveedores (contactos). Normalmente uno. Con varios la orden queda como comparativa y hay que elegir el adjudicado al aprobarla. OBLIGATORIO: el backend rechaza una orden sin proveedor.',
+      ),
       items: z.array(z.object({
-        itemId: z.string(),
-        quantity: z.number(),
-        unitPrice: z.number(),
-      })).optional(),
-      notes: z.string().optional(),
+        itemId: z.string().describe('ID del articulo del catalogo de la empresa (search_materials / create_material)'),
+        orderQuantity: z.number().positive().describe('Cantidad pedida'),
+        unitCost: z.number().min(0).describe('Precio unitario SIN impuestos'),
+        taxRate: z.number().int().min(0).max(100).optional().describe('IVA/IGIC de la linea en porcentaje entero (ej: 21). SI SE OMITE EL BACKEND APLICA 21. Para base imponible mandar 0.'),
+        constructionSiteId: z.string().optional().describe('Obra a la que se imputa ESTA linea (solo para ordenes multi-obra; si no, usar el de cabecera)'),
+        warehouseId: z.string().optional().describe('Almacen donde entra ESTA linea (solo para ordenes multi-obra)'),
+      })).min(1).describe('Lineas de la orden. OBLIGATORIO: el backend rechaza una orden sin lineas.'),
+      constructionSiteId: z.string().optional().describe('ID de la obra a la que se imputa la compra. Sin obra el costo no llega al cashflow de ningun proyecto.'),
+      warehouseId: z.string().optional().describe('ID del almacen que recibe el material. Necesario para aprobar u ordenar, salvo que TODO sea subcontratado.'),
+      expectedDeliveryDate: z.string().optional().describe('Fecha de entrega prevista (ISO 8601)'),
+      paymentMethod: z.string().optional().describe('Forma de pago acordada'),
+      notes: z.string().optional().describe('Nota para el hilo de la orden (referencia al presupuesto del proveedor, condiciones, etc.)'),
+      status: z.enum(['draft', 'pending', 'approved', 'ordered']).optional().describe('Estado inicial (default "draft"). Se ignora si el usuario no puede aprobar compras.'),
+      chosenSupplierId: z.string().optional().describe('Proveedor adjudicado. Obligatorio si hay mas de un proveedor Y la orden nace en approved/ordered.'),
+      currency: z.string().optional().describe('Moneda del documento (ej: EUR). Por defecto la moneda base de la empresa; el tipo de cambio queda congelado al crearla.'),
     }),
     method: 'POST',
     endpoint: '/purchases',
+    // El schema pide IDs planos (lo que el modelo puede resolver con search_contacts);
+    // el modelo de datos guarda `suppliers: [{supplierId, priority}]` y rechaza la orden
+    // si ese array llega vacio. El orden en que el modelo los nombra es la prioridad:
+    // el primero es el principal.
+    transformArgs: (args) => {
+      const { supplierIds, ...rest } = args as { supplierIds?: string[] }
+      return {
+        ...rest,
+        suppliers: (supplierIds ?? []).map((supplierId, i) => ({ supplierId, priority: i + 1 })),
+      }
+    },
   },
   update_purchase_status: {
-    description: 'Actualiza el estado de una orden de compra. IMPORTANTE: al cambiar a "ordered" se sincroniza al cashflow.',
+    description:
+      'Mueve una orden de compra por su ciclo de vida. Transiciones validas: draft -> pending/approved/cancelled, pending -> approved/cancelled, ' +
+      'approved -> ordered/cancelled, ordered -> received/partial_received/cancelled. "received" y "cancelled" son finales. ' +
+      'Aprobar exige permiso propio y quien creo la orden no puede aprobarla. IMPORTANTE: al pasar a "ordered" el costo se sincroniza al cashflow del proyecto.',
     schema: z.object({
       purchaseOrderId: z.string().describe('ID de la orden'),
       status: z.enum(['draft', 'pending', 'approved', 'ordered', 'received', 'partial_received', 'cancelled']),
+      chosenSupplierId: z.string().optional().describe('Proveedor adjudicado. Obligatorio al aprobar una orden con mas de un proveedor.'),
+      actualDeliveryDate: z.string().optional().describe('Fecha real de entrega (ISO 8601) al marcarla recibida. Por defecto, hoy.'),
     }),
     method: 'PATCH',
     endpoint: '/purchases/:purchaseOrderId/status',
@@ -678,14 +722,20 @@ export const toolSchemas: Record<string, ToolDef> = {
   // MATERIALS & WAREHOUSE — Read & Write
   // ============================================================
   search_materials: {
-    description: 'Busca materiales/insumos en inventario por nombre, codigo o stock bajo.',
+    description: 'Busca articulos del catalogo de la empresa (materiales, insumos y servicios subcontratados) por nombre, codigo, descripcion o stock bajo. Usar SIEMPRE antes de crear uno nuevo para no duplicar.',
     schema: z.object({
-      searchTerm: z.string().optional(),
-      lowStock: z.boolean().optional(),
-      limit: z.number().min(1).max(50).optional(),
+      searchTerm: z.string().optional().describe('Texto a buscar en nombre, codigo, descripcion o codigo de proveedor. Sin este campo devuelve el catalogo entero.'),
+      lowStock: z.boolean().optional().describe('Solo articulos por debajo del stock minimo'),
+      forPurchase: z.boolean().optional().describe('Solo lo que se puede comprar en una orden de compra: materiales + subcontratados 100% (excluye los de mano de obra subcontratada)'),
+      nature: z.enum(['material', 'item']).optional().describe('Filtrar por naturaleza: "material" (insumo) o "item" (producto/partida)'),
+      limit: z.number().min(1).max(50).optional().describe('Cuantos devolver (default 50 cuando hay searchTerm)'),
     }),
     method: 'GET',
     endpoint: '/items',
+    // El API espera `search`; la tool expone `searchTerm` (nombre historico, ya usado
+    // en los prompts). Sin este mapeo el termino se perdia y la busqueda devolvia el
+    // catalogo entero como si no hubiera coincidencias que filtrar.
+    fieldMap: { searchTerm: 'search' },
   },
   search_resources: {
     description: 'Busca recursos productivos (mano de obra y maquinaria) en el catalogo de la empresa por nombre o codigo. Usar ANTES de crear un recurso nuevo, para evitar duplicados.',
@@ -698,22 +748,27 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/resources',
   },
   create_material: {
-    description: 'Crea un nuevo material/item en el inventario. IMPORTANTE: siempre enviar code unico Y classification (usar get_classifications para obtener el ID de tipo product_type).',
+    description:
+      'Crea un articulo nuevo en el catalogo de la empresa: un material, un producto o un servicio 100% subcontratado. ' +
+      'code es OBLIGATORIO y unico por empresa (el backend rechaza el alta sin codigo) — buscar antes con search_materials. ' +
+      'classification es obligatoria para que el articulo aparezca en presupuestos (get_classifications, tipo "product_type"). ' +
+      'SUBCONTRATADO: para una partida que hace un tercero y se compra hecha, mandar subcontractMode "full" + costoUnitario. ' +
+      'Solo asi el costo se imputa al rubro Subcontratado (y no a Materiales) y la orden de compra no exige almacen. ' +
+      'El desglose de costos NO se manda a mano: lo calcula el backend a partir del modo de subcontratacion y del costo unitario.',
     schema: z.object({
-      name: z.string().describe('Nombre del material'),
-      code: z.string().optional().describe('Codigo unico (ej: "EXC-ZANJAS-001"). SIEMPRE enviarlo para evitar colisiones.'),
-      unit: z.string().optional().describe('Unidad (kg, m, m2, m3, u, gl, etc.)'),
-      description: z.string().optional().describe('Descripcion detallada del material'),
+      name: z.string().describe('Nombre del articulo'),
+      code: z.string().min(1).describe('Codigo unico en la empresa (ej: "AMH75-01"). OBLIGATORIO.'),
+      unit: z.string().optional().describe('Unidad (kg, m, m2, m3, ml, ud, gl, etc.)'),
+      description: z.string().optional().describe('Descripcion detallada (se hereda al presupuesto cuando se usa el articulo)'),
       classification: z.string().optional().describe('ID de la clasificacion (OBLIGATORIO para que aparezca en presupuestos). Usar get_classifications para obtener el ID de tipo product_type.'),
-      defaultCost: z.number().optional().describe('Costo unitario por defecto'),
-      costBreakdown: z.object({
-        materials: z.number().optional().describe('Costo de materiales por unidad'),
-        labor: z.number().optional().describe('Costo de mano de obra por unidad'),
-        equipment: z.number().optional().describe('Costo de equipos por unidad'),
-        subcontracted: z.number().optional().describe('Costo subcontratado por unidad'),
-      }).optional().describe('Desglose de costos unitarios'),
-      category: z.string().optional(),
-      minimumStock: z.number().optional(),
+      nature: z.enum(['material', 'item']).optional().describe('"material" (insumo de obra, default) o "item" (producto/partida)'),
+      defaultCost: z.number().optional().describe('Costo unitario de referencia. Para subcontractMode "full" lo pisa costoUnitario.'),
+      subcontractMode: z.enum(['none', 'labor_only', 'full']).optional().describe(
+        'Modo de subcontratacion. "none" (default): articulo propio. "full": 100% subcontratado, todo su costo va al rubro Subcontratado (REQUIERE costoUnitario). "labor_only": solo la mano de obra es subcontratada.',
+      ),
+      costoUnitario: z.number().min(0).optional().describe('Costo unitario del servicio subcontratado. OBLIGATORIO cuando subcontractMode es "full" (el backend rechaza el alta sin el).'),
+      category: z.string().optional().describe('ID de una categoria del catalogo (ObjectId). NO es texto libre: mandar un nombre hace fallar el alta.'),
+      minimumStock: z.number().optional().describe('Bajo este nivel el articulo figura como stock bajo'),
     }),
     method: 'POST',
     endpoint: '/items',
@@ -811,27 +866,62 @@ export const toolSchemas: Record<string, ToolDef> = {
   // CONTACTS — Read & Write
   // ============================================================
   search_contacts: {
-    description: 'Busca contactos (proveedores, clientes, subcontratistas) por nombre, email o tipo.',
+    description:
+      'Busca contactos de la empresa (proveedores, clientes, subcontratistas) por nombre, email, cargo o departamento. ' +
+      'Devuelve TODAS las coincidencias (el backend no pagina este listado). Usar SIEMPRE antes de create_contact para no duplicar un proveedor.',
     schema: z.object({
-      searchTerm: z.string().optional(),
-      type: z.enum(['individual', 'company']).optional(),
-      limit: z.number().min(1).max(50).optional(),
+      searchTerm: z.string().optional().describe('Texto a buscar en nombre, email, cargo o departamento. Sin este campo devuelve la agenda entera.'),
+      category: z.enum(['client', 'supplier', 'contractor', 'employee', 'partner', 'lead', 'other']).optional().describe(
+        'Filtrar por categoria del tipo de contacto (ej: "supplier" para proveedores). OJO: los contactos SIN tipo asignado pasan igual este filtro.',
+      ),
+      contactType: z.string().optional().describe('ID de un tipo de contacto concreto (get_contact_types)'),
+      isActive: z.boolean().optional().describe('Solo activos (true) o solo inactivos (false)'),
     }),
     method: 'GET',
     endpoint: '/contacts',
+    // El API espera `q`; la tool expone `searchTerm` (nombre historico, ya usado en
+    // los prompts). Sin este mapeo el termino se perdia y la busqueda devolvia la
+    // agenda completa.
+    fieldMap: { searchTerm: 'q' },
   },
   create_contact: {
-    description: 'Crea un nuevo contacto (proveedor, cliente, subcontratista).',
+    description:
+      'Crea un contacto nuevo (proveedor, cliente, subcontratista). Buscarlo antes con search_contacts: un proveedor duplicado ensucia todas las ordenes de compra futuras. ' +
+      'Para que despues aparezca como proveedor en los filtros conviene mandar contactType con el ID del tipo "Proveedor" (get_contact_types con category "supplier").',
     schema: z.object({
-      name: z.string().describe('Nombre del contacto'),
-      type: z.enum(['individual', 'company']),
+      name: z.string().describe('Nombre completo o razon social'),
+      type: z.enum(['individual', 'company']).describe('"company" para una empresa, "individual" para una persona'),
+      taxId: z.string().optional().describe('CIF / NIF / CUIT'),
       email: z.string().optional(),
       phone: z.string().optional(),
-      address: z.string().optional(),
-      notes: z.string().optional(),
+      address: z.string().optional().describe('Direccion en una linea'),
+      contactType: z.string().optional().describe('ID del tipo de contacto (get_contact_types). Es lo que lo clasifica como proveedor/cliente en el ERP.'),
+      category: z.enum(['supplier', 'client', 'contractor', 'other']).optional().describe('Etiqueta suelta de para que se da de alta. NO reemplaza a contactType.'),
+      notes: z.string().optional().describe('Descripcion / notas del contacto'),
     }),
     method: 'POST',
     endpoint: '/contacts',
+    // `notes` es el nombre historico de la tool; el modelo de datos lo llama `description`.
+    fieldMap: { notes: 'description' },
+    // La direccion viaja como subdocumento (`mailingAddress`) y la categoria como
+    // etiqueta: mandadas planas, Mongoose las descartaba en silencio y el contacto
+    // quedaba sin direccion.
+    transformArgs: (args) => {
+      const { address, category, ...rest } = args as { address?: string; category?: string }
+      return {
+        ...rest,
+        ...(address ? { mailingAddress: { street: address } } : {}),
+        ...(category ? { tags: [category] } : {}),
+      }
+    },
+  },
+  get_contact_types: {
+    description: 'Lista los tipos de contacto disponibles (Proveedor, Cliente, Contratista...). Su ID es lo que va en contactType al crear un contacto.',
+    schema: z.object({
+      category: z.enum(['client', 'supplier', 'contractor', 'employee', 'partner', 'lead', 'other']).optional().describe('Filtrar por categoria (ej: "supplier")'),
+    }),
+    method: 'GET',
+    endpoint: '/contact-types',
   },
 
   // ============================================================
