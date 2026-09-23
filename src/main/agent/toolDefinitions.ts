@@ -277,13 +277,18 @@ export const toolSchemas: Record<string, ToolDef> = {
   update_purchase_status: {
     description:
       'Mueve una orden de compra por su ciclo de vida. Transiciones validas: draft -> pending/approved/cancelled, pending -> approved/cancelled, ' +
-      'approved -> ordered/cancelled, ordered -> received/partial_received/cancelled. "received" y "cancelled" son finales. ' +
-      'Aprobar exige permiso propio y quien creo la orden no puede aprobarla. IMPORTANTE: al pasar a "ordered" el costo se sincroniza al cashflow del proyecto.',
+      'approved -> ordered/cancelled, ordered -> cancelled. "cancelled" es final. ' +
+      'Aprobar exige permiso propio y quien creo la orden no puede aprobarla. IMPORTANTE: al pasar a "ordered" el costo se sincroniza al cashflow del proyecto. ' +
+      'La RECEPCION de la mercaderia NO es un estado de la orden: se registra en el almacen (Recepciones) y no se hace con esta tool. ' +
+      'Para cargar la factura de una compra, usar create_supplier_invoice_from_document — una orden de compra NO es una factura.',
     schema: z.object({
       purchaseOrderId: z.string().describe('ID de la orden'),
-      status: z.enum(['draft', 'pending', 'approved', 'ordered', 'received', 'partial_received', 'cancelled']),
+      // Sin 'received' / 'partial_received' a proposito. En la web la recepcion va por
+      // el almacen (WarehouseReceiptService) y NUNCA toca el estado de la orden; marcar
+      // el estado a mano no registra stock y deja la orden en un estado en el que la
+      // web oculta "Crear factura de proveedor" (paso con un cliente, OC-0007).
+      status: z.enum(['draft', 'pending', 'approved', 'ordered', 'cancelled']),
       chosenSupplierId: z.string().optional().describe('Proveedor adjudicado. Obligatorio al aprobar una orden con mas de un proveedor.'),
-      actualDeliveryDate: z.string().optional().describe('Fecha real de entrega (ISO 8601) al marcarla recibida. Por defecto, hoy.'),
     }),
     method: 'PATCH',
     endpoint: '/purchases/:purchaseOrderId/status',
