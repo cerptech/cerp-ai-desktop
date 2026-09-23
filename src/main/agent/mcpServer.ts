@@ -5,6 +5,7 @@ import { toolSchemas } from './toolDefinitions'
 import { createItemBankTools } from './itemBankTools'
 import { createCatalogTools } from './catalogTools'
 import { createCreditsTools } from './creditsTools'
+import { createDocumentIntakeTools } from './documentIntakeTools'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
@@ -469,6 +470,7 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       ...createCatalogTools(httpClient),
       ...createItemBankTools(httpClient),
       ...createCreditsTools(httpClient),
+      ...createDocumentIntakeTools(httpClient),
       ...cerpApiTools,
     ],
   })
