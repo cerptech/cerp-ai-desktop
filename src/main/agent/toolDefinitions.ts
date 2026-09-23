@@ -682,28 +682,36 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/projects/:projectId/cashflow/metrics',
   },
+  // Los gastos se mudaron de /finance/expenses a /expenses en el core (financeRoutes.ts):
+  // con la ruta vieja estas dos tools respondian 404.
   get_expenses: {
-    description: 'Lista gastos registrados. Filtra por obra o rango de fechas.',
+    description: 'Lista gastos registrados. Filtra por proyecto, obra o rango de fechas.',
     schema: z.object({
+      projectId: z.string().optional(),
       constructionSiteId: z.string().optional(),
       startDate: z.string().optional(),
       endDate: z.string().optional(),
       limit: z.number().min(1).max(50).optional(),
     }),
     method: 'GET',
-    endpoint: '/finance/expenses',
+    endpoint: '/expenses',
+    fieldMap: { startDate: 'dateFrom', endDate: 'dateTo' },
   },
   create_expense: {
-    description: 'Registra un nuevo gasto.',
+    description:
+      'Registra un nuevo gasto a mano (queda pendiente de aprobacion). Para cargar un gasto desde un ticket o factura en PDF, con el PDF adjunto, usar create_expense_from_document.',
     schema: z.object({
+      projectId: z.string().describe('ID del proyecto'),
       constructionSiteId: z.string().describe('ID de la obra'),
       amount: z.number().describe('Monto del gasto'),
       description: z.string().describe('Descripcion del gasto'),
-      category: z.string().optional(),
-      date: z.string().optional().describe('Fecha ISO 8601'),
+      category: z.enum(['gastos', 'materiales', 'mano_de_obra', 'herramientas', 'transporte', 'servicios', 'otros']).optional(),
+      date: z.string().optional().describe('Fecha ISO 8601. Si no se indica, hoy'),
     }),
     method: 'POST',
-    endpoint: '/finance/expenses',
+    endpoint: '/expenses',
+    // El core exige `date`: sin ella el alta responde 400.
+    transformArgs: (args) => ({ ...args, date: (args as { date?: string }).date || new Date().toISOString().slice(0, 10) }),
   },
   create_income: {
     description: 'Registra un nuevo ingreso.',
