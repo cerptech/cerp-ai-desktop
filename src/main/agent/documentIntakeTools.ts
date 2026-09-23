@@ -153,8 +153,11 @@ const CreateSupplierInvoiceSchema = z.object({
   filePath: z.string().describe('Ruta local del PDF de la factura, exactamente como vino en [Archivo adjunto: ...]'),
   extractedData: ExtractedInvoiceSchema.describe('Datos que leíste del PDF, sin corregir. Las correcciones del usuario van en overrides'),
   supplierId: objectId('supplierId').describe('ID del contacto proveedor (search_contacts o create_contact_from_document)'),
-  projectId: objectId('projectId').describe('ID del proyecto al que se imputa la factura'),
-  constructionSiteId: objectId('constructionSiteId').optional().describe('ID de la obra'),
+  // Opcional: una factura de gasto general (software, IT, oficina) va sin proyecto
+  // y no suma al coste de ninguna obra. El core lo acepta (resolveInvoiceProjectId);
+  // con obligatorio, el agente metia esas facturas en una obra cualquiera.
+  projectId: objectId('projectId').optional().describe('ID del proyecto al que se imputa la factura. Omitir si es un gasto general sin obra'),
+  constructionSiteId: objectId('constructionSiteId').optional().describe('ID de la obra. Omitir si es un gasto general sin obra'),
   constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra, si el usuario la indicó'),
   itemResolutions: z.array(z.object({
     description: z.string().describe('Descripción de la línea, igual que en extractedData.items'),
@@ -295,7 +298,9 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
     'create_supplier_invoice_from_document',
     'Crea una factura de proveedor en BORRADOR a partir de un PDF, con el PDF adjunto. Cada línea queda vinculada a un ítem del catálogo: ' +
       'el que el usuario eligió reutilizar, uno con el mismo nombre si existe, o uno nuevo (material o subcontratado según itemResolutions). ' +
-      'Si esa factura del mismo proveedor ya estaba cargada, no crea otra (duplicate:true). Solo llamar tras la confirmación explícita del usuario.',
+      'Si esa factura del mismo proveedor ya estaba cargada, no crea otra (duplicate:true). ' +
+      'Sin projectId ni constructionSiteId queda como gasto general, sin imputar a ninguna obra (software, IT, oficina). ' +
+      'Solo llamar tras la confirmación explícita del usuario.',
     CreateSupplierInvoiceSchema as any,
     async (args: Record<string, unknown>) => {
       let parsed: z.infer<typeof CreateSupplierInvoiceSchema> | undefined
@@ -442,7 +447,7 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
           '/supplier-invoices',
           {
             supplierId,
-            projectId,
+            ...(projectId ? { projectId } : {}),
             ...(constructionSiteId ? { constructionSiteId } : {}),
             ...(constructionOrderId ? { constructionOrderId } : {}),
             supplierInvoiceNumber: data.invoiceNumber || undefined,
@@ -479,7 +484,8 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
           status: invoice.invoiceStatus,
           link: `${APP_BASE_URL}/supplier-invoices/${invoice._id}`,
           warnings,
-          summary: `Factura de proveedor creada en borrador: ${invoice.serialNumber} por ${invoice.totalAmount.toFixed(2)}.`,
+          summary: `Factura de proveedor creada en borrador: ${invoice.serialNumber} por ${invoice.totalAmount.toFixed(2)}` +
+            (projectId || constructionSiteId ? '.' : ', como gasto general (sin obra).'),
         })
       } catch (err) {
         const message = describeError(err)
