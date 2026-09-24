@@ -277,13 +277,18 @@ export const toolSchemas: Record<string, ToolDef> = {
   update_purchase_status: {
     description:
       'Mueve una orden de compra por su ciclo de vida. Transiciones validas: draft -> pending/approved/cancelled, pending -> approved/cancelled, ' +
-      'approved -> ordered/cancelled, ordered -> received/partial_received/cancelled. "received" y "cancelled" son finales. ' +
-      'Aprobar exige permiso propio y quien creo la orden no puede aprobarla. IMPORTANTE: al pasar a "ordered" el costo se sincroniza al cashflow del proyecto.',
+      'approved -> ordered/cancelled, ordered -> cancelled. "cancelled" es final. ' +
+      'Aprobar exige permiso propio y quien creo la orden no puede aprobarla. IMPORTANTE: al pasar a "ordered" el costo se sincroniza al cashflow del proyecto. ' +
+      'La RECEPCION de la mercaderia NO es un estado de la orden: se registra en el almacen (Recepciones) y no se hace con esta tool. ' +
+      'Para cargar la factura de una compra, usar create_supplier_invoice_from_document — una orden de compra NO es una factura.',
     schema: z.object({
       purchaseOrderId: z.string().describe('ID de la orden'),
-      status: z.enum(['draft', 'pending', 'approved', 'ordered', 'received', 'partial_received', 'cancelled']),
+      // Sin 'received' / 'partial_received' a proposito. En la web la recepcion va por
+      // el almacen (WarehouseReceiptService) y NUNCA toca el estado de la orden; marcar
+      // el estado a mano no registra stock y deja la orden en un estado en el que la
+      // web oculta "Crear factura de proveedor" (paso con un cliente, OC-0007).
+      status: z.enum(['draft', 'pending', 'approved', 'ordered', 'cancelled']),
       chosenSupplierId: z.string().optional().describe('Proveedor adjudicado. Obligatorio al aprobar una orden con mas de un proveedor.'),
-      actualDeliveryDate: z.string().optional().describe('Fecha real de entrega (ISO 8601) al marcarla recibida. Por defecto, hoy.'),
     }),
     method: 'PATCH',
     endpoint: '/purchases/:purchaseOrderId/status',
@@ -682,28 +687,36 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/projects/:projectId/cashflow/metrics',
   },
+  // Los gastos se mudaron de /finance/expenses a /expenses en el core (financeRoutes.ts):
+  // con la ruta vieja estas dos tools respondian 404.
   get_expenses: {
-    description: 'Lista gastos registrados. Filtra por obra o rango de fechas.',
+    description: 'Lista gastos registrados. Filtra por proyecto, obra o rango de fechas.',
     schema: z.object({
+      projectId: z.string().optional(),
       constructionSiteId: z.string().optional(),
       startDate: z.string().optional(),
       endDate: z.string().optional(),
       limit: z.number().min(1).max(50).optional(),
     }),
     method: 'GET',
-    endpoint: '/finance/expenses',
+    endpoint: '/expenses',
+    fieldMap: { startDate: 'dateFrom', endDate: 'dateTo' },
   },
   create_expense: {
-    description: 'Registra un nuevo gasto.',
+    description:
+      'Registra un nuevo gasto a mano (queda pendiente de aprobacion). Para cargar un gasto desde un ticket o factura en PDF, con el PDF adjunto, usar create_expense_from_document.',
     schema: z.object({
+      projectId: z.string().describe('ID del proyecto'),
       constructionSiteId: z.string().describe('ID de la obra'),
       amount: z.number().describe('Monto del gasto'),
       description: z.string().describe('Descripcion del gasto'),
-      category: z.string().optional(),
-      date: z.string().optional().describe('Fecha ISO 8601'),
+      category: z.enum(['gastos', 'materiales', 'mano_de_obra', 'herramientas', 'transporte', 'servicios', 'otros']).optional(),
+      date: z.string().optional().describe('Fecha ISO 8601. Si no se indica, hoy'),
     }),
     method: 'POST',
-    endpoint: '/finance/expenses',
+    endpoint: '/expenses',
+    // El core exige `date`: sin ella el alta responde 400.
+    transformArgs: (args) => ({ ...args, date: (args as { date?: string }).date || new Date().toISOString().slice(0, 10) }),
   },
   create_income: {
     description: 'Registra un nuevo ingreso.',
@@ -727,12 +740,16 @@ export const toolSchemas: Record<string, ToolDef> = {
   // MATERIALS & WAREHOUSE — Read & Write
   // ============================================================
   search_materials: {
-    description: 'Busca articulos del catalogo de la empresa (materiales, insumos y servicios subcontratados) por nombre, codigo, descripcion o stock bajo. Usar SIEMPRE antes de crear uno nuevo para no duplicar.',
+    description:
+      'Busca articulos del catalogo de la empresa: MATERIALES e ITEMS, que son cosas distintas. ' +
+      'Un MATERIAL es un insumo que se compra y se consume (cemento, canos, cajas). Un ITEM es una partida: un trabajo con composicion propia, o 100% subcontratado. ' +
+      'Los separa el campo `nature` de cada resultado: "item" es item; "material" o ausente (articulos viejos) es material. Mira siempre `nature` y no confundas uno con otro. ' +
+      'Busca por nombre, codigo, descripcion o codigo de proveedor, igual que el buscador de la web. Usar SIEMPRE antes de crear uno nuevo para no duplicar.',
     schema: z.object({
-      searchTerm: z.string().optional().describe('Texto a buscar en nombre, codigo, descripcion o codigo de proveedor. Sin este campo devuelve el catalogo entero.'),
+      searchTerm: z.string().optional().describe('Texto a buscar en nombre, codigo, descripcion o codigo de proveedor. Si el usuario te dio un nombre o codigo, pasalo tal cual. Sin este campo devuelve el catalogo entero.'),
       lowStock: z.boolean().optional().describe('Solo articulos por debajo del stock minimo'),
       forPurchase: z.boolean().optional().describe('Solo lo que se puede comprar en una orden de compra: materiales + subcontratados 100% (excluye los de mano de obra subcontratada)'),
-      nature: z.enum(['material', 'item']).optional().describe('Filtrar por naturaleza: "material" (insumo) o "item" (producto/partida)'),
+      nature: z.enum(['material', 'item']).optional().describe('Filtrar por tipo: "material" (insumos; incluye los articulos viejos sin nature) o "item" (partidas). Sin este campo devuelve los dos.'),
       limit: z.number().min(1).max(50).optional().describe('Cuantos devolver (default 50 cuando hay searchTerm)'),
     }),
     method: 'GET',

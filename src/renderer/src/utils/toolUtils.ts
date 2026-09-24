@@ -85,6 +85,11 @@ const KNOWN_TOOL_LABELS: Record<string, string> = {
   search_resources: 'Buscando recursos',
   update_warehouse_stock: 'Actualizando inventario',
   get_credit_balance: 'Consultando saldo de creditos',
+  check_invoice_items_catalog: 'Revisando el catalogo',
+  create_contact_from_document: 'Creando contacto',
+  create_supplier_invoice_from_document: 'Cargando factura de proveedor',
+  create_client_invoice_from_document: 'Cargando factura de cliente',
+  create_expense_from_document: 'Registrando gasto',
 }
 
 /**

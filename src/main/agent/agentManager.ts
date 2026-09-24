@@ -711,6 +711,16 @@ El usuario ha activado **Plan Mode** desde la UI. En este turno y los proximos h
 
 Estas reglas TIENEN PRIORIDAD sobre cualquier instruccion contraria en el resto del system prompt.
 `
+  } else if (conversationHistory && conversationHistory.length > 0) {
+    // Apagar el toggle cierra la sesion y la siguiente arranca con el historial,
+    // donde el propio agente escribio "estamos en Plan Mode". Sin este aviso lo
+    // seguia creyendo activo y le pedia al usuario que confirmara el toggle.
+    fullSystemPrompt += `
+
+## ESTADO ACTUAL — PLAN MODE DESACTIVADO
+
+Plan Mode esta **desactivado** en este momento, aunque el historial diga lo contrario. Podes ejecutar las escrituras que el usuario ya confirmo, sin volver a preguntarle por el toggle.
+`
   }
 
 
