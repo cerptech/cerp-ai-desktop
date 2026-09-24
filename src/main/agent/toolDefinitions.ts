@@ -740,12 +740,16 @@ export const toolSchemas: Record<string, ToolDef> = {
   // MATERIALS & WAREHOUSE — Read & Write
   // ============================================================
   search_materials: {
-    description: 'Busca articulos del catalogo de la empresa (materiales, insumos y servicios subcontratados) por nombre, codigo, descripcion o stock bajo. Usar SIEMPRE antes de crear uno nuevo para no duplicar.',
+    description:
+      'Busca articulos del catalogo de la empresa: MATERIALES e ITEMS, que son cosas distintas. ' +
+      'Un MATERIAL es un insumo que se compra y se consume (cemento, canos, cajas). Un ITEM es una partida: un trabajo con composicion propia, o 100% subcontratado. ' +
+      'Los separa el campo `nature` de cada resultado: "item" es item; "material" o ausente (articulos viejos) es material. Mira siempre `nature` y no confundas uno con otro. ' +
+      'Busca por nombre, codigo, descripcion o codigo de proveedor, igual que el buscador de la web. Usar SIEMPRE antes de crear uno nuevo para no duplicar.',
     schema: z.object({
-      searchTerm: z.string().optional().describe('Texto a buscar en nombre, codigo, descripcion o codigo de proveedor. Sin este campo devuelve el catalogo entero.'),
+      searchTerm: z.string().optional().describe('Texto a buscar en nombre, codigo, descripcion o codigo de proveedor. Si el usuario te dio un nombre o codigo, pasalo tal cual. Sin este campo devuelve el catalogo entero.'),
       lowStock: z.boolean().optional().describe('Solo articulos por debajo del stock minimo'),
       forPurchase: z.boolean().optional().describe('Solo lo que se puede comprar en una orden de compra: materiales + subcontratados 100% (excluye los de mano de obra subcontratada)'),
-      nature: z.enum(['material', 'item']).optional().describe('Filtrar por naturaleza: "material" (insumo) o "item" (producto/partida)'),
+      nature: z.enum(['material', 'item']).optional().describe('Filtrar por tipo: "material" (insumos; incluye los articulos viejos sin nature) o "item" (partidas). Sin este campo devuelve los dos.'),
       limit: z.number().min(1).max(50).optional().describe('Cuantos devolver (default 50 cuando hay searchTerm)'),
     }),
     method: 'GET',

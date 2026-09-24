@@ -262,9 +262,11 @@ interface CatalogItem {
   _id: string
   name: string
   code?: string
+  description?: string
   unit?: string
   nature?: string
   subcontractMode?: string
+  suppliers?: Array<{ providerCode?: string }>
 }
 
 interface ContactDoc {
@@ -307,10 +309,15 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
       }
     }
 
+    // Se compara contra los mismos campos en los que busca el core: nombre,
+    // código, descripción y código de proveedor. Lo que coincide en el nombre o
+    // el código pesa más al ordenar: la descripción suele ser texto libre.
     const scored = [...byId.values()].map(({ item, fromUser, fullPhrase: phraseHit }) => {
-      const haystack = fold(`${item.name} ${item.code ?? ''}`)
-      const matchedTerms = lineKeywords.filter((k) => haystack.includes(fold(k)))
-      return { item, fromUser, phraseHit, matchedTerms }
+      const nameAndCode = fold(`${item.name} ${item.code ?? ''}`)
+      const otherFields = fold(`${item.description ?? ''} ${(item.suppliers ?? []).map((s) => s.providerCode ?? '').join(' ')}`)
+      const matchedTerms = lineKeywords.filter((k) => nameAndCode.includes(fold(k)) || otherFields.includes(fold(k)))
+      const nameMatches = lineKeywords.filter((k) => nameAndCode.includes(fold(k))).length
+      return { item, fromUser, phraseHit, matchedTerms, nameMatches }
     })
 
     // Lo que el usuario nombró entra siempre. Lo demás, si comparte al menos dos
@@ -321,6 +328,7 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
     kept.sort((a, b) =>
       Number(b.fromUser) - Number(a.fromUser) ||
       Number(b.phraseHit) - Number(a.phraseHit) ||
+      b.nameMatches - a.nameMatches ||
       b.matchedTerms.length - a.matchedTerms.length ||
       Number(kindOf(a.item) !== 'item_con_composicion') - Number(kindOf(b.item) !== 'item_con_composicion') ||
       a.item.name.length - b.item.name.length,
@@ -353,7 +361,8 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
   const checkCatalogTool = tool(
     'check_invoice_items_catalog',
     'Busca en el catálogo de la empresa, POR NOMBRE, candidatos para cada línea de una factura de proveedor que leíste de un PDF. NO crea ni modifica nada. ' +
-      'Busca la descripción completa y además cada palabra clave (medidas, marca, palabras largas), y ordena por cuántas coinciden con el nombre o el código. ' +
+      'Busca la descripción completa y además cada palabra clave (medidas, marca, palabras largas) en nombre, código, descripción y código de proveedor, ' +
+      'y ordena por cuántas coinciden (las del nombre y el código pesan más). ' +
       'Cada candidato dice si es material o ítem (campo nature) y si se puede comprar (purchasable). ' +
       'Si el usuario te dio el nombre o el código de un artículo para una línea, pasalo en searchTerms: se busca tal cual y va primero. ' +
       'Llamala SIEMPRE después de leer la factura y ANTES de mostrarle el resumen al usuario: con el resultado le preguntás, línea por línea, ' +
