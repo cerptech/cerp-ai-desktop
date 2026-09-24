@@ -137,8 +137,77 @@ const ExtractedInvoiceSchema = z.object({
 })
 
 const CheckCatalogSchema = z.object({
-  lines: z.array(z.object({ description: z.string() })).min(1).describe('Las líneas de la factura, en el mismo orden en que se las mostraste al usuario'),
+  lines: z.array(z.object({
+    description: z.string().describe('Descripción de la línea tal como figura en la factura'),
+    searchTerms: z.array(z.string()).optional().describe(
+      'Nombres o códigos que el USUARIO te dio para esta línea ("caja estanco", "INT-25A"), tal cual los escribió. Se buscan primero y sus resultados van arriba.',
+    ),
+  })).min(1).describe('Las líneas de la factura, en el mismo orden en que se las mostraste al usuario'),
 })
+
+// ── Búsqueda de artículos por nombre ─────────────────────────────────────────
+//
+// `GET /items?search=` compara el texto como SUBSTRING de nombre, código,
+// descripción y código de proveedor (itemsController.getAllItems). Mandarle la
+// descripción entera de una línea casi nunca encuentra nada: "Caja exterior Taad
+// 115x115x80" no es substring de "Caja estanco Taad 115X115X80" por una palabra.
+// Pasó con un cliente cuatro veces seguidas: el agente decía "no existe" y
+// proponía crear materiales que ya estaban cargados.
+//
+// Por eso se busca también por cada palabra clave de la línea (medidas, marca,
+// palabras largas), se juntan los resultados y se ordenan por cuántas palabras
+// de la línea coinciden con el nombre o el código del artículo.
+
+const STOPWORDS = new Set([
+  'de', 'del', 'la', 'las', 'el', 'los', 'para', 'con', 'sin', 'por', 'en', 'y', 'o', 'al', 'un', 'una', 'uno',
+  'ud', 'uds', 'und', 'unid', 'unidad', 'unidades', 'mts', 'tipo', 'marca', 'modelo', 'art', 'cod', 'codigo',
+])
+const MAX_KEYWORD_QUERIES = 4
+const RESULTS_PER_QUERY = 25
+const MAX_CANDIDATES = 5
+
+/** Minúsculas y sin tildes, para COMPARAR (no para mandar al buscador del core). */
+const fold = (s: string | undefined | null) => String(s ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+const isKeyword = (token: string) => !STOPWORDS.has(fold(token)) && (token.length >= 3 || (/\d/.test(token) && token.length >= 2))
+
+/** Palabras clave de un texto, tal como están escritas (el buscador del core distingue tildes). */
+function keywords(text: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of text.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (!raw || !isKeyword(raw) || seen.has(fold(raw))) continue
+    seen.add(fold(raw))
+    out.push(raw)
+  }
+  return out
+}
+
+/** Las más distintivas primero: las que llevan números (medidas, amperes, códigos), después las más largas. */
+function queryKeywords(text: string): string[] {
+  return keywords(text)
+    .sort((a, b) => Number(/\d/.test(b)) - Number(/\d/.test(a)) || b.length - a.length)
+    .slice(0, MAX_KEYWORD_QUERIES)
+}
+
+type CatalogKind = 'material' | 'item_subcontratado' | 'item_con_composicion'
+
+/**
+ * Material o ítem se decide por `nature` (itemNatureCategory.ts en el core):
+ * `nature` ausente es un documento viejo sin backfill y el core lo trata como
+ * material. Un ítem solo se puede comprar en una factura si está 100%
+ * subcontratado (`subcontractMode: 'full'`): el mismo criterio que `forPurchase`.
+ */
+function kindOf(item: CatalogItem): CatalogKind {
+  if (item.nature !== 'item') return 'material'
+  return item.subcontractMode === 'full' ? 'item_subcontratado' : 'item_con_composicion'
+}
+
+const KIND_LABEL: Record<CatalogKind, string> = {
+  material: 'Material',
+  item_subcontratado: 'Ítem 100% subcontratado',
+  item_con_composicion: 'Ítem con composición (partida propia): no se puede comprar en una factura',
+}
 
 const CreateContactSchema = z.object({
   name: z.string().min(1).describe('Nombre completo o razón social, tal como figura en el documento'),
@@ -212,28 +281,95 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
   const searchPurchasableItems = (term: string, limit: number) =>
     httpClient.get<CatalogItem[]>(`/items?search=${encodeURIComponent(term)}&forPurchase=true&limit=${limit}`)
 
+  /** Todo el catálogo que matchea `term` (materiales e ítems): el tipo se decide después con `nature`. */
+  const searchCatalog = async (term: string): Promise<CatalogItem[]> => {
+    const items = await httpClient.get<CatalogItem[]>(`/items?search=${encodeURIComponent(term)}&limit=${RESULTS_PER_QUERY}`)
+    return Array.isArray(items) ? items : []
+  }
+
+  /** Candidatos del catálogo para UNA línea de factura, ordenados del más probable al menos. */
+  const findCandidates = async (description: string, userTerms: string[]) => {
+    const userQueries = userTerms.map((t) => t.trim()).filter(Boolean)
+    const fullPhrase = description.trim()
+    const lineKeywords = keywords(description)
+    const queries = [...new Set([...userQueries, fullPhrase, ...queryKeywords(description)].filter(Boolean))]
+
+    const results = await Promise.all(queries.map(async (q) => ({ q, items: await searchCatalog(q) })))
+
+    const byId = new Map<string, { item: CatalogItem; fromUser: boolean; fullPhrase: boolean }>()
+    for (const { q, items } of results) {
+      for (const item of items) {
+        const id = String(item._id)
+        const entry = byId.get(id) ?? { item, fromUser: false, fullPhrase: false }
+        if (userQueries.includes(q)) entry.fromUser = true
+        if (q === fullPhrase) entry.fullPhrase = true
+        byId.set(id, entry)
+      }
+    }
+
+    const scored = [...byId.values()].map(({ item, fromUser, fullPhrase: phraseHit }) => {
+      const haystack = fold(`${item.name} ${item.code ?? ''}`)
+      const matchedTerms = lineKeywords.filter((k) => haystack.includes(fold(k)))
+      return { item, fromUser, phraseHit, matchedTerms }
+    })
+
+    // Lo que el usuario nombró entra siempre. Lo demás, si comparte al menos dos
+    // palabras clave con la línea (o una, cuando la línea casi no tiene).
+    const minMatches = lineKeywords.length <= 2 ? 1 : 2
+    const kept = scored.filter((c) => c.fromUser || c.phraseHit || c.matchedTerms.length >= minMatches)
+
+    kept.sort((a, b) =>
+      Number(b.fromUser) - Number(a.fromUser) ||
+      Number(b.phraseHit) - Number(a.phraseHit) ||
+      b.matchedTerms.length - a.matchedTerms.length ||
+      Number(kindOf(a.item) !== 'item_con_composicion') - Number(kindOf(b.item) !== 'item_con_composicion') ||
+      a.item.name.length - b.item.name.length,
+    )
+
+    const candidates = kept.slice(0, MAX_CANDIDATES).map(({ item, fromUser, matchedTerms }) => {
+      const kind = kindOf(item)
+      return {
+        itemId: String(item._id),
+        name: item.name,
+        code: item.code,
+        unit: item.unit,
+        nature: item.nature === 'item' ? 'item' : 'material',
+        tipo: KIND_LABEL[kind],
+        purchasable: kind !== 'item_con_composicion',
+        ...(fromUser ? { encontradoCon: 'lo que indicó el usuario' } : {}),
+        matchedTerms,
+      }
+    })
+
+    return {
+      description,
+      hasCandidates: candidates.some((c) => c.purchasable),
+      candidates,
+      searched: queries,
+    }
+  }
+
   // ── check_invoice_items_catalog ───────────────────────────────────────────
   const checkCatalogTool = tool(
     'check_invoice_items_catalog',
-    'Busca en el catálogo de la empresa candidatos para cada línea de una factura de proveedor que leíste de un PDF. NO crea ni modifica nada. ' +
+    'Busca en el catálogo de la empresa, POR NOMBRE, candidatos para cada línea de una factura de proveedor que leíste de un PDF. NO crea ni modifica nada. ' +
+      'Busca la descripción completa y además cada palabra clave (medidas, marca, palabras largas), y ordena por cuántas coinciden con el nombre o el código. ' +
+      'Cada candidato dice si es material o ítem (campo nature) y si se puede comprar (purchasable). ' +
+      'Si el usuario te dio el nombre o el código de un artículo para una línea, pasalo en searchTerms: se busca tal cual y va primero. ' +
       'Llamala SIEMPRE después de leer la factura y ANTES de mostrarle el resumen al usuario: con el resultado le preguntás, línea por línea, ' +
       'si reutiliza un candidato existente o si se crea nuevo como material o como ítem subcontratado.',
     CheckCatalogSchema as any,
     async (args: Record<string, unknown>) => {
       try {
         const { lines } = CheckCatalogSchema.parse(args)
-        const resolved = await Promise.all(lines.map(async ({ description }) => {
-          const term = description.trim()
-          if (!term) return { description, hasCandidates: false, candidates: [] }
-          const items = await searchPurchasableItems(term, 3)
-          const candidates = (Array.isArray(items) ? items : []).slice(0, 3).map((it) => ({
-            itemId: String(it._id),
-            name: it.name,
-            code: it.code,
-            unit: it.unit,
-          }))
-          return { description, hasCandidates: candidates.length > 0, candidates }
-        }))
+        // Una línea por vez (sus búsquedas van en paralelo): una factura larga no
+        // dispara de golpe decenas de requests contra el core.
+        const resolved = []
+        for (const { description, searchTerms } of lines) {
+          resolved.push(description.trim()
+            ? await findCandidates(description, searchTerms ?? [])
+            : { description, hasCandidates: false, candidates: [], searched: [] })
+        }
         logger.info(`check_invoice_items_catalog OK: ${lines.length} línea(s), ${resolved.filter((r) => r.hasCandidates).length} con candidatos`)
         return textResult({ anyCandidates: resolved.some((r) => r.hasCandidates), resolved })
       } catch (err) {
@@ -311,6 +447,19 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
 
         const pdfProblem = checkPdf(filePath, MAX_SUPPLIER_INVOICE_PDF_BYTES)
         if (pdfProblem) return errorResult(pdfProblem)
+
+        // Importes negativos = nota de crédito. `POST /supplier-invoices` no recibe
+        // el tipo de documento: la cargaria como factura y SUMARIA costo a la obra
+        // en vez de restarlo. No se carga aunque el usuario insista.
+        const hasNegative =
+          (typeof data.totalAmount === 'number' && data.totalAmount < 0) ||
+          data.items.some((line) => (line.unitCost ?? 0) < 0 || (line.quantity ?? 1) < 0)
+        if (hasNegative) {
+          return errorResult(
+            'El documento tiene importes negativos: es una nota de crédito, no una factura. CERP IA no puede cargar notas de crédito de proveedor, ' +
+              'y cargarla como factura sumaría ese importe como costo en vez de restarlo. No la cargues: explicale esto al usuario.',
+          )
+        }
 
         // 1) Idempotencia, igual que WhatsApp: proveedor + número de factura. Sin
         //    número no hay forma confiable de deduplicar y se sigue de largo.
