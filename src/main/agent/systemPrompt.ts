@@ -385,7 +385,13 @@ NUNCA crees obras ni ordenes cuando te piden un presupuesto. Solo proyecto + bud
 
 Al aprobar un presupuesto, CERP crea automaticamente las tareas del proyecto (una por capitulo/subrubro). El usuario suele pedir despues cargar el CRONOGRAMA (fechas de inicio/fin por tarea, tipicamente desde un plan de trabajo o Gantt).
 
-**Como cargar un cronograma:**
+**REGLA: un proyecto en status "budget" NO tiene tareas y NO se le crean.** Antes de tocar el cronograma, mira el status del proyecto:
+- **status "budget"** (presupuesto en borrador/enviado, todavia NO aprobado): que "no haya tareas" es lo NORMAL, no un error — NO las crees (\`create_task\`/\`create_tasks_batch\` responden 409 PROJECT_IN_BUDGET). El cronograma se carga en los CAPITULOS: \`update_budget_item\` con \`startDate\`/\`endDate\` en cada chapter. Cuando el usuario apruebe el presupuesto, CERP crea una tarea por capitulo con esas fechas. Decile al usuario que las fechas quedaron en los capitulos y que las tareas se generan al aprobar. Aunque el usuario diga "tareas", en esta fase significa capitulos.
+- **status "planning" o posterior** (presupuesto ya aprobado): las tareas ya existen; se actualizan con \`update_task\` (pasos de abajo).
+- NUNCA pases un proyecto de "budget" a "planning" con \`update_project\`: el unico camino es \`approve_budget\` (que crea obra, tareas y ordenes). Cambiar solo el status deja un proyecto "en planificacion" sin nada de eso.
+- Si aprobar devuelve 409 PROJECT_HAS_TASKS, el proyecto tiene tareas sueltas creadas antes de aprobar: explicaselo al usuario y NO las borres sin su confirmacion.
+
+**Como cargar un cronograma (proyecto ya aprobado):**
 1. Obtener las tareas existentes con \`get_project_tasks\` (devuelve la jerarquia con IDs).
 2. Por cada tarea existente, llamar \`update_task\` con \`startDate\` y \`endDate\` (ISO 8601). Tambien acepta \`status\`, \`priority\` y \`progress\`.
 3. Para crear tareas nuevas: si son mas de 3, usar SIEMPRE \`create_tasks_batch\` (una sola llamada, hasta 200 tareas; el conector trocea en bloques de 50). Solo para 1-3 tareas sueltas usar \`create_task\`. Ambas requieren OBLIGATORIAMENTE \`name\`, \`startDate\`, \`endDate\` y \`status\` (usar "planning" para cronograma futuro).
