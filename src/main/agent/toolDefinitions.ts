@@ -397,7 +397,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/chapters',
   },
   update_budget_item: {
-    description: 'Actualiza campos de un item o chapter de presupuesto ya creado. Usar principalmente para agregar o editar la descripcion de un rubro (chapter) despues de crearlo, ya que el POST de creacion no acepta description. Tambien sirve para renombrar o cambiar cantidad.',
+    description: 'Actualiza campos de un item o chapter de presupuesto ya creado. Usar principalmente para agregar o editar la descripcion de un rubro (chapter) despues de crearlo, ya que el POST de creacion no acepta description. Tambien sirve para renombrar o cambiar cantidad. Es la UNICA forma de cargar el CRONOGRAMA de un presupuesto todavia NO aprobado: poner startDate/endDate en cada chapter; al aprobar, CERP crea una tarea por chapter con esas fechas.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       itemId: z.string().describe('ID del item o chapter a actualizar (obtenido de la respuesta de add_budget_chapter o add_budget_items_batch)'),
@@ -405,6 +405,8 @@ export const toolSchemas: Record<string, ToolDef> = {
       name: z.string().optional().describe('Nuevo nombre del item/chapter (para renombrar)'),
       quantity: z.number().optional().describe('Nueva cantidad'),
       overheadOverride: z.number().optional().describe('Override % gastos generales'),
+      startDate: z.string().optional().describe('Solo chapters: fecha de inicio planificada (ISO 8601, ej "2026-09-21"). La hereda la tarea que se crea al aprobar el presupuesto. Pasar "" para borrarla.'),
+      endDate: z.string().optional().describe('Solo chapters: fecha de fin planificada (ISO 8601). La hereda la tarea que se crea al aprobar el presupuesto. Pasar "" para borrarla.'),
     }),
     method: 'PUT',
     endpoint: '/budgets/:budgetId/items/:itemId',
@@ -591,7 +593,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/projects/:projectId/tasks-with-subtasks',
   },
   create_task: {
-    description: 'Crea una nueva tarea dentro de un proyecto. Los campos name, startDate, endDate y status son OBLIGATORIOS (el API los exige). Para el cronograma de obra: crear las tareas con sus fechas reales de inicio y fin.',
+    description: 'Crea una nueva tarea dentro de un proyecto. SOLO para proyectos con presupuesto ya aprobado (status "planning" o posterior): en status "budget" responde 409 PROJECT_IN_BUDGET — ahi el cronograma va en los capitulos con update_budget_item (startDate/endDate). Los campos name, startDate, endDate y status son OBLIGATORIOS (el API los exige). Para el cronograma de obra: crear las tareas con sus fechas reales de inicio y fin.',
     schema: z.object({
       projectId: z.string().describe('ID del proyecto'),
       name: z.string().describe('Nombre de la tarea'),
@@ -631,7 +633,7 @@ export const toolSchemas: Record<string, ToolDef> = {
   },
   create_tasks_batch: {
     description:
-      'Crea MULTIPLES tareas de cronograma en un proyecto en UNA sola llamada, de forma IDEMPOTENTE y reanudable. USAR SIEMPRE en vez de create_task cuando hay mas de 3 tareas (cronogramas, planes de obra). Enviar los PADRES ANTES que sus hijos en el array y referenciarlos con parentKey. REANUDACION: si la carga se corta (timeout, cierre de la app), REPETIR la misma llamada con el MISMO lote completo — las tareas ya creadas se saltan (skipped) y solo se crean las faltantes, sin duplicar. El conector trocea lotes grandes en bloques de 50 automaticamente. El resultado incluye summary {created, skipped, errors} y el detalle por tarea.',
+      'Crea MULTIPLES tareas de cronograma en un proyecto en UNA sola llamada, de forma IDEMPOTENTE y reanudable. SOLO para proyectos con presupuesto ya aprobado (status "planning" o posterior): en status "budget" responde 409 PROJECT_IN_BUDGET — ahi el cronograma va en los capitulos con update_budget_item (startDate/endDate), y las tareas nacen al aprobar. USAR SIEMPRE en vez de create_task cuando hay mas de 3 tareas (cronogramas, planes de obra). Enviar los PADRES ANTES que sus hijos en el array y referenciarlos con parentKey. REANUDACION: si la carga se corta (timeout, cierre de la app), REPETIR la misma llamada con el MISMO lote completo — las tareas ya creadas se saltan (skipped) y solo se crean las faltantes, sin duplicar. El conector trocea lotes grandes en bloques de 50 automaticamente. El resultado incluye summary {created, skipped, errors} y el detalle por tarea.',
     schema: z.object({
       projectId: z.string().describe('ID del proyecto'),
       tasks: z
