@@ -1134,12 +1134,9 @@ class BudgetPDFGen:
                  align='right', x2=ML + CW - 2 * mm)
         y += ROW_H + 3 * mm
 
+        # Sin conceptos no se inventan: antes se imprimian GG 13 % y BI 6 % que no
+        # entraban en los totales (K = 1). El ERP tampoco los inventa.
         cost_items = sorted(self.budget.get('costItems') or [], key=lambda x: x.get('order', 0))
-        if not cost_items:
-            cost_items = [
-                {'name': 'Gastos Generales',     'costType': 'variable', 'percentage': 13, 'group': 1, 'order': 0},
-                {'name': 'Beneficio Industrial', 'costType': 'variable', 'percentage': 6,  'group': 1, 'order': 0},
-            ]
 
         GROUP_TITLES = {
             1: get_label('coefficientKGroup1', self.locale).upper(),

@@ -564,7 +564,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     transformArgs: (args) => ({ ...args, type: 'sales' }),
   },
   update_budget_taxes: {
-    description: 'Configura la seccion Impuestos del presupuesto (IVA, otros impuestos y retenciones), que se calcula sobre el Subtotal 3 del Coeficiente K. Reemplaza la lista completa: manda TODOS los impuestos que tiene que tener. Los taxId salen de list_taxes; el nombre y la tasa los pone el catalogo.',
+    description: 'Configura la seccion Impuestos del presupuesto (IVA, otros impuestos y retenciones), que se calcula sobre el Subtotal 3 del Coeficiente K. Reemplaza la lista completa: manda TODOS los impuestos que tiene que tener, incluidos los que ya tenia (budgetTaxes de get_budget_details), o se pierden. Los taxId salen de list_taxes; el nombre y la tasa los pone el catalogo.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       taxIds: z.array(z.string()).describe('IDs de impuestos del catalogo (list_taxes). Vacio = sin impuestos'),
@@ -573,7 +573,8 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/taxes',
     transformArgs: (args) => {
       const { taxIds, ...rest } = args as { taxIds?: string[] }
-      return { ...rest, taxes: (taxIds || []).map((taxId) => ({ taxId })) }
+      // Sin repetidos: el backend no deduplica y un taxId dos veces cobraria el impuesto dos veces.
+      return { ...rest, taxes: [...new Set(taxIds || [])].map((taxId) => ({ taxId })) }
     },
   },
   recalculate_budget: {

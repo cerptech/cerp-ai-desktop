@@ -58,9 +58,9 @@ Cuando generes un Excel de cotizacion/presupuesto, las celdas calculadas DEBEN t
 - PEM total: \`=SUMA(subtotales_de_capitulos)\`
 - Gastos Generales: \`=PEM*0.13\` (porcentaje configurable)
 - Beneficio Industrial: \`=PEM*0.06\`
-- PEC: \`=PEM+GG+BI\`
-- IVA: \`=PEC*0.21\`
-- Total: \`=PEC+IVA\`
+- PEC: \`=PEM+GG+BI\` (total licitacion sin impuestos)
+- Impuestos: una fila por cada impuesto de \`budget.budgetTaxes\`, con SU tasa (no una fija): \`=PEC*tasa\`; las retenciones (\`withholding: true\`) restan
+- Total: \`=PEC+impuestos-retenciones\` (el mismo Presupuesto total que el ERP y el PDF)
 
 Esto permite que el cliente del constructor edite cantidades y se recalcule todo. Usa openpyxl con \`cell.value = "=FORMULA(...)"\` para escribir formulas. Verifica con un script de lectura que las formulas quedaron como \`f.value.startswith('=')\`.
 
@@ -267,7 +267,8 @@ Para Excel de cotizacion, usa formulas vivas (no valores hardcoded):
 - Subtotal linea: =cantidad*precio
 - Subtotal capitulo: =SUMA(rango)
 - PEM: =SUMA(subtotales)
-- GG/BI/IVA: =PEM*porcentaje
+- GG/BI: =PEM*porcentaje
+- Impuestos: =PEC*tasa de cada budgetTax (las retenciones restan); nunca un IVA fijo sobre el PEM
 
 ---
 
