@@ -426,7 +426,7 @@ export function createItemBankTools(httpClient: HttpClient) {
             ? 'SIMULACION: no se escribio nada. Mostrale al usuario la tabla de capitulos y partidas con sus precios y pedile confirmacion explicita antes de repetir esta llamada con dryRun:false.'
             : fallidos.length > 0
               ? `Carga PARCIAL: ${importados.length} partidas cargadas y ${fallidos.length} fallidas. Contale al usuario cuales fallaron y por que — no digas que cargaste todo. Despues llama a recalculate_budget.`
-              : 'Partidas cargadas. Acordate de update_cost_items (GG/BI/IVA) y recalculate_budget para cerrar el presupuesto.',
+              : 'Partidas cargadas. Acordate de update_cost_items (GG/BI), los impuestos con update_budget_taxes (el IVA no va en el K) y recalculate_budget para cerrar el presupuesto.',
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)

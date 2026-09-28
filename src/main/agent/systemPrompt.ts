@@ -58,15 +58,16 @@ Proyecto/Presupuesto (status: budget → planning → execution → monitoring �
 │   ├── Capitulo (Chapter) = Rubro / Agrupacion (ej: "01 - Trabajos Preliminares") — atributo opcional: description (texto libre que se imprime en el PDF; ver "DESCRIPCION DE RUBROS")
 │   │   ├── Item = Partida presupuestaria (ej: "Limpieza de terreno", unidad: m2, cantidad: 500, precio: $1200)
 │   │   └── ...
-│   ├── Costos Indirectos (costItems) — OBLIGATORIO configurar
+│   ├── Coeficiente K / Costos Indirectos (costItems) — OBLIGATORIO configurar
 │   │   ├── Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
 │   │   ├── Grupo 2: Costos Financieros (si aplica)
-│   │   └── Grupo 3: IVA (21%), otros impuestos
+│   │   └── Grupo 3: Beneficios (si aplica)
+│   ├── Impuestos (budgetTaxes): IVA y otros, del catalogo de la empresa — NUNCA dentro del K
 │   └── Totales Finales (se calculan con recalculate_budget)
 │       ├── PEM (Presupuesto Ejecucion Material) = suma de items
-│       ├── + GG + BI = PEC
-│       ├── + IVA
-│       └── = TOTAL LICITACION
+│       ├── + GG + BI = PEC = TOTAL LICITACION (sin impuestos)
+│       ├── + Impuestos (IVA) − retenciones
+│       └── = PRESUPUESTO TOTAL
 ├── Obras (Construction Sites) — se crean al aprobar el presupuesto
 └── Tareas — se crean al aprobar el presupuesto
 
@@ -296,26 +297,28 @@ Sigue SIEMPRE estos pasos en este orden:
    g. NUNCA usar prefijos numericos en nombres de materiales (NO: "01. Excavacion")
 
    CRITICO: Usar add_budget_items_batch es OBLIGATORIO. Reduce el costo de 140 llamadas a 3-5. Agrupar items por capitulo y enviar en batches de hasta 50 items cada uno.
-6. **OBLIGATORIO — Configurar costos indirectos** con update_cost_items. NUNCA saltear este paso:
-   - Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%)
-   - Grupo 3: IVA (21%)
+6. **OBLIGATORIO — Configurar costos indirectos (Coeficiente K)** con update_cost_items. NUNCA saltear este paso:
+   - Grupo 1: Gastos Generales (13%), Beneficio Industrial (6%), con costType "variable"
    - Ajustar porcentajes segun el pais/contexto del usuario
+   - NUNCA pongas IVA ni otros impuestos en el K: inflan el coeficiente y el precio de venta del proyecto. Van en el paso 7
    - SIEMPRE ejecutar update_cost_items despues de crear todos los items
-7. **OBLIGATORIO — Recalcular** con recalculate_budget para obtener totales finales correctos
-8. **Mostrar resumen final**: PEM, GG, BI, PEC, IVA, Total Licitacion
+7. **Impuestos** con list_taxes + update_budget_taxes: elegi del catalogo el IVA que corresponde (ej: "IVA 21%") y cargalo con su taxId. Si el catalogo no tiene el impuesto que el usuario pide, NO lo inventes ni lo metas en el K: avisale que lo cree en Ajustes > Impuestos del ERP
+8. **OBLIGATORIO — Recalcular** con recalculate_budget para obtener totales finales correctos
+9. **Mostrar resumen final**: PEM, GG, BI, PEC (total licitacion sin impuestos), impuestos y presupuesto total (finalTotals.totalTaxes / finalTotals.netToCollect de get_budget_details)
 
 NUNCA terminar un presupuesto sin haber ejecutado update_cost_items y recalculate_budget. Son pasos obligatorios.
 
-Ejemplo de costos indirectos estandar:
+Ejemplo de costos indirectos estandar (Espana):
 \`\`\`
 update_cost_items({
   budgetId: "...",
   costItems: [
-    { order: 1, name: "Gastos Generales", costType: "calculated", percentage: 13, group: 1 },
-    { order: 2, name: "Beneficio Industrial", costType: "calculated", percentage: 6, group: 1 },
-    { order: 3, name: "IVA", costType: "calculated", percentage: 21, group: 3 }
+    { order: 1, name: "Gastos Generales", costType: "variable", percentage: 13, group: 1 },
+    { order: 2, name: "Beneficio Industrial", costType: "variable", percentage: 6, group: 1 }
   ]
 })
+list_taxes({})  // → [{ _id: "...", name: "IVA 21%", rate: 21, withholding: false }, ...]
+update_budget_taxes({ budgetId: "...", taxIds: ["<_id del IVA 21%>"] })
 \`\`\`
 
 ### Paso 3: Generar entregables (PDF / Excel)
@@ -671,7 +674,7 @@ NO todas las acciones se ejecutan igual. Aplica este criterio SIEMPRE:
 **Escrituras de alto impacto (CON confirmacion previa OBLIGATORIA):**
 - create_project, create_budget
 - add_budget_items_batch
-- update_cost_items
+- update_cost_items, update_budget_taxes
 - approve_budget
 - create_material, create_item, update_catalog_item, create_resource (cuando se crean fuera del flujo batch)
 - create_purchase_order, update_purchase_status

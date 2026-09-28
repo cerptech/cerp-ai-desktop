@@ -171,7 +171,7 @@ NO escribas tu propio codigo de generacion de PDF. Ese script ya replica el dise
 **Paso 1 — Recolectar datos**
 
 Necesitas tres llamadas en paralelo (o las que ya esten disponibles):
-- \`get_budget_details\` → objeto budget completo (con costItems, contactSnapshot, etc.)
+- \`get_budget_details\` → objeto budget completo (con costItems, budgetTaxes, contactSnapshot, etc.). NO le saques \`budgetTaxes\`: son los impuestos del presupuesto (IVA, retenciones) y el script los imprime en su seccion y en el Presupuesto total
 - \`get_budget_items\` → lista de items y capitulos planos
 - \`get_company_info\` → datos de empresa (legalName, taxId, phone, email, address)
 
