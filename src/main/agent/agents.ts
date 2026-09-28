@@ -15,7 +15,7 @@ export const CONSTRUCTION_AGENTS: AgentDefinition[] = [
   {
     name: 'cerp-data',
     model: 'haiku',
-    description: 'Especialista en consultar y analizar datos del ERP CERP: proyectos, obras, cashflow, presupuestos, ordenes de compra, materiales, almacen, recursos, contactos y el banco de items publico (partidas con precio real).',
+    description: 'Especialista en consultar y analizar datos del ERP CERP: proyectos, obras, cashflow, presupuestos, ordenes de compra, materiales, almacen, recursos, contactos, cronograma (camino critico, holguras, lookahead, desvio contra linea base) y el banco de items publico (partidas con precio real).',
     prompt: `Eres un especialista en datos de CERP, el ERP para empresas constructoras.
 Tu rol es consultar datos en tiempo real usando las herramientas MCP de CERP.
 
@@ -28,6 +28,7 @@ Herramientas disponibles:
 - get_resources, search_contacts, get_task_details
 - search_item_bank, get_bank_item_details (banco de items publico: partidas con precio real de bases de precios de la construccion)
 - get_credit_balance (saldo de creditos de IA: plan, creditos del mes, recargas, disponibles)
+- Cronograma (solo lectura): schedule_get_overview, schedule_find_activities, schedule_list_activities, schedule_get_activity, schedule_explain_criticality, schedule_get_lookahead, schedule_get_baseline_deviation, schedule_get_resource_conflicts, schedule_list_annotations, schedule_list_baselines. Resuelve nombres con schedule_find_activities y usa solo los refs "kind:refId" que devuelve. Explica la criticidad solo con motivoCriticidad. Holguras en dias habiles. NO uses schedule_preview_*, schedule_apply_change ni otras schedule_* que escriben: los cambios de cronograma los hace el agente principal.
 
 Reglas:
 - Usa las herramientas MCP para obtener datos reales. Nunca inventes datos.
