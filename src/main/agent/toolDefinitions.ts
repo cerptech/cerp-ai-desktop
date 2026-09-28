@@ -630,14 +630,14 @@ export const toolSchemas: Record<string, ToolDef> = {
     fieldMap: { parentTaskId: 'parent_task_id' },
   },
   update_task: {
-    description: 'Actualiza nombre, descripcion, estado, prioridad o avance de una tarea existente. NO usar para fechas de un proyecto aprobado (status "planning" o posterior): las fechas del cronograma se cambian con schedule_preview_dates / schedule_preview_shift + schedule_apply_change (si schedule_find_activities no encuentra la tarea, reintentar la busqueda o preguntar al usuario, nunca caer aca). NOTA: si la tarea tiene subtareas, el progreso se calcula automaticamente y no se puede setear a mano.',
+    description: 'Actualiza una tarea existente: nombre, descripcion, estado, fechas de inicio/fin, prioridad y avance. Usar para cargar o corregir el cronograma (fechas) de tareas ya creadas. NOTA: si la tarea tiene subtareas, el progreso se calcula automaticamente y no se puede setear a mano.',
     schema: z.object({
       taskId: z.string().describe('ID de la tarea'),
       name: z.string().optional(),
       description: z.string().optional(),
       status: z.enum(['planning', 'pending', 'execution', 'paused', 'completed', 'cancelled']).optional(),
-      startDate: z.string().optional().describe('NO usar en proyectos aprobados: las fechas del cronograma van por schedule_preview_dates + schedule_apply_change'),
-      endDate: z.string().optional().describe('NO usar en proyectos aprobados: las fechas del cronograma van por schedule_preview_dates + schedule_apply_change'),
+      startDate: z.string().optional().describe('Nueva fecha de inicio ISO 8601'),
+      endDate: z.string().optional().describe('Nueva fecha de fin ISO 8601'),
       priority: z.enum(['None', 'Low', 'Medium', 'High']).optional().describe('Prioridad de la tarea'),
       progress: z.number().min(0).max(100).optional().describe('Porcentaje de avance (0-100). Solo en tareas SIN subtareas'),
     }),

@@ -6,7 +6,6 @@ import { createItemBankTools } from './itemBankTools'
 import { createCatalogTools } from './catalogTools'
 import { createCreditsTools } from './creditsTools'
 import { createDocumentIntakeTools } from './documentIntakeTools'
-import { createScheduleTools } from './scheduleTools'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
@@ -199,10 +198,7 @@ const ShowHtmlSchema = z.object({
 
 /**
  * Creates an in-process MCP server with all CERP tools.
- * companyId is injected automatically into the REST proxy tools (`toolSchemas`,
- * see cerpApiTools below). The `schedule_*` tools (scheduleTools.ts) are built
- * apart and never go through that injection: /api/ai-tools only takes `{ input }`
- * and the company comes from the JWT (ADR 007).
+ * companyId is injected automatically into write operations.
  */
 export function createCerpMcpServer(httpClient: HttpClient, companyId: string | null, userId: string | null, conversationId = '__default__') {
   // ── attach_budget_pdf tool ────────────────────────────────────────────────
@@ -476,10 +472,6 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       ...createCreditsTools(httpClient),
       ...createDocumentIntakeTools(httpClient),
       ...cerpApiTools,
-      // Cronograma: POST /ai-tools/:name sin companyId; schedule_apply_change,
-      // schedule_update_annotation y schedule_set_settings piden confirmación al
-      // usuario en esta conversación antes de escribir.
-      ...createScheduleTools(httpClient, conversationId),
     ],
   })
 }
