@@ -83,8 +83,10 @@ PDF_LABELS = {
 
     'coefficientKTitle':  {'es': 'Coeficiente K - Costos Indirectos', 'en': 'K Coefficient - Indirect Costs'},
     'coefficientKGroup1': {'es': 'Grupo 1 - Gastos Generales', 'en': 'Group 1 - Overhead'},
-    'coefficientKGroup2': {'es': 'Grupo 2 - Beneficio e Impuestos', 'en': 'Group 2 - Profit and Taxes'},
-    'coefficientKGroup3': {'es': 'Grupo 3 - Gastos Financieros', 'en': 'Group 3 - Financial Costs'},
+    # (RQM-133) Estaban invertidos respecto del ERP: grupo 2 = financieros (base
+    # Subtotal 1), grupo 3 = beneficios (base Subtotal 2). Mismo arreglo que pdfLabels.ts.
+    'coefficientKGroup2': {'es': 'Grupo 2 - Costos Financieros', 'en': 'Group 2 - Financial Costs'},
+    'coefficientKGroup3': {'es': 'Grupo 3 - Beneficios', 'en': 'Group 3 - Profit'},
     'variable':           {'es': 'Variable', 'en': 'Variable'},
     'fixed':              {'es': 'Fijo', 'en': 'Fixed'},
     'subtotal':           {'es': 'Subtotal', 'en': 'Subtotal'},
@@ -601,6 +603,26 @@ def compute_totals(budget, leaf_items):
 
     return direct, s1, s2, total
 
+def compute_taxes(budget, subtotal3):
+    """Seccion Impuestos del presupuesto (budgetTaxes), sobre el Subtotal 3.
+
+    Espejo de budgetExportPDF.ts del ERP: las retenciones restan del neto a
+    cobrar y el resto suma. Desde RQM-133 el IVA ya no va dentro del K: el
+    agente lo carga en Impuestos, y sin esto la cotizacion lo perdia.
+    """
+    lines, total_taxes, total_withholding = [], 0.0, 0.0
+    for tax in budget.get('budgetTaxes') or []:
+        rate = float(tax.get('rate') or 0)
+        amount = subtotal3 * rate / 100
+        withholding = bool(tax.get('withholding'))
+        if withholding:
+            total_withholding += amount
+        else:
+            total_taxes += amount
+        lines.append({'name': tax.get('name', ''), 'rate': rate, 'withholding': withholding,
+                      'amount': -amount if withholding else amount})
+    return lines, total_taxes, total_withholding
+
 # ── Tree flattening (mirrors ERP's flattenTree) ───────────────────────────────
 def flatten_tree(tree, items_by_id, sym, depth=0):
     rows = []
@@ -971,6 +993,8 @@ class BudgetPDFGen:
         self.items_by_id  = {it['_id']: it for it in self.items if it.get('_id')}
         self.leaves       = [i for i in self.items if i.get('type') == 'item']
         self.direct, self.s1, self.s2, self.grand = compute_totals(self.budget, self.leaves)
+        self.tax_lines, self.total_taxes, self.total_withholding = compute_taxes(self.budget, self.grand)
+        self.net = self.grand + self.total_taxes - self.total_withholding  # Presupuesto total = neto a cobrar
         self.flat_rows    = flatten_tree(self.tree, self.items_by_id, self.sym)
 
         self.c            = rl_canvas.Canvas(dest, pagesize=A4)
@@ -1110,13 +1134,9 @@ class BudgetPDFGen:
                  align='right', x2=ML + CW - 2 * mm)
         y += ROW_H + 3 * mm
 
+        # Sin conceptos no se inventan: antes se imprimian GG 13 % y BI 6 % que no
+        # entraban en los totales (K = 1). El ERP tampoco los inventa.
         cost_items = sorted(self.budget.get('costItems') or [], key=lambda x: x.get('order', 0))
-        if not cost_items:
-            cost_items = [
-                {'name': 'Gastos Generales',     'costType': 'variable', 'percentage': 13, 'group': 1, 'order': 0},
-                {'name': 'Beneficio Industrial', 'costType': 'variable', 'percentage': 6,  'group': 2, 'order': 0},
-                {'name': 'IVA',                  'costType': 'variable', 'percentage': 21, 'group': 3, 'order': 0},
-            ]
 
         GROUP_TITLES = {
             1: get_label('coefficientKGroup1', self.locale).upper(),
@@ -1171,6 +1191,34 @@ class BudgetPDFGen:
                                    fmt_money(subtots[g], self.sym))
             y += 8 * mm
 
+        # Impuestos (seccion propia del ERP, sobre el Subtotal 3).
+        if self.tax_lines:
+            y = self._check_break(y, ROW_H * (len(self.tax_lines) + 3))
+            self.c.setFont('Helvetica-Bold', 8)
+            self.c.setFillColor(C_GRAY)
+            self.c.drawString(ML + 2 * mm, y_rl(y + 4 * mm), get_label('taxesHeading', self.locale).upper())
+            y += 6 * mm
+
+            for i, tax in enumerate(self.tax_lines):
+                y = self._check_break(y, ROW_H + 2 * mm)
+                if i % 2 == 0:
+                    fill_rect(self.c, ML, y, CW, ROW_H, C_LIGHT)
+                label = f"{tax['name']} ({tax['rate']:g}%)"
+                if tax['withholding']:
+                    label += get_label('withholdingSuffix', self.locale)
+                text_mid(self.c, ML + 8 * mm, y, ROW_H, label, 'Helvetica', 8, C_DARK)
+                text_mid(self.c, ML, y, ROW_H, fmt_money(tax['amount'], self.sym),
+                         'Helvetica', 8, C_DARK, align='right', x2=ML + CW - 2 * mm)
+                y += ROW_H
+
+            hline(self.c, ML, ML + CW, y, C_GRAY, lw=0.3)
+            y += 1 * mm
+            self.c.setFont('Helvetica-Bold', 9)
+            self.c.setFillColor(C_DARK)
+            self.c.drawString(ML + 2 * mm, y_rl(y + 4 * mm), get_label('totalBudget', self.locale))
+            self.c.drawRightString(ML + CW - 2 * mm, y_rl(y + 4 * mm), fmt_money(self.net, self.sym))
+            y += 8 * mm
+
         return y
 
     def _draw_summary(self, y):
@@ -1187,7 +1235,12 @@ class BudgetPDFGen:
         if self.show_indirect:
             rows.append({'lbl': get_label('indirectCosts', self.locale), 'val': fmt_money(indirect, self.sym), 'bold': False, 'clr': None})
             rows.append({'lbl': get_label('coefficientKLabel', self.locale), 'val': f'K = {k_val:.4f}', 'bold': False, 'clr': C_PRIMARY})
-        rows.append({'lbl': get_label('totalBudget', self.locale), 'val': fmt_money(self.grand, self.sym), 'bold': True, 'clr': None})
+        if self.total_taxes > 0:
+            rows.append({'lbl': get_label('subtotalNoTaxes', self.locale), 'val': fmt_money(self.grand, self.sym), 'bold': False, 'clr': None})
+            rows.append({'lbl': get_label('taxesHeading', self.locale), 'val': fmt_money(self.total_taxes, self.sym), 'bold': False, 'clr': None})
+        if self.total_withholding > 0:
+            rows.append({'lbl': get_label('withholdings', self.locale), 'val': fmt_money(-self.total_withholding, self.sym), 'bold': False, 'clr': None})
+        rows.append({'lbl': get_label('totalBudget', self.locale), 'val': fmt_money(self.net, self.sym), 'bold': True, 'clr': None})
 
         for i, row in enumerate(rows):
             rh = ROW_H + 2 * mm if row['bold'] else ROW_H

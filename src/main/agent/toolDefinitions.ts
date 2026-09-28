@@ -540,20 +540,42 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/approve',
   },
   update_cost_items: {
-    description: 'Configura los costos indirectos del presupuesto: Gastos Generales (GG), Beneficio Industrial (BI), IVA y otros. Cada item tiene un grupo: 1=pre-financiero, 2=financiero, 3=impuestos. Los porcentajes se aplican sobre el subtotal del grupo anterior.',
+    description: 'Configura el Coeficiente K del presupuesto (costos indirectos): Gastos Generales (GG), Beneficio Industrial (BI) y otros. Cada concepto tiene un grupo: 1=pre-financieros (sobre el PEM), 2=financieros (sobre el Subtotal 1), 3=beneficios (sobre el Subtotal 2). Reemplaza la lista completa. Los impuestos (IVA) NO van aca: se cargan con update_budget_taxes.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       costItems: z.array(z.object({
         order: z.number().describe('Orden de aplicacion'),
-        name: z.string().describe('Nombre del costo (ej: "Gastos Generales", "Beneficio Industrial", "IVA")'),
-        costType: z.enum(['calculated', 'variable', 'fixed']).describe('"calculated" aplica % automaticamente'),
-        percentage: z.number().optional().describe('Porcentaje a aplicar (ej: 13 para GG, 6 para BI, 21 para IVA)'),
+        name: z.string().describe('Nombre del costo (ej: "Gastos Generales", "Beneficio Industrial")'),
+        // RQM-133: 'calculated' no existe para el ERP (valia 0 en todo el sistema).
+        costType: z.enum(['variable', 'fixed']).describe('"variable" = porcentaje sobre la base del grupo; "fixed" = monto fijo'),
+        percentage: z.number().optional().describe('Porcentaje (solo para costType "variable"; ej: 13 para GG, 6 para BI)'),
         fixedAmount: z.number().optional().describe('Monto fijo (solo para costType "fixed")'),
-        group: z.number().min(1).max(3).describe('Grupo: 1=gastos generales, 2=financieros, 3=impuestos'),
+        group: z.number().min(1).max(3).describe('Grupo: 1=pre-financieros (GG, BI), 2=financieros, 3=beneficios'),
       })).describe('Array de costos indirectos a configurar'),
     }),
     method: 'PUT',
     endpoint: '/budgets/:budgetId/cost-items',
+  },
+  list_taxes: {
+    description: 'Impuestos de venta del catalogo de la empresa (IVA y otros, y retenciones). Devuelve _id, name, rate y withholding. Usalo para elegir el taxId que va en update_budget_taxes.',
+    schema: z.object({}),
+    method: 'GET',
+    endpoint: '/taxes',
+    transformArgs: (args) => ({ ...args, type: 'sales' }),
+  },
+  update_budget_taxes: {
+    description: 'Configura la seccion Impuestos del presupuesto (IVA, otros impuestos y retenciones), que se calcula sobre el Subtotal 3 del Coeficiente K. Reemplaza la lista completa: manda TODOS los impuestos que tiene que tener, incluidos los que ya tenia (budgetTaxes de get_budget_details), o se pierden. Los taxId salen de list_taxes; el nombre y la tasa los pone el catalogo.',
+    schema: z.object({
+      budgetId: z.string().describe('ID del presupuesto'),
+      taxIds: z.array(z.string()).describe('IDs de impuestos del catalogo (list_taxes). Vacio = sin impuestos'),
+    }),
+    method: 'PUT',
+    endpoint: '/budgets/:budgetId/taxes',
+    transformArgs: (args) => {
+      const { taxIds, ...rest } = args as { taxIds?: string[] }
+      // Sin repetidos: el backend no deduplica y un taxId dos veces cobraria el impuesto dos veces.
+      return { ...rest, taxes: [...new Set(taxIds || [])].map((taxId) => ({ taxId })) }
+    },
   },
   recalculate_budget: {
     description: 'Recalcula TODOS los costos del presupuesto: items, capitulos, totales y costos finales. Llamar despues de agregar o modificar items.',
