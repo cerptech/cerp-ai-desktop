@@ -70,6 +70,25 @@ export function isCompanyChangeApplied(info: SessionErrorInfo, currentCompanyId:
   return info.kind === 'company_changed' && !!info.activeCompanyId && info.activeCompanyId === currentCompanyId
 }
 
+/**
+ * true si una lectura de `/desktop/api-key` trajo OTRA empresa que la cacheada para
+ * la MISMA cuenta: la empresa por defecto cambió sin que ninguna tool chocara todavía
+ * con un 409 (lo detecta el refresco normal de la config: TTL de 5 min, arranque de
+ * sesión, login). Sin empresa previa (primer login, o tras invalidar la config por un
+ * 409, que ya maneja ese camino) no hay cambio que avisar. Otra cuenta tampoco es
+ * "tu empresa cambió" (no debería pasar: el logout limpia el store).
+ */
+export function isCompanySwitch(
+  prevCompanyId: string | null,
+  nextCompanyId: string | null,
+  prevUserId: string | null,
+  nextUserId: string | null,
+): boolean {
+  if (!prevCompanyId || !nextCompanyId || prevCompanyId === nextCompanyId) return false
+  if (prevUserId && nextUserId && prevUserId !== nextUserId) return false
+  return true
+}
+
 // ── Copy (español neutro, tuteo) ─────────────────────────────────────────────
 
 /** Aviso al usuario tras un 409 `COMPANY_CHANGED` (plan DK-1.1). */

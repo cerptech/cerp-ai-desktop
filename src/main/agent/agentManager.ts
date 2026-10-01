@@ -800,9 +800,15 @@ El usuario seleccionó el modelo **Potente** para esta cotización compleja. Tra
 }
 
 let cachedContextPrompt: string | null = null
+// Empresa con la que se armó `cachedContextPrompt`. Multi-empresa (DK-1.1): el
+// contexto (razón social, NIF, dirección, moneda) es de UNA empresa; si la empresa
+// por defecto cambió, el cacheado no se reusa aunque nadie lo haya tirado, y uno
+// armado mientras la empresa cambiaba no queda como válido para la nueva.
+let cachedContextCompanyId: string | null = null
 
 async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
-  if (cachedContextPrompt) return cachedContextPrompt
+  const companyId = getCompanyId()
+  if (cachedContextPrompt && cachedContextCompanyId === companyId) return cachedContextPrompt
 
   let context = '\n\n## Contexto de la empresa y usuario actual\n'
 
@@ -862,6 +868,7 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   context += `\nUsa estos datos cuando generes reportes, documentos o necesites informacion de la empresa. Formatea montos segun la moneda y formato regional configurado.\n`
 
   cachedContextPrompt = context
+  cachedContextCompanyId = companyId
   return context
 }
 

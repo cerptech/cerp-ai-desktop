@@ -4,7 +4,7 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
+import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
 import { createSessionGuard, type CompanyChangedNotice } from '../auth/sessionGuard'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
@@ -107,7 +107,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Multi-empresa (plan DK-1.1, contrato §7.7): 409 COMPANY_CHANGED, 403
   // NO_ACTIVE_COMPANY y un 401 SESSION_REVOKED definitivo. El httpClient avisa
   // acá sin esperar; el request que lo recibió ya falló sin reintentarse.
-  const handleSessionError = createSessionGuard({
+  const sessionGuard = createSessionGuard({
     getCompanyId,
     invalidateCompanyConfig,
     refetchCompanyId: async () => (await fetchApiKey(httpClient)).companyId || null,
@@ -126,6 +126,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       notifySessionExpired()
     },
     log: { info: (m) => logger.info(m), warn: (m) => logger.warn(m) },
+  })
+  // El cambio de empresa casi siempre lo ve primero el refresco normal de la config
+  // (TTL de 5 min en AGENT_SEND_PROMPT, startSession, login), no un 409: mismo manejo
+  // y mismo deduplicado que el 409 (corrección 1 de la review de DK1).
+  setCompanySwitchObserver((previous, next) => {
+    void sessionGuard.onCompanyObserved(previous, next).catch((err) => {
+      logger.warn(`[session] Falló el manejo del cambio de empresa: ${err instanceof Error ? err.message : String(err)}`)
+    })
   })
 
   const httpClient = new HttpClient(
@@ -151,7 +159,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         throw err
       }
     },
-    (info) => handleSessionError(info),
+    (info) => sessionGuard(info),
   )
 
   // Auth: Login

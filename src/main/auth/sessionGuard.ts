@@ -48,11 +48,45 @@ function errorCode(err: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined
 }
 
-export function createSessionGuard(deps: SessionGuardDeps): (info: SessionErrorInfo) => Promise<void> {
+/**
+ * El guard: se llama con cada error de sesión que reporta el `HttpClient`, y con
+ * `onCompanyObserved` cuando el refresco normal de `/desktop/api-key` (TTL, arranque
+ * de sesión, login) trae otra empresa que la cacheada. Los dos caminos comparten el
+ * deduplicado: un solo cambio de empresa da UN solo aviso.
+ */
+export interface SessionGuard {
+  (info: SessionErrorInfo): Promise<void>
+  /**
+   * La config ya trae `next` (antes `previous`) sin que haya llegado un 409: el
+   * re-homing pasa a cualquier hora y el refresco de la config suele verlo antes que
+   * una tool. Detiene los turnos con la empresa vieja y tira el contexto de empresa
+   * cacheado de forma SÍNCRONA (antes del primer `await`), y avisa al usuario.
+   */
+  onCompanyObserved: (previous: string | null, next: string | null) => Promise<void>
+}
+
+export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
   const now = deps.now ?? Date.now
   let companyChange: Promise<void> | null = null
+  /** Última empresa avisada: un 409 tardío de una sesión vieja no repite el aviso. */
+  let lastNotifiedCompanyId: string | null = null
   let lastNoCompanySignOut = Number.NEGATIVE_INFINITY
   let lastRevokedSignOut = Number.NEGATIVE_INFINITY
+
+  async function notifyChange(companyId: string | null): Promise<void> {
+    if (companyId !== null && companyId === lastNotifiedCompanyId) {
+      deps.log.info(`[session] Cambio a ${companyId} ya avisado — no se repite el aviso`)
+      return
+    }
+    if (companyId !== null) lastNotifiedCompanyId = companyId
+    let companyName: string | null = null
+    try {
+      companyName = await deps.fetchCompanyName()
+    } catch {
+      /* el aviso sale sin nombre */
+    }
+    deps.notifyCompanyChanged({ companyId, companyName, message: companyChangedMessage(companyName) })
+  }
 
   async function runCompanyChange(info: SessionErrorInfo): Promise<void> {
     const previous = deps.getCompanyId()
@@ -74,26 +108,32 @@ export function createSessionGuard(deps: SessionGuardDeps): (info: SessionErrorI
     }
 
     deps.stopStaleSessions(companyId)
-
-    let companyName: string | null = null
-    try {
-      companyName = await deps.fetchCompanyName()
-    } catch {
-      /* el aviso sale sin nombre */
-    }
-    deps.notifyCompanyChanged({ companyId, companyName, message: companyChangedMessage(companyName) })
+    await notifyChange(companyId)
   }
 
-  return async function handleSessionError(info: SessionErrorInfo): Promise<void> {
+  async function runObservedChange(previous: string, next: string): Promise<void> {
+    deps.log.warn(`[session] La config trajo otra empresa por defecto (antes ${previous}, ahora ${next})`)
+    // Síncrono, antes del primer await: el caller de fetchApiKey puede arrancar una
+    // sesión con la empresa nueva apenas vuelve, y no debe reusar el contexto viejo.
+    deps.stopStaleSessions(next)
+    await notifyChange(next)
+  }
+
+  function track(change: Promise<void>): Promise<void> {
+    companyChange = change.finally(() => {
+      companyChange = null
+    })
+    return companyChange
+  }
+
+  const handleSessionError = async function handleSessionError(info: SessionErrorInfo): Promise<void> {
     if (info.kind === 'company_changed') {
-      // Tools de una sesión vieja que siguen chocando con el 409 después de aplicar el cambio.
+      // Tools de una sesión vieja que siguen chocando con el 409 después de aplicar el cambio
+      // (por este camino o porque el refresco de la config ya lo trajo).
       if (isCompanyChangeApplied(info, deps.getCompanyId())) return
       // Varias tools concurrentes: un solo refetch y un solo aviso.
       if (companyChange) return companyChange
-      companyChange = runCompanyChange(info).finally(() => {
-        companyChange = null
-      })
-      return companyChange
+      return track(runCompanyChange(info))
     }
 
     if (info.kind === 'no_active_company') {
@@ -109,4 +149,13 @@ export function createSessionGuard(deps: SessionGuardDeps): (info: SessionErrorI
     deps.log.warn('[session] 401 SESSION_REVOKED después del refresh — la sesión se cerró por seguridad')
     deps.signOutSessionRevoked()
   }
+
+  function onCompanyObserved(previous: string | null, next: string | null): Promise<void> {
+    if (!previous || !next || previous === next) return Promise.resolve()
+    // Un 409 ya está aplicando un cambio (y avisará al terminar).
+    if (companyChange) return companyChange
+    return track(runObservedChange(previous, next))
+  }
+
+  return Object.assign(handleSessionError, { onCompanyObserved })
 }

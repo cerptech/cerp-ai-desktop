@@ -1,6 +1,7 @@
 import { tokenStore } from './tokenStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
+import { isCompanySwitch } from '../utils/sessionErrors'
 import type { AiModelPolicy, DesktopConfig } from '../ipc/types'
 
 let cachedConfig: DesktopConfig | null = null
@@ -52,6 +53,30 @@ function parseModels(raw: unknown): { fast?: string; powerful?: string } | undef
   return out
 }
 
+type CompanySwitchObserver = (previousCompanyId: string, nextCompanyId: string) => void
+let companySwitchObserver: CompanySwitchObserver | null = null
+
+/**
+ * Multi-empresa (plan DK-1.1): quién reacciona cuando `fetchApiKey` trae otra
+ * empresa que la cacheada (el guard de sesión, ver handlers.ts). Se llama de forma
+ * SÍNCRONA antes de que `fetchApiKey` devuelva, para que la parte síncrona del
+ * manejo (detener turnos, tirar el contexto de empresa del prompt) ya esté hecha
+ * cuando el caller arranque o reinicie una sesión con la empresa nueva.
+ */
+export function setCompanySwitchObserver(observer: CompanySwitchObserver | null): void {
+  companySwitchObserver = observer
+}
+
+function notifyCompanySwitch(previousCompanyId: string, nextCompanyId: string): void {
+  logger.warn(`La config trajo otra empresa por defecto (antes ${previousCompanyId}, ahora ${nextCompanyId})`)
+  if (!companySwitchObserver) return
+  try {
+    companySwitchObserver(previousCompanyId, nextCompanyId)
+  } catch (err) {
+    logger.warn(`El manejo del cambio de empresa falló: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 /**
  * `skipAuthRetry`: sin el refresh automático ante un 401. Lo usa `onTokenExpired`
  * (handlers.ts), que llama a esto DENTRO del refresh en vuelo: con el reintento
@@ -76,6 +101,11 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
 
     logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}`)
 
+    // Multi-empresa (DK-1.1): la empresa ANTES de pisarla, para detectar un cambio
+    // que el refresco normal de la config trae sin pasar por un 409.
+    const prevCompanyId = getCompanyId()
+    const prevUserId = getUserId()
+
     tokenStore.setApiKey(response.apiKey)
 
     if (response.companyId) tokenStore.setCompanyId(response.companyId)
@@ -94,8 +124,13 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
     }
     cachedConfigAt = Date.now()
 
+    const config = cachedConfig
+    if (isCompanySwitch(prevCompanyId, response.companyId || null, prevUserId, response.userId || null)) {
+      notifyCompanySwitch(prevCompanyId as string, response.companyId)
+    }
+
     logger.info('API key fetched and stored successfully')
-    return cachedConfig
+    return config
   } catch (err) {
     if (err instanceof HttpError && err.status === 402) {
       // El endpoint /desktop/api-key responde el shape PLANO { message, code }
