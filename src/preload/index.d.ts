@@ -75,6 +75,13 @@ export interface HtmlCanvas {
   html: string
 }
 
+/** 409 COMPANY_CHANGED ya manejado por el main (plan DK-1.1 de multi-empresa). */
+export interface CompanyChangedNotice {
+  companyId: string | null
+  companyName: string | null
+  message: string
+}
+
 export interface AuthState {
   isAuthenticated: boolean
   user?: {
@@ -222,6 +229,8 @@ interface CerpAPI {
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
   onSessionExpired(callback: () => void): () => void
+  onCompanyChanged(callback: (notice: CompanyChangedNotice) => void): () => void
+  onNoActiveCompany(callback: (payload: { message: string }) => void): () => void
   sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>; modelChoice?: ModelChoice }): Promise<{ started: boolean; error?: string; code?: string }>
   abortAgent(conversationId?: string): Promise<void>
   resetSession(conversationId?: string): Promise<void>

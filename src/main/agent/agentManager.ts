@@ -85,6 +85,11 @@ interface AgentSession {
   // reporte de consumo (`mapMessage` → 'result') sepa qué modo corrió esta ejecución
   // aunque el usuario haya cambiado de modo mientras tanto.
   powerful: boolean
+  // Empresa que el MCP de esta sesión inyecta en cada tool (se fija al crearla).
+  // Multi-empresa (plan DK-1.1): si la empresa por defecto cambia (409
+  // COMPANY_CHANGED), el turno en curso se detiene y el próximo mensaje reinicia
+  // la sesión con la empresa nueva — nunca sigue escribiendo con la vieja.
+  companyId: string | null
   processingTurn: boolean
   // Registro de delegaciones activas: Agent/Task tool_use_id → agentName. Por-sesión
   // para que los eventos internos de subagentes resuelvan el nombre correcto.
@@ -177,6 +182,24 @@ export function closeAllSessions(): void {
   logger.info('All sessions closed')
 }
 
+/**
+ * Multi-empresa (plan DK-1.1): la empresa por defecto cambió (409 COMPANY_CHANGED).
+ * Detiene el turno de cada sesión que arrancó con otra empresa — así ninguna tool
+ * que NO inyecta `companyId` (y que el core resolvería en la empresa nueva) sigue
+ * escribiendo en este turno — y tira el contexto de empresa cacheado del prompt.
+ * Las sesiones no se cierran: `runAgent` las reinicia en el próximo mensaje porque
+ * su `companyId` ya no coincide. Con `companyId` desconocido (null) se detienen todas.
+ */
+export function stopSessionsNotInCompany(companyId: string | null): void {
+  cachedContextPrompt = null
+  for (const session of [...sessions.values()]) {
+    if (companyId !== null && session.companyId === companyId) continue
+    if (!session.processingTurn) continue
+    logger.warn(`Empresa por defecto cambiada — se detiene el turno en curso (${session.conversationId})`)
+    void interruptAgent(session.conversationId)
+  }
+}
+
 // Alias for IPC compatibility. Sin id → cierra todo (logout). Con id → esa conversación.
 export function resetSession(conversationId?: string): void {
   if (conversationId) closeSession(conversationId)
@@ -221,7 +244,9 @@ export async function runAgent(
   // If THIS conversation's session exists but cwd/context/model/powerful changed,
   // restart only it. Other conversations' sessions are untouched — that's the point
   // of concurrency.
-  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful)) {
+  // La empresa también: tras un 409 COMPANY_CHANGED la config ya trae la nueva (o
+  // quedó vacía si el refetch falló, y startSession la vuelve a pedir).
+  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful || getCompanyId() !== session.companyId)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
     closeSession(conversationId)
     session = undefined
@@ -457,6 +482,7 @@ async function startSession(
     contextId,
     model,
     powerful,
+    companyId,
     processingTurn: false,
     activeDelegations: new Map(),
     heartbeat: null,

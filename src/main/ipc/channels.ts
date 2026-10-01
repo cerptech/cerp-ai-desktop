@@ -6,6 +6,11 @@ export const IPC_CHANNELS = {
   // main → renderer: la sesión murió (refresh token ausente o inválido) y no
   // se pudo renovar sola. El renderer muestra el modal de sesión expirada.
   AUTH_SESSION_EXPIRED: 'auth:session-expired',
+  // main → renderer (multi-empresa, plan DK-1.1): 409 COMPANY_CHANGED — la empresa
+  // por defecto cambió; payload { companyId, companyName, message }.
+  AUTH_COMPANY_CHANGED: 'auth:company-changed',
+  // main → renderer: 403 NO_ACTIVE_COMPANY — el main ya cerró la sesión; payload { message }.
+  AUTH_NO_ACTIVE_COMPANY: 'auth:no-active-company',
 
   // Agent
   AGENT_SEND_PROMPT: 'agent:send-prompt',

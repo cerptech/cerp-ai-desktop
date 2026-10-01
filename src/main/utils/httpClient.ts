@@ -1,3 +1,11 @@
+import {
+  classifySessionError,
+  COMPANY_CHANGED_TOOL_ERROR,
+  NO_ACTIVE_COMPANY_TOOL_ERROR,
+  SESSION_REVOKED_TOOL_ERROR,
+  type SessionErrorInfo,
+} from './sessionErrors'
+
 function getApiBaseUrl(): string {
   return process.env.CERP_API_BASE_URL || 'https://production-cerp-server-1060273677691.europe-west1.run.app/api'
 }
@@ -19,6 +27,42 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * 409 `COMPANY_CHANGED` (multi-empresa): la empresa por defecto cambió y el core NO
+ * ejecutó la operación. Nunca se reintenta. El `message` es el texto que recibe el
+ * modelo cuando la lanza una tool (todas devuelven `err.message`).
+ */
+export class CompanyChangedError extends HttpError {
+  readonly code = 'COMPANY_CHANGED' as const
+  readonly activeCompanyId: string | null
+
+  constructor(body: unknown, activeCompanyId: string | null) {
+    super(409, body, COMPANY_CHANGED_TOOL_ERROR)
+    this.name = 'CompanyChangedError'
+    this.activeCompanyId = activeCompanyId
+  }
+}
+
+/** 403 `NO_ACTIVE_COMPANY`: la cuenta no tiene ninguna empresa activa; el Desktop cierra la sesión. */
+export class NoActiveCompanyError extends HttpError {
+  readonly code = 'NO_ACTIVE_COMPANY' as const
+
+  constructor(body: unknown) {
+    super(403, body, NO_ACTIVE_COMPANY_TOOL_ERROR)
+    this.name = 'NoActiveCompanyError'
+  }
+}
+
+/** 401 `SESSION_REVOKED` que sobrevivió al refresh + reintento: la sesión murió de verdad. Sigue siendo un 401. */
+export class SessionRevokedError extends HttpError {
+  readonly code = 'SESSION_REVOKED' as const
+
+  constructor(body: unknown) {
+    super(401, body, SESSION_REVOKED_TOOL_ERROR)
+    this.name = 'SessionRevokedError'
+  }
+}
+
 function parseErrorBody(text: string): unknown {
   if (!text) return undefined
   try {
@@ -31,12 +75,57 @@ function parseErrorBody(text: string): unknown {
 export class HttpClient {
   private getToken: () => string | null
   private onTokenExpired?: () => Promise<void>
+  /**
+   * Avisa (sin esperar) de un error de sesión/empresa del core: 409 `COMPANY_CHANGED`,
+   * 403 `NO_ACTIVE_COMPANY` o un 401 `SESSION_REVOKED` definitivo. El request que lo
+   * recibió lanza igual su error tipado y NO se reintenta: la tool que falló no se
+   * repite con la empresa nueva (plan DK-1.1). Ver `sessionGuard.ts`.
+   */
+  private onSessionError?: (info: SessionErrorInfo) => void | Promise<void>
   /** Promesa del refresh en vuelo — reemplaza al viejo guard booleano `isRefreshing`. */
   private refreshPromise: Promise<void> | null = null
 
-  constructor(getToken: () => string | null, onTokenExpired?: () => Promise<void>) {
+  constructor(
+    getToken: () => string | null,
+    onTokenExpired?: () => Promise<void>,
+    onSessionError?: (info: SessionErrorInfo) => void | Promise<void>,
+  ) {
     this.getToken = getToken
     this.onTokenExpired = onTokenExpired
+    this.onSessionError = onSessionError
+  }
+
+  /**
+   * Arma el error de una respuesta no-ok. `retried` = este request ya es el reintento
+   * posterior a un refresh (o no hay refresh posible): recién ahí un 401
+   * `SESSION_REVOKED` es definitivo. Un 401 cuyo refresh FALLÓ no se reporta acá:
+   * `onTokenExpired` ya limpió la sesión y avisó al renderer.
+   */
+  private async errorFromResponse(res: Response, retried: boolean): Promise<HttpError> {
+    const text = await res.text().catch(() => '')
+    const body = parseErrorBody(text)
+    const info = classifySessionError(res.status, body)
+    if (info?.kind === 'company_changed') {
+      this.reportSessionError(info)
+      return new CompanyChangedError(body, info.activeCompanyId)
+    }
+    if (info?.kind === 'no_active_company') {
+      this.reportSessionError(info)
+      return new NoActiveCompanyError(body)
+    }
+    if (info?.kind === 'session_revoked' && (retried || !this.onTokenExpired)) {
+      this.reportSessionError(info)
+      return new SessionRevokedError(body)
+    }
+    return new HttpError(res.status, body, `API error ${res.status}: ${text}`)
+  }
+
+  /** Fire-and-forget: el manejo (pedir la config de nuevo, cerrar sesión) no bloquea al caller. */
+  private reportSessionError(info: SessionErrorInfo): void {
+    if (!this.onSessionError) return
+    try {
+      void Promise.resolve(this.onSessionError(info)).catch(() => { /* lo loguea el handler */ })
+    } catch { /* idem */ }
   }
 
   /**
@@ -104,10 +193,7 @@ export class HttpClient {
       } catch { /* fall through */ }
     }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new HttpError(res.status, parseErrorBody(text), `API error ${res.status}: ${text}`)
-    }
+    if (!res.ok) throw await this.errorFromResponse(res, retried)
 
     return res.json() as Promise<T>
   }
@@ -132,16 +218,20 @@ export class HttpClient {
       } catch { /* fall through */ }
     }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new HttpError(res.status, parseErrorBody(text), `API error ${res.status}: ${text}`)
-    }
+    if (!res.ok) throw await this.errorFromResponse(res, retried)
 
     const { writeFileSync } = require('fs')
     const buffer = Buffer.from(await res.arrayBuffer())
     writeFileSync(savePath, buffer)
   }
 
+  /**
+   * `retried = true` también sirve para pedir un request SIN el refresh automático
+   * ante un 401: lo usa `onTokenExpired` para volver a pedir `/desktop/api-key`
+   * dentro del propio refresh (si no, un 401 ahí esperaría a `refreshPromise`, que
+   * a su vez lo espera a él: deadlock; alcanzable con `SESSION_REVOKED`, porque el
+   * refresh puede salir bien y el core seguir rechazando el token nuevo).
+   */
   async request<T = unknown>(method: string, path: string, data?: unknown, retried = false): Promise<T> {
     const token = this.getToken()
     if (!token) throw new Error('No auth token available')
@@ -170,10 +260,10 @@ export class HttpClient {
       }
     }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new HttpError(res.status, parseErrorBody(text), `API error ${res.status}: ${text}`)
-    }
+    // 409 COMPANY_CHANGED / 403 NO_ACTIVE_COMPANY: errores tipados, sin reintento.
+    // 401 SESSION_REVOKED: ya pasó por el refresh de arriba (el camino de 401 de
+    // siempre); si el reintento también lo recibe, la sesión está revocada.
+    if (!res.ok) throw await this.errorFromResponse(res, retried)
 
     return res.json() as Promise<T>
   }

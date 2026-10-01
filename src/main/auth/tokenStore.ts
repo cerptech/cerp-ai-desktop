@@ -106,6 +106,13 @@ export const tokenStore = {
     return (data.companyId as string) || null
   },
 
+  /** Multi-empresa: la empresa por defecto cambió (409 COMPANY_CHANGED); se vuelve a pedir a /desktop/api-key. */
+  clearCompanyId(): void {
+    const data = readStore()
+    delete data.companyId
+    writeStore(data)
+  },
+
   setUserId(userId: string): void {
     const data = readStore()
     data.userId = userId

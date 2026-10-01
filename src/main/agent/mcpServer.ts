@@ -7,7 +7,7 @@ import { createCatalogTools } from './catalogTools'
 import { createCreditsTools } from './creditsTools'
 import { createDocumentIntakeTools } from './documentIntakeTools'
 import { createScheduleTools } from './scheduleTools'
-import { HttpClient } from '../utils/httpClient'
+import { HttpClient, CompanyChangedError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
 import { startQuoteHeartbeat, stopQuoteHeartbeat } from './quoteHeartbeat'
@@ -110,6 +110,12 @@ async function runTasksBatch(
       if (Array.isArray(data?.results)) results.push(...data.results)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      // Multi-empresa (plan DK-1.1): la empresa cambió, no hay empresa o la sesión se
+      // revocó. Reanudar el lote NO sirve (y con la empresa nueva escribiría en otra
+      // casa): el mensaje del error ya le dice al modelo que no reintente.
+      if (err instanceof CompanyChangedError || err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) {
+        return { summary, results, error: message }
+      }
       // Backend sin el endpoint batch (deploy viejo): reintentar sería un loop
       // infinito — indicar el fallback 1×1 en vez de la instrucción de reanudación.
       if (/\b404\b/.test(message)) {

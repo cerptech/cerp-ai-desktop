@@ -52,12 +52,17 @@ function parseModels(raw: unknown): { fast?: string; powerful?: string } | undef
   return out
 }
 
-export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig> {
+/**
+ * `skipAuthRetry`: sin el refresh automático ante un 401. Lo usa `onTokenExpired`
+ * (handlers.ts), que llama a esto DENTRO del refresh en vuelo: con el reintento
+ * normal, un 401 acá esperaría a ese mismo refresh (deadlock, ver httpClient.request).
+ */
+export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry?: boolean }): Promise<DesktopConfig> {
   const token = tokenStore.getAccessToken()
   logger.info(`Fetching API key from backend... (has token: ${!!token})`)
 
   try {
-    const response = await httpClient.post<{
+    const response = await httpClient.request<{
       apiKey: string
       companyId: string
       userId: string
@@ -67,7 +72,7 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
       modelPolicy?: AiModelPolicy
       maxBudgetUsd?: number
       maxBudgetUsdTurbo?: number
-    }>('/desktop/api-key')
+    }>('POST', '/desktop/api-key', undefined, opts?.skipAuthRetry === true)
 
     logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}`)
 
@@ -160,6 +165,18 @@ export function getMaxBudgetUsd(): number | undefined {
  */
 export function getMaxBudgetUsdTurbo(): number | undefined {
   return cachedConfig?.maxBudgetUsdTurbo
+}
+
+/**
+ * 409 `COMPANY_CHANGED` (multi-empresa, plan DK-1.1): la empresa por defecto de la
+ * persona cambió. Se tira la config cacheada y el `companyId` persistido para que
+ * nada siga inyectando la empresa vieja; el caller vuelve a pedir `/desktop/api-key`.
+ * La API key queda: no depende de la empresa y el refetch la reescribe igual.
+ */
+export function invalidateCompanyConfig(): void {
+  cachedConfig = null
+  cachedConfigAt = 0
+  tokenStore.clearCompanyId()
 }
 
 export function clearApiKey(): void {

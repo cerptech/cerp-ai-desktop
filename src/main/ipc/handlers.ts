@@ -4,14 +4,16 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, getConfiguredModels, getModelPolicy, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
-import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
+import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
+import { createSessionGuard, type CompanyChangedNotice } from '../auth/sessionGuard'
+import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
 import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
 import { customAgentStore } from '../store/customAgentStore'
-import { HttpClient, HttpError } from '../utils/httpClient'
+import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
+import { companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
@@ -97,6 +99,35 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
   }
 
+  function sendToRenderer(channel: string, payload: unknown): void {
+    const mainWindow = getMainWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+  }
+
+  // Multi-empresa (plan DK-1.1, contrato §7.7): 409 COMPANY_CHANGED, 403
+  // NO_ACTIVE_COMPANY y un 401 SESSION_REVOKED definitivo. El httpClient avisa
+  // acá sin esperar; el request que lo recibió ya falló sin reintentarse.
+  const handleSessionError = createSessionGuard({
+    getCompanyId,
+    invalidateCompanyConfig,
+    refetchCompanyId: async () => (await fetchApiKey(httpClient)).companyId || null,
+    fetchCompanyName: async () => companyNameFromSessionUser(await httpClient.get('/users/me')),
+    stopStaleSessions: stopSessionsNotInCompany,
+    notifyCompanyChanged: (notice: CompanyChangedNotice) => sendToRenderer(IPC_CHANNELS.AUTH_COMPANY_CHANGED, notice),
+    signOutNoCompany: (message: string) => {
+      logout()
+      resetSession()
+      sendToRenderer(IPC_CHANNELS.AUTH_NO_ACTIVE_COMPANY, { message })
+    },
+    // El mismo final que un refresh fallido (onTokenExpired, abajo): el camino de 401 de siempre.
+    signOutSessionRevoked: () => {
+      tokenStore.clearAll()
+      clearApiKey()
+      notifySessionExpired()
+    },
+    log: { info: (m) => logger.info(m), warn: (m) => logger.warn(m) },
+  })
+
   const httpClient = new HttpClient(
     () => tokenStore.getAccessToken(),
     async () => {
@@ -105,9 +136,14 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         await refreshAccessToken()
         // El accessToken nuevo ya quedó guardado en tokenStore; fetchApiKey lo
         // usa automáticamente (vía el mismo httpClient) para re-validar la API key.
-        await fetchApiKey(httpClient)
+        // Sin el refresh automático: estamos DENTRO del refresh en vuelo y un 401
+        // acá lo esperaría a él mismo (deadlock; ver httpClient.request).
+        await fetchApiKey(httpClient, { skipAuthRetry: true })
         logger.info('Token renovado y API key re-obtenida correctamente')
       } catch (err) {
+        // Sin empresa o sesión revocada: el guard de sesión ya cierra la sesión
+        // con SU mensaje; no se abre además el modal de sesión expirada.
+        if (err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) throw err
         logger.warn('No se pudo renovar la sesión — limpiando credenciales:', err)
         tokenStore.clearAll()
         clearApiKey()
@@ -115,6 +151,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         throw err
       }
     },
+    (info) => handleSessionError(info),
   )
 
   // Auth: Login
@@ -127,6 +164,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         await fetchApiKey(httpClient)
         logger.info('API key fetched successfully')
       } catch (apiKeyErr) {
+        // Cuenta sin empresas (403 NO_ACTIVE_COMPANY): el guard de sesión ya cerró
+        // la sesión y avisó al renderer; devolver "autenticado" la reabriría vacía.
+        if (apiKeyErr instanceof NoActiveCompanyError) return { isAuthenticated: false }
         logger.warn('Could not fetch API key (will retry later):', apiKeyErr)
       }
 
@@ -179,6 +219,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             if (err instanceof NoCreditsError) {
               return { started: false, error: err.message, code: 'NO_CREDITS' }
             }
+            // La cuenta se quedó sin empresas: el guard ya cerró la sesión.
+            if (err instanceof NoActiveCompanyError) {
+              return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }
+            }
             logger.warn(`No se pudo refrescar la config de modelo — se usa la cacheada: ${err}`)
           }
         }
@@ -202,6 +246,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           // toast de error genérico.
           if (err instanceof NoCreditsError) {
             return { started: false, error: err.message, code: 'NO_CREDITS' }
+          }
+          if (err instanceof NoActiveCompanyError) {
+            return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }
           }
           // El httpClient ya intentó refrescar el token (onTokenExpired) antes de
           // llegar acá — si seguimos con 401 es porque el refresh falló y ya se

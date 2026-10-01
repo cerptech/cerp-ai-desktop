@@ -109,8 +109,9 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // instead of a toast, so it doesn't disappear before the user notices it.
   // AUTH_EXPIRED gets no toast either: the global SessionExpiredModal is already
   // showing (or about to), a red toast on top of it would be redundant noise.
+  // NO_ACTIVE_COMPANY tampoco: el main ya cerró la sesión y App muestra su aviso.
   useEffect(() => {
-    if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED') addToast('error', error)
+    if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY') addToast('error', error)
   }, [error, errorCode, addToast])
 
   // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la
@@ -388,7 +389,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       )}
 
       {/* Error display — AUTH_EXPIRED se omite: el SessionExpiredModal global ya cubre ese caso */}
-      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && (
+      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && (
         <div className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
           {error}
         </div>
