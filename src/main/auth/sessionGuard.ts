@@ -4,6 +4,7 @@ import {
   NO_ACTIVE_COMPANY_MESSAGE,
   type SessionErrorInfo,
 } from '../utils/sessionErrors'
+import type { CompanyChangedNotice } from '../ipc/types'
 
 /**
  * Reacción del Desktop a los errores de sesión/empresa del core (multi-empresa,
@@ -13,13 +14,6 @@ import {
  * Sin imports de Electron ni del store: todo efecto entra por `deps`, así la lógica
  * (deduplicado, orden de pasos, qué se avisa) se prueba sin levantar la app.
  */
-
-export interface CompanyChangedNotice {
-  /** Empresa nueva (de `/desktop/api-key`, o de `details.activeCompanyId` si el refetch falló). */
-  companyId: string | null
-  companyName: string | null
-  message: string
-}
 
 export interface SessionGuardDeps {
   getCompanyId: () => string | null
@@ -38,10 +32,67 @@ export interface SessionGuardDeps {
   signOutSessionRevoked: () => void
   log: { info: (msg: string) => void; warn: (msg: string) => void }
   now?: () => number
+  /** Topes de espera (ms) de los dos requests del cambio de empresa; los tests los acortan. */
+  timeoutsMs?: { refetch?: number; companyName?: number }
 }
 
 /** Ventana en la que varios 403/401 concurrentes cuentan como UN solo cierre de sesión. */
 const SIGN_OUT_DEDUPE_MS = 10_000
+
+/**
+ * El `HttpClient` no tiene timeout: sin tope, un `/desktop/api-key` o un `/users/me`
+ * colgados dejarían `isApplyingCompanyChange()` en true para siempre y todo envío
+ * quedaría retenido (recheck 2 de DK1). Pasado el tope el cambio se aplica igual:
+ * el aviso sale sin nombre, o con la empresa que informó el 409.
+ */
+const REFETCH_TIMEOUT_MS = 15_000
+const COMPANY_NAME_TIMEOUT_MS = 10_000
+
+/**
+ * Ventana en la que un aviso con destino desconocido (`null`: el refetch falló y el 409
+ * no traía `activeCompanyId`), o justo después de uno así, cuenta como el MISMO cambio.
+ */
+export const COMPANY_NOTICE_COOLDOWN_MS = 60_000
+
+/** El último aviso de cambio de empresa que se mostró. */
+export interface LastCompanyNotice {
+  companyId: string | null
+  at: number
+}
+
+/**
+ * true si un aviso hacia `target` repetiría el último (review de DK1, minor 2):
+ * - el mismo destino conocido ya se avisó (hasta el próximo logout: `resetCompanyNotices`);
+ * - dentro de la ventana, si alguno de los dos destinos es desconocido: con la config
+ *   vacía tras un refetch fallido, cada tool vieja que choca con el 409 volvería a
+ *   avisar. Dos destinos conocidos distintos (A → B → C) sí avisan dos veces.
+ */
+export function shouldSkipCompanyNotice(
+  last: LastCompanyNotice | null,
+  target: string | null,
+  now: number,
+  cooldownMs: number = COMPANY_NOTICE_COOLDOWN_MS,
+): boolean {
+  if (!last) return false
+  if (target !== null && target === last.companyId) return true
+  const withinCooldown = now - last.at < cooldownMs
+  return withinCooldown && (target === null || last.companyId === null)
+}
+
+class GuardTimeoutError extends Error {
+  constructor(what: string, ms: number) {
+    super(`${what}: sin respuesta en ${ms} ms`)
+    this.name = 'GuardTimeoutError'
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new GuardTimeoutError(what, ms)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
 
 function errorCode(err: unknown): string | undefined {
   const code = err && typeof err === 'object' ? (err as { code?: unknown }).code : undefined
@@ -69,27 +120,40 @@ export interface SessionGuard {
    * correría en la empresa nueva antes de que el usuario vea el aviso.
    */
   isApplyingCompanyChange: () => boolean
+  /**
+   * Olvida el último aviso de cambio de empresa (recheck 1 de DK1). Va en cada cierre de
+   * sesión (logout, cuenta sin empresa, sesión revocada, refresh fallido): la próxima
+   * cuenta que entre, o la misma, tiene que ver su propio aviso aunque el destino coincida.
+   */
+  resetCompanyNotices: () => void
 }
 
 export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
   const now = deps.now ?? Date.now
+  const refetchTimeoutMs = deps.timeoutsMs?.refetch ?? REFETCH_TIMEOUT_MS
+  const companyNameTimeoutMs = deps.timeoutsMs?.companyName ?? COMPANY_NAME_TIMEOUT_MS
   let companyChange: Promise<void> | null = null
-  /** Última empresa avisada: un 409 tardío de una sesión vieja no repite el aviso. */
-  let lastNotifiedCompanyId: string | null = null
+  /** Último aviso mostrado: un 409 tardío de una sesión vieja no lo repite. */
+  let lastNotice: LastCompanyNotice | null = null
   let lastNoCompanySignOut = Number.NEGATIVE_INFINITY
   let lastRevokedSignOut = Number.NEGATIVE_INFINITY
 
+  function resetCompanyNotices(): void {
+    lastNotice = null
+  }
+
   async function notifyChange(companyId: string | null): Promise<void> {
-    if (companyId !== null && companyId === lastNotifiedCompanyId) {
-      deps.log.info(`[session] Cambio a ${companyId} ya avisado — no se repite el aviso`)
+    if (shouldSkipCompanyNotice(lastNotice, companyId, now())) {
+      deps.log.info(`[session] Cambio a ${companyId ?? '(empresa desconocida)'} ya avisado — no se repite el aviso`)
       return
     }
-    if (companyId !== null) lastNotifiedCompanyId = companyId
+    lastNotice = { companyId, at: now() }
     let companyName: string | null = null
     try {
-      companyName = await deps.fetchCompanyName()
-    } catch {
-      /* el aviso sale sin nombre */
+      companyName = await withTimeout(deps.fetchCompanyName(), companyNameTimeoutMs, 'GET /users/me')
+    } catch (err) {
+      // El aviso sale sin nombre.
+      if (err instanceof GuardTimeoutError) deps.log.warn(`[session] ${err.message} — el aviso sale sin nombre`)
     }
     deps.notifyCompanyChanged({ companyId, companyName, message: companyChangedMessage(companyName) })
   }
@@ -101,7 +165,7 @@ export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
 
     let companyId = info.activeCompanyId
     try {
-      companyId = (await deps.refetchCompanyId()) ?? companyId
+      companyId = (await withTimeout(deps.refetchCompanyId(), refetchTimeoutMs, 'POST /desktop/api-key')) ?? companyId
     } catch (err) {
       const code = errorCode(err)
       // Sin empresa o sesión revocada: el propio refetch ya disparó ESE manejo
@@ -147,6 +211,7 @@ export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
       lastNoCompanySignOut = now()
       deps.log.warn('[session] 403 NO_ACTIVE_COMPANY: la cuenta no tiene empresas activas — se cierra la sesión')
       deps.signOutNoCompany(NO_ACTIVE_COMPANY_MESSAGE)
+      resetCompanyNotices()
       return
     }
 
@@ -154,6 +219,7 @@ export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
     lastRevokedSignOut = now()
     deps.log.warn('[session] 401 SESSION_REVOKED después del refresh — la sesión se cerró por seguridad')
     deps.signOutSessionRevoked()
+    resetCompanyNotices()
   }
 
   function onCompanyObserved(previous: string | null, next: string | null): Promise<void> {
@@ -166,5 +232,6 @@ export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
   return Object.assign(handleSessionError, {
     onCompanyObserved,
     isApplyingCompanyChange: () => companyChange !== null,
+    resetCompanyNotices,
   })
 }

@@ -5,7 +5,7 @@ import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
 import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
-import { createSessionGuard, type CompanyChangedNotice } from '../auth/sessionGuard'
+import { createSessionGuard } from '../auth/sessionGuard'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
@@ -15,7 +15,7 @@ import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
-import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 /**
@@ -119,10 +119,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       resetSession()
       sendToRenderer(IPC_CHANNELS.AUTH_NO_ACTIVE_COMPANY, { message })
     },
-    // El mismo final que un refresh fallido (onTokenExpired, abajo): el camino de 401 de siempre.
+    // El mismo final que un refresh fallido (onTokenExpired, abajo): el camino de 401 de
+    // siempre, y además se cierran las sesiones del agente (como signOutNoCompany): un
+    // turno en curso no sigue llamando tools sin token (review de DK1, minor 3).
     signOutSessionRevoked: () => {
       tokenStore.clearAll()
       clearApiKey()
+      resetSession()
       notifySessionExpired()
     },
     log: { info: (m) => logger.info(m), warn: (m) => logger.warn(m) },
@@ -155,6 +158,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         logger.warn('No se pudo renovar la sesión — limpiando credenciales:', err)
         tokenStore.clearAll()
         clearApiKey()
+        sessionGuard.resetCompanyNotices()
         notifySessionExpired()
         throw err
       }
@@ -190,6 +194,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (): Promise<void> => {
     logout()
     resetSession()
+    // La próxima cuenta (o la misma) ve su propio aviso de cambio de empresa.
+    sessionGuard.resetCompanyNotices()
   })
 
   // Auth: Get status — refresca el token si está por vencer en vez de confiar

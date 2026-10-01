@@ -7,11 +7,12 @@ import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
+import { getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
-import { HttpClient } from '../utils/httpClient'
+import { HttpClient, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
+import { COMPANY_CHANGED_SEND_MESSAGE, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { IPC_CHANNELS } from '../ipc/channels'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AgentStreamEvent } from '../ipc/types'
@@ -263,6 +264,20 @@ export async function runAgent(
 // Session lifecycle
 // ============================================================
 
+/**
+ * El arranque de una sesión se cortó antes de crearla (paywall, cuenta sin empresa,
+ * sesión revocada, cambio de empresa): un error con código distinguible + DONE, así
+ * el renderer sale del estado "pendiente" y reacciona según el código.
+ */
+function emitStartAborted(mainWindow: BrowserWindow, conversationId: string, message: string, code: string): void {
+  if (mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
+    conversationId,
+    event: { type: 'error', message, code },
+  })
+  mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
+}
+
 async function startSession(
   conversationId: string,
   payload: SendPromptPayload,
@@ -277,11 +292,25 @@ async function startSession(
   let companyId = getCompanyId()
   let userId = getUserId()
   if (!companyId || !userId) {
+    // Multi-empresa (pulido de DK1): este fetch corre DESPUÉS de la retención del envío
+    // en AGENT_SEND_PROMPT (p.ej. companyId A persistido sin userId en un store viejo).
+    // Si trae otra empresa, el prompt se escribió para la vieja: no se corre.
+    const companySwitchSeqBefore = getCompanySwitchSeq()
     try {
       const config = await fetchApiKey(httpClient)
       companyId = config.companyId || null
       userId = config.userId || null
     } catch (err) {
+      // La cuenta se quedó sin empresas entre el gate de handlers.ts y este arranque:
+      // el guard de sesión ya cerró la sesión y avisó. No se arranca una sesión con
+      // companyId null (como el paywall de abajo).
+      if (err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) {
+        const code = err instanceof NoActiveCompanyError ? 'NO_ACTIVE_COMPANY' : 'AUTH_EXPIRED'
+        const message = err instanceof NoActiveCompanyError ? NO_ACTIVE_COMPANY_MESSAGE : 'No se pudo recuperar la sesión. Inicia sesión de nuevo.'
+        logger.warn(`startSession aborted (${conversationId}): ${code}`)
+        emitStartAborted(mainWindow, conversationId, message, code)
+        return
+      }
       // Paywall (Modelo CERP): la empresa se quedó sin créditos entre el gate de
       // handlers.ts y el arranque de esta sesión (p.ej. companyId/userId no estaban
       // cacheados todavía). A diferencia de un fallo de red/config, esto NO es
@@ -289,16 +318,16 @@ async function startSession(
       // en vez de arrancar una sesión rota.
       if (err instanceof NoCreditsError) {
         logger.warn(`startSession aborted (${conversationId}): no credits available`)
-        if (!mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
-            conversationId,
-            event: { type: 'error', message: err.message, code: 'NO_CREDITS' },
-          })
-          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
-        }
+        emitStartAborted(mainWindow, conversationId, err.message, 'NO_CREDITS')
         return
       }
       logger.warn(`Could not fetch config: ${err}`)
+    }
+    if (shouldHoldSendForCompanyChange(companySwitchSeqBefore, getCompanySwitchSeq(), false)) {
+      // El observer del guard ya detuvo los turnos viejos y manda el aviso.
+      logger.warn(`startSession aborted (${conversationId}): la config trajo otra empresa por defecto`)
+      emitStartAborted(mainWindow, conversationId, COMPANY_CHANGED_SEND_MESSAGE, 'COMPANY_CHANGED')
+      return
     }
   }
   logger.info(`CompanyId: ${companyId}, UserId: ${userId}`)

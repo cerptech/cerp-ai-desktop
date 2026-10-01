@@ -1,3 +1,5 @@
+import type { CompanyChangedNotice } from '../main/ipc/types'
+
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
 export type ModelChoice = 'auto' | 'fast' | 'powerful'
 
@@ -75,12 +77,8 @@ export interface HtmlCanvas {
   html: string
 }
 
-/** 409 COMPANY_CHANGED ya manejado por el main (plan DK-1.1 de multi-empresa). */
-export interface CompanyChangedNotice {
-  companyId: string | null
-  companyName: string | null
-  message: string
-}
+/** 409 COMPANY_CHANGED ya manejado por el main (plan DK-1.1 de multi-empresa). Tipo único en main/ipc/types. */
+export type { CompanyChangedNotice }
 
 export interface AuthState {
   isAuthenticated: boolean
