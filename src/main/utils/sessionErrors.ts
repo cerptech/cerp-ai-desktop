@@ -99,6 +99,25 @@ export function companyChangedMessage(companyName?: string | null): string {
     : 'Tu empresa por defecto cambió. Revisa la carpeta de trabajo antes de seguir.'
 }
 
+/**
+ * Error del envío cuando el refresco de la config trajo otra empresa justo antes de
+ * correr el prompt (corrección 2 de la review de DK1): el prompt se escribió para la
+ * empresa vieja y con su carpeta de trabajo, así que no se corre en la nueva.
+ */
+export const COMPANY_CHANGED_SEND_MESSAGE =
+  'Tu empresa por defecto cambió y tu mensaje no se envió. Revisa la carpeta de trabajo y vuelve a enviarlo.'
+
+/**
+ * true si el envío de un prompt NO debe arrancar el turno (plan DK-1.1, 03 §M-6:
+ * «sin escritura en la casa nueva» antes del aviso). `seqBefore`/`seqAfter` son el
+ * contador de cambios de empresa (`getCompanySwitchSeq`) antes y después de refrescar
+ * la config; `applyingChange` dice si el guard de sesión todavía está aplicando un
+ * cambio (refetch tras un 409 o aviso en camino).
+ */
+export function shouldHoldSendForCompanyChange(seqBefore: number, seqAfter: number, applyingChange: boolean): boolean {
+  return seqAfter !== seqBefore || applyingChange
+}
+
 /** Aviso al usuario tras un 403 `NO_ACTIVE_COMPANY` (plan DK-1.1); el Desktop cierra la sesión. */
 export const NO_ACTIVE_COMPANY_MESSAGE = 'Tu cuenta ya no tiene acceso a ninguna empresa.'
 

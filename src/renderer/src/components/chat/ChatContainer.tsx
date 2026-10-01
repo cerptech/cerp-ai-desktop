@@ -110,8 +110,10 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // AUTH_EXPIRED gets no toast either: the global SessionExpiredModal is already
   // showing (or about to), a red toast on top of it would be redundant noise.
   // NO_ACTIVE_COMPANY tampoco: el main ya cerró la sesión y App muestra su aviso.
+  // COMPANY_CHANGED tampoco: App ya muestra el aviso del cambio de empresa; el banner
+  // de abajo queda para recordar que el mensaje no se envió.
   useEffect(() => {
-    if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY') addToast('error', error)
+    if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && errorCode !== 'COMPANY_CHANGED') addToast('error', error)
   }, [error, errorCode, addToast])
 
   // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la

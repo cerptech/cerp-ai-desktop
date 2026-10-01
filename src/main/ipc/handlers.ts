@@ -4,7 +4,7 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
+import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
 import { createSessionGuard, type CompanyChangedNotice } from '../auth/sessionGuard'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
@@ -13,7 +13,7 @@ import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
 import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
 import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
-import { companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE } from '../utils/sessionErrors'
+import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
@@ -210,6 +210,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       const mainWindow = getMainWindow()
       if (!mainWindow) return { started: false, error: 'No window' }
 
+      // Multi-empresa (DK-1.1): si el refresco de la config de abajo trae otra empresa,
+      // este prompt se escribió para la vieja (y con su carpeta): no se corre.
+      const companySwitchSeqBefore = getCompanySwitchSeq()
+
       let apiKey = getApiKey()
       // Política de modelo (ADR 016): la config (modelo de Auto, techo, degradación)
       // puede haber cambiado desde la última lectura — y tras un reinicio la API key
@@ -270,6 +274,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           logger.error('No se pudo obtener la API key:', err)
           return { started: false, error: 'No se pudo conectar con el servidor. Intenta de nuevo en unos segundos.', code: 'NETWORK_ERROR' }
         }
+      }
+
+      // Corrección 2 de la review de DK1: el refresco (TTL o key vencida) trajo otra
+      // empresa, o un 409 se está aplicando. Correr ahora reiniciaría la sesión en la
+      // empresa nueva con el prompt y la carpeta de la vieja, y la primera tool
+      // escribiría allí mientras el aviso recién se abre. El guard ya detuvo los
+      // turnos viejos y avisa; el usuario revisa la carpeta y vuelve a enviar.
+      if (shouldHoldSendForCompanyChange(companySwitchSeqBefore, getCompanySwitchSeq(), sessionGuard.isApplyingCompanyChange())) {
+        logger.warn('[session] Cambio de empresa al preparar el envío — el prompt no se corre')
+        return { started: false, error: COMPANY_CHANGED_SEND_MESSAGE, code: 'COMPANY_CHANGED' }
       }
 
       const resolved = resolveModel(payload.modelChoice)

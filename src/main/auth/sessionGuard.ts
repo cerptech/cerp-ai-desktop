@@ -63,6 +63,12 @@ export interface SessionGuard {
    * cacheado de forma SÍNCRONA (antes del primer `await`), y avisa al usuario.
    */
   onCompanyObserved: (previous: string | null, next: string | null) => Promise<void>
+  /**
+   * true mientras un cambio de empresa se está aplicando (refetch tras un 409, o el
+   * aviso todavía en camino). El envío de un prompt no arranca un turno en ese lapso:
+   * correría en la empresa nueva antes de que el usuario vea el aviso.
+   */
+  isApplyingCompanyChange: () => boolean
 }
 
 export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
@@ -157,5 +163,8 @@ export function createSessionGuard(deps: SessionGuardDeps): SessionGuard {
     return track(runObservedChange(previous, next))
   }
 
-  return Object.assign(handleSessionError, { onCompanyObserved })
+  return Object.assign(handleSessionError, {
+    onCompanyObserved,
+    isApplyingCompanyChange: () => companyChange !== null,
+  })
 }

@@ -55,6 +55,18 @@ function parseModels(raw: unknown): { fast?: string; powerful?: string } | undef
 
 type CompanySwitchObserver = (previousCompanyId: string, nextCompanyId: string) => void
 let companySwitchObserver: CompanySwitchObserver | null = null
+/**
+ * Cuántos cambios de empresa vio `fetchApiKey` desde que arrancó la app. El envío de
+ * un prompt (AGENT_SEND_PROMPT) lo lee antes y después de refrescar la config: si
+ * cambió, el refresco trajo otra empresa y el prompt NO se corre (corrección 2 de
+ * la review de DK1: el prompt se escribió para la empresa vieja).
+ */
+let companySwitchSeq = 0
+
+/** Contador de cambios de empresa observados por `fetchApiKey` (ver `companySwitchSeq`). */
+export function getCompanySwitchSeq(): number {
+  return companySwitchSeq
+}
 
 /**
  * Multi-empresa (plan DK-1.1): quién reacciona cuando `fetchApiKey` trae otra
@@ -126,6 +138,7 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
 
     const config = cachedConfig
     if (isCompanySwitch(prevCompanyId, response.companyId || null, prevUserId, response.userId || null)) {
+      companySwitchSeq++
       notifyCompanySwitch(prevCompanyId as string, response.companyId)
     }
 
