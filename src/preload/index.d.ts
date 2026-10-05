@@ -1,3 +1,5 @@
+import type { CompanyChangedNotice } from '../main/ipc/types'
+
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
 export type ModelChoice = 'auto' | 'fast' | 'powerful'
 
@@ -74,6 +76,9 @@ export interface HtmlCanvas {
   title: string
   html: string
 }
+
+/** 409 COMPANY_CHANGED ya manejado por el main (plan DK-1.1 de multi-empresa). Tipo único en main/ipc/types. */
+export type { CompanyChangedNotice }
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -222,6 +227,8 @@ interface CerpAPI {
   logout(): Promise<void>
   getAuthStatus(): Promise<AuthState>
   onSessionExpired(callback: () => void): () => void
+  onCompanyChanged(callback: (notice: CompanyChangedNotice) => void): () => void
+  onNoActiveCompany(callback: (payload: { message: string }) => void): () => void
   sendPrompt(payload: { prompt: string; sessionId?: string; conversationId?: string; cwd?: string; maxTurns?: number; maxBudgetUsd?: number; activeContextId?: string; conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>; modelChoice?: ModelChoice }): Promise<{ started: boolean; error?: string; code?: string }>
   abortAgent(conversationId?: string): Promise<void>
   resetSession(conversationId?: string): Promise<void>

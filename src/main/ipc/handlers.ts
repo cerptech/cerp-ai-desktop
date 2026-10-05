@@ -4,16 +4,18 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, getConfiguredModels, getModelPolicy, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
-import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
+import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
+import { createSessionGuard } from '../auth/sessionGuard'
+import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
 import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
 import { customAgentStore } from '../store/customAgentStore'
-import { HttpClient, HttpError } from '../utils/httpClient'
+import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
+import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
-import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 /**
@@ -97,6 +99,46 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     }
   }
 
+  function sendToRenderer(channel: string, payload: unknown): void {
+    const mainWindow = getMainWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+  }
+
+  // Multi-empresa (plan DK-1.1, contrato §7.7): 409 COMPANY_CHANGED, 403
+  // NO_ACTIVE_COMPANY y un 401 SESSION_REVOKED definitivo. El httpClient avisa
+  // acá sin esperar; el request que lo recibió ya falló sin reintentarse.
+  const sessionGuard = createSessionGuard({
+    getCompanyId,
+    invalidateCompanyConfig,
+    refetchCompanyId: async () => (await fetchApiKey(httpClient)).companyId || null,
+    fetchCompanyName: async () => companyNameFromSessionUser(await httpClient.get('/users/me')),
+    stopStaleSessions: stopSessionsNotInCompany,
+    notifyCompanyChanged: (notice: CompanyChangedNotice) => sendToRenderer(IPC_CHANNELS.AUTH_COMPANY_CHANGED, notice),
+    signOutNoCompany: (message: string) => {
+      logout()
+      resetSession()
+      sendToRenderer(IPC_CHANNELS.AUTH_NO_ACTIVE_COMPANY, { message })
+    },
+    // El mismo final que un refresh fallido (onTokenExpired, abajo): el camino de 401 de
+    // siempre, y además se cierran las sesiones del agente (como signOutNoCompany): un
+    // turno en curso no sigue llamando tools sin token (review de DK1, minor 3).
+    signOutSessionRevoked: () => {
+      tokenStore.clearAll()
+      clearApiKey()
+      resetSession()
+      notifySessionExpired()
+    },
+    log: { info: (m) => logger.info(m), warn: (m) => logger.warn(m) },
+  })
+  // El cambio de empresa casi siempre lo ve primero el refresco normal de la config
+  // (TTL de 5 min en AGENT_SEND_PROMPT, startSession, login), no un 409: mismo manejo
+  // y mismo deduplicado que el 409 (corrección 1 de la review de DK1).
+  setCompanySwitchObserver((previous, next) => {
+    void sessionGuard.onCompanyObserved(previous, next).catch((err) => {
+      logger.warn(`[session] Falló el manejo del cambio de empresa: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  })
+
   const httpClient = new HttpClient(
     () => tokenStore.getAccessToken(),
     async () => {
@@ -105,16 +147,23 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         await refreshAccessToken()
         // El accessToken nuevo ya quedó guardado en tokenStore; fetchApiKey lo
         // usa automáticamente (vía el mismo httpClient) para re-validar la API key.
-        await fetchApiKey(httpClient)
+        // Sin el refresh automático: estamos DENTRO del refresh en vuelo y un 401
+        // acá lo esperaría a él mismo (deadlock; ver httpClient.request).
+        await fetchApiKey(httpClient, { skipAuthRetry: true })
         logger.info('Token renovado y API key re-obtenida correctamente')
       } catch (err) {
+        // Sin empresa o sesión revocada: el guard de sesión ya cierra la sesión
+        // con SU mensaje; no se abre además el modal de sesión expirada.
+        if (err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) throw err
         logger.warn('No se pudo renovar la sesión — limpiando credenciales:', err)
         tokenStore.clearAll()
         clearApiKey()
+        sessionGuard.resetCompanyNotices()
         notifySessionExpired()
         throw err
       }
     },
+    (info) => sessionGuard(info),
   )
 
   // Auth: Login
@@ -127,6 +176,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         await fetchApiKey(httpClient)
         logger.info('API key fetched successfully')
       } catch (apiKeyErr) {
+        // Cuenta sin empresas (403 NO_ACTIVE_COMPANY): el guard de sesión ya cerró
+        // la sesión y avisó al renderer; devolver "autenticado" la reabriría vacía.
+        if (apiKeyErr instanceof NoActiveCompanyError) return { isAuthenticated: false }
         logger.warn('Could not fetch API key (will retry later):', apiKeyErr)
       }
 
@@ -142,6 +194,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (): Promise<void> => {
     logout()
     resetSession()
+    // La próxima cuenta (o la misma) ve su propio aviso de cambio de empresa.
+    sessionGuard.resetCompanyNotices()
   })
 
   // Auth: Get status — refresca el token si está por vencer en vez de confiar
@@ -162,6 +216,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       const mainWindow = getMainWindow()
       if (!mainWindow) return { started: false, error: 'No window' }
 
+      // Multi-empresa (DK-1.1): si el refresco de la config de abajo trae otra empresa,
+      // este prompt se escribió para la vieja (y con su carpeta): no se corre.
+      const companySwitchSeqBefore = getCompanySwitchSeq()
+
       let apiKey = getApiKey()
       // Política de modelo (ADR 016): la config (modelo de Auto, techo, degradación)
       // puede haber cambiado desde la última lectura — y tras un reinicio la API key
@@ -178,6 +236,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           } catch (err) {
             if (err instanceof NoCreditsError) {
               return { started: false, error: err.message, code: 'NO_CREDITS' }
+            }
+            // La cuenta se quedó sin empresas: el guard ya cerró la sesión.
+            if (err instanceof NoActiveCompanyError) {
+              return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }
             }
             logger.warn(`No se pudo refrescar la config de modelo — se usa la cacheada: ${err}`)
           }
@@ -203,6 +265,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           if (err instanceof NoCreditsError) {
             return { started: false, error: err.message, code: 'NO_CREDITS' }
           }
+          if (err instanceof NoActiveCompanyError) {
+            return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }
+          }
           // El httpClient ya intentó refrescar el token (onTokenExpired) antes de
           // llegar acá — si seguimos con 401 es porque el refresh falló y ya se
           // limpiaron las credenciales + se avisó al renderer (AUTH_SESSION_EXPIRED).
@@ -215,6 +280,16 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           logger.error('No se pudo obtener la API key:', err)
           return { started: false, error: 'No se pudo conectar con el servidor. Intenta de nuevo en unos segundos.', code: 'NETWORK_ERROR' }
         }
+      }
+
+      // Corrección 2 de la review de DK1: el refresco (TTL o key vencida) trajo otra
+      // empresa, o un 409 se está aplicando. Correr ahora reiniciaría la sesión en la
+      // empresa nueva con el prompt y la carpeta de la vieja, y la primera tool
+      // escribiría allí mientras el aviso recién se abre. El guard ya detuvo los
+      // turnos viejos y avisa; el usuario revisa la carpeta y vuelve a enviar.
+      if (shouldHoldSendForCompanyChange(companySwitchSeqBefore, getCompanySwitchSeq(), sessionGuard.isApplyingCompanyChange())) {
+        logger.warn('[session] Cambio de empresa al preparar el envío — el prompt no se corre')
+        return { started: false, error: COMPANY_CHANGED_SEND_MESSAGE, code: 'COMPANY_CHANGED' }
       }
 
       const resolved = resolveModel(payload.modelChoice)

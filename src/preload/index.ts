@@ -1,10 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { CompanyChangedNotice } from '../main/ipc/types'
 
 const IPC = {
   AUTH_LOGIN: 'auth:login',
   AUTH_LOGOUT: 'auth:logout',
   AUTH_GET_STATUS: 'auth:get-status',
   AUTH_SESSION_EXPIRED: 'auth:session-expired',
+  AUTH_COMPANY_CHANGED: 'auth:company-changed',
+  AUTH_NO_ACTIVE_COMPANY: 'auth:no-active-company',
   AGENT_SEND_PROMPT: 'agent:send-prompt',
   AGENT_ABORT: 'agent:abort',
   AGENT_RESET_SESSION: 'agent:reset-session',
@@ -169,6 +172,9 @@ export interface HtmlCanvas {
   html: string
 }
 
+/** 409 COMPANY_CHANGED ya manejado por el main (plan DK-1.1 de multi-empresa). Tipo único en main/ipc/types. */
+export type { CompanyChangedNotice }
+
 export interface AuthState {
   isAuthenticated: boolean
   user?: {
@@ -304,6 +310,20 @@ const api = {
     const handler = (): void => callback()
     ipcRenderer.on(IPC.AUTH_SESSION_EXPIRED, handler)
     return () => ipcRenderer.removeListener(IPC.AUTH_SESSION_EXPIRED, handler)
+  },
+  // Multi-empresa: la empresa por defecto cambió (409 COMPANY_CHANGED). El main ya
+  // volvió a pedir la config y detuvo los turnos en curso; el renderer avisa.
+  onCompanyChanged: (callback: (notice: CompanyChangedNotice) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, notice: CompanyChangedNotice): void => callback(notice)
+    ipcRenderer.on(IPC.AUTH_COMPANY_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC.AUTH_COMPANY_CHANGED, handler)
+  },
+  // Multi-empresa: la cuenta ya no tiene empresas (403 NO_ACTIVE_COMPANY). El main ya
+  // cerró la sesión; el renderer vuelve al login y muestra el mensaje.
+  onNoActiveCompany: (callback: (payload: { message: string }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: { message: string }): void => callback(payload)
+    ipcRenderer.on(IPC.AUTH_NO_ACTIVE_COMPANY, handler)
+    return () => ipcRenderer.removeListener(IPC.AUTH_NO_ACTIVE_COMPANY, handler)
   },
 
   // Agent

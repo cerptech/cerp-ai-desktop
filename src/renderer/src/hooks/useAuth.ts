@@ -27,5 +27,11 @@ export function useAuth() {
     setAuthState({ isAuthenticated: false })
   }, [])
 
-  return { ...authState, loading, login, logout }
+  // El main ya cerró la sesión por su cuenta (p.ej. 403 NO_ACTIVE_COMPANY): solo
+  // hay que reflejarlo en la UI, sin volver a pedir el logout.
+  const markSignedOut = useCallback(() => {
+    setAuthState({ isAuthenticated: false })
+  }, [])
+
+  return { ...authState, loading, login, logout, markSignedOut }
 }

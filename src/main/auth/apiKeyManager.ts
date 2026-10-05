@@ -1,6 +1,7 @@
 import { tokenStore } from './tokenStore'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
+import { isCompanySwitch } from '../utils/sessionErrors'
 import type { AiModelPolicy, DesktopConfig } from '../ipc/types'
 
 let cachedConfig: DesktopConfig | null = null
@@ -52,12 +53,53 @@ function parseModels(raw: unknown): { fast?: string; powerful?: string } | undef
   return out
 }
 
-export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig> {
+type CompanySwitchObserver = (previousCompanyId: string, nextCompanyId: string) => void
+let companySwitchObserver: CompanySwitchObserver | null = null
+/**
+ * Cuántos cambios de empresa vio `fetchApiKey` desde que arrancó la app. El envío de
+ * un prompt (AGENT_SEND_PROMPT) lo lee antes y después de refrescar la config: si
+ * cambió, el refresco trajo otra empresa y el prompt NO se corre (corrección 2 de
+ * la review de DK1: el prompt se escribió para la empresa vieja).
+ */
+let companySwitchSeq = 0
+
+/** Contador de cambios de empresa observados por `fetchApiKey` (ver `companySwitchSeq`). */
+export function getCompanySwitchSeq(): number {
+  return companySwitchSeq
+}
+
+/**
+ * Multi-empresa (plan DK-1.1): quién reacciona cuando `fetchApiKey` trae otra
+ * empresa que la cacheada (el guard de sesión, ver handlers.ts). Se llama de forma
+ * SÍNCRONA antes de que `fetchApiKey` devuelva, para que la parte síncrona del
+ * manejo (detener turnos, tirar el contexto de empresa del prompt) ya esté hecha
+ * cuando el caller arranque o reinicie una sesión con la empresa nueva.
+ */
+export function setCompanySwitchObserver(observer: CompanySwitchObserver | null): void {
+  companySwitchObserver = observer
+}
+
+function notifyCompanySwitch(previousCompanyId: string, nextCompanyId: string): void {
+  logger.warn(`La config trajo otra empresa por defecto (antes ${previousCompanyId}, ahora ${nextCompanyId})`)
+  if (!companySwitchObserver) return
+  try {
+    companySwitchObserver(previousCompanyId, nextCompanyId)
+  } catch (err) {
+    logger.warn(`El manejo del cambio de empresa falló: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/**
+ * `skipAuthRetry`: sin el refresh automático ante un 401. Lo usa `onTokenExpired`
+ * (handlers.ts), que llama a esto DENTRO del refresh en vuelo: con el reintento
+ * normal, un 401 acá esperaría a ese mismo refresh (deadlock, ver httpClient.request).
+ */
+export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry?: boolean }): Promise<DesktopConfig> {
   const token = tokenStore.getAccessToken()
   logger.info(`Fetching API key from backend... (has token: ${!!token})`)
 
   try {
-    const response = await httpClient.post<{
+    const response = await httpClient.request<{
       apiKey: string
       companyId: string
       userId: string
@@ -67,9 +109,14 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
       modelPolicy?: AiModelPolicy
       maxBudgetUsd?: number
       maxBudgetUsdTurbo?: number
-    }>('/desktop/api-key')
+    }>('POST', '/desktop/api-key', undefined, opts?.skipAuthRetry === true)
 
     logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}`)
+
+    // Multi-empresa (DK-1.1): la empresa ANTES de pisarla, para detectar un cambio
+    // que el refresco normal de la config trae sin pasar por un 409.
+    const prevCompanyId = getCompanyId()
+    const prevUserId = getUserId()
 
     tokenStore.setApiKey(response.apiKey)
 
@@ -89,8 +136,14 @@ export async function fetchApiKey(httpClient: HttpClient): Promise<DesktopConfig
     }
     cachedConfigAt = Date.now()
 
+    const config = cachedConfig
+    if (isCompanySwitch(prevCompanyId, response.companyId || null, prevUserId, response.userId || null)) {
+      companySwitchSeq++
+      notifyCompanySwitch(prevCompanyId as string, response.companyId)
+    }
+
     logger.info('API key fetched and stored successfully')
-    return cachedConfig
+    return config
   } catch (err) {
     if (err instanceof HttpError && err.status === 402) {
       // El endpoint /desktop/api-key responde el shape PLANO { message, code }
@@ -160,6 +213,18 @@ export function getMaxBudgetUsd(): number | undefined {
  */
 export function getMaxBudgetUsdTurbo(): number | undefined {
   return cachedConfig?.maxBudgetUsdTurbo
+}
+
+/**
+ * 409 `COMPANY_CHANGED` (multi-empresa, plan DK-1.1): la empresa por defecto de la
+ * persona cambió. Se tira la config cacheada y el `companyId` persistido para que
+ * nada siga inyectando la empresa vieja; el caller vuelve a pedir `/desktop/api-key`.
+ * La API key queda: no depende de la empresa y el refetch la reescribe igual.
+ */
+export function invalidateCompanyConfig(): void {
+  cachedConfig = null
+  cachedConfigAt = 0
+  tokenStore.clearCompanyId()
 }
 
 export function clearApiKey(): void {

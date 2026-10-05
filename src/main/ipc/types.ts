@@ -104,6 +104,18 @@ export interface AuthState {
   }
 }
 
+/**
+ * Aviso de cambio de empresa por defecto (multi-empresa, plan DK-1.1): payload de
+ * `AUTH_COMPANY_CHANGED`. Definido UNA vez acá; el guard de sesión y el preload lo
+ * importan (el renderer lo toma del preload).
+ */
+export interface CompanyChangedNotice {
+  /** Empresa nueva (de `/desktop/api-key`, o de `details.activeCompanyId` si el refetch falló). */
+  companyId: string | null
+  companyName: string | null
+  message: string
+}
+
 /** Política de modelo de la empresa (ADR 016 del core) — ver `modelPolicy` en DesktopConfig. */
 export type AiModelTier = 'economy' | 'standard' | 'powerful'
 

@@ -7,11 +7,12 @@ import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
+import { getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
-import { HttpClient } from '../utils/httpClient'
+import { HttpClient, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
+import { COMPANY_CHANGED_SEND_MESSAGE, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { IPC_CHANNELS } from '../ipc/channels'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AgentStreamEvent } from '../ipc/types'
@@ -85,6 +86,11 @@ interface AgentSession {
   // reporte de consumo (`mapMessage` → 'result') sepa qué modo corrió esta ejecución
   // aunque el usuario haya cambiado de modo mientras tanto.
   powerful: boolean
+  // Empresa que el MCP de esta sesión inyecta en cada tool (se fija al crearla).
+  // Multi-empresa (plan DK-1.1): si la empresa por defecto cambia (409
+  // COMPANY_CHANGED), el turno en curso se detiene y el próximo mensaje reinicia
+  // la sesión con la empresa nueva — nunca sigue escribiendo con la vieja.
+  companyId: string | null
   processingTurn: boolean
   // Registro de delegaciones activas: Agent/Task tool_use_id → agentName. Por-sesión
   // para que los eventos internos de subagentes resuelvan el nombre correcto.
@@ -177,6 +183,24 @@ export function closeAllSessions(): void {
   logger.info('All sessions closed')
 }
 
+/**
+ * Multi-empresa (plan DK-1.1): la empresa por defecto cambió (409 COMPANY_CHANGED).
+ * Detiene el turno de cada sesión que arrancó con otra empresa — así ninguna tool
+ * que NO inyecta `companyId` (y que el core resolvería en la empresa nueva) sigue
+ * escribiendo en este turno — y tira el contexto de empresa cacheado del prompt.
+ * Las sesiones no se cierran: `runAgent` las reinicia en el próximo mensaje porque
+ * su `companyId` ya no coincide. Con `companyId` desconocido (null) se detienen todas.
+ */
+export function stopSessionsNotInCompany(companyId: string | null): void {
+  cachedContextPrompt = null
+  for (const session of [...sessions.values()]) {
+    if (companyId !== null && session.companyId === companyId) continue
+    if (!session.processingTurn) continue
+    logger.warn(`Empresa por defecto cambiada — se detiene el turno en curso (${session.conversationId})`)
+    void interruptAgent(session.conversationId)
+  }
+}
+
 // Alias for IPC compatibility. Sin id → cierra todo (logout). Con id → esa conversación.
 export function resetSession(conversationId?: string): void {
   if (conversationId) closeSession(conversationId)
@@ -221,7 +245,9 @@ export async function runAgent(
   // If THIS conversation's session exists but cwd/context/model/powerful changed,
   // restart only it. Other conversations' sessions are untouched — that's the point
   // of concurrency.
-  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful)) {
+  // La empresa también: tras un 409 COMPANY_CHANGED la config ya trae la nueva (o
+  // quedó vacía si el refetch falló, y startSession la vuelve a pedir).
+  if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful || getCompanyId() !== session.companyId)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
     closeSession(conversationId)
     session = undefined
@@ -238,6 +264,20 @@ export async function runAgent(
 // Session lifecycle
 // ============================================================
 
+/**
+ * El arranque de una sesión se cortó antes de crearla (paywall, cuenta sin empresa,
+ * sesión revocada, cambio de empresa): un error con código distinguible + DONE, así
+ * el renderer sale del estado "pendiente" y reacciona según el código.
+ */
+function emitStartAborted(mainWindow: BrowserWindow, conversationId: string, message: string, code: string): void {
+  if (mainWindow.isDestroyed()) return
+  mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
+    conversationId,
+    event: { type: 'error', message, code },
+  })
+  mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
+}
+
 async function startSession(
   conversationId: string,
   payload: SendPromptPayload,
@@ -252,11 +292,25 @@ async function startSession(
   let companyId = getCompanyId()
   let userId = getUserId()
   if (!companyId || !userId) {
+    // Multi-empresa (pulido de DK1): este fetch corre DESPUÉS de la retención del envío
+    // en AGENT_SEND_PROMPT (p.ej. companyId A persistido sin userId en un store viejo).
+    // Si trae otra empresa, el prompt se escribió para la vieja: no se corre.
+    const companySwitchSeqBefore = getCompanySwitchSeq()
     try {
       const config = await fetchApiKey(httpClient)
       companyId = config.companyId || null
       userId = config.userId || null
     } catch (err) {
+      // La cuenta se quedó sin empresas entre el gate de handlers.ts y este arranque:
+      // el guard de sesión ya cerró la sesión y avisó. No se arranca una sesión con
+      // companyId null (como el paywall de abajo).
+      if (err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) {
+        const code = err instanceof NoActiveCompanyError ? 'NO_ACTIVE_COMPANY' : 'AUTH_EXPIRED'
+        const message = err instanceof NoActiveCompanyError ? NO_ACTIVE_COMPANY_MESSAGE : 'No se pudo recuperar la sesión. Inicia sesión de nuevo.'
+        logger.warn(`startSession aborted (${conversationId}): ${code}`)
+        emitStartAborted(mainWindow, conversationId, message, code)
+        return
+      }
       // Paywall (Modelo CERP): la empresa se quedó sin créditos entre el gate de
       // handlers.ts y el arranque de esta sesión (p.ej. companyId/userId no estaban
       // cacheados todavía). A diferencia de un fallo de red/config, esto NO es
@@ -264,16 +318,16 @@ async function startSession(
       // en vez de arrancar una sesión rota.
       if (err instanceof NoCreditsError) {
         logger.warn(`startSession aborted (${conversationId}): no credits available`)
-        if (!mainWindow.isDestroyed()) {
-          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
-            conversationId,
-            event: { type: 'error', message: err.message, code: 'NO_CREDITS' },
-          })
-          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
-        }
+        emitStartAborted(mainWindow, conversationId, err.message, 'NO_CREDITS')
         return
       }
       logger.warn(`Could not fetch config: ${err}`)
+    }
+    if (shouldHoldSendForCompanyChange(companySwitchSeqBefore, getCompanySwitchSeq(), false)) {
+      // El observer del guard ya detuvo los turnos viejos y manda el aviso.
+      logger.warn(`startSession aborted (${conversationId}): la config trajo otra empresa por defecto`)
+      emitStartAborted(mainWindow, conversationId, COMPANY_CHANGED_SEND_MESSAGE, 'COMPANY_CHANGED')
+      return
     }
   }
   logger.info(`CompanyId: ${companyId}, UserId: ${userId}`)
@@ -457,6 +511,7 @@ async function startSession(
     contextId,
     model,
     powerful,
+    companyId,
     processingTurn: false,
     activeDelegations: new Map(),
     heartbeat: null,
@@ -774,9 +829,15 @@ El usuario seleccionó el modelo **Potente** para esta cotización compleja. Tra
 }
 
 let cachedContextPrompt: string | null = null
+// Empresa con la que se armó `cachedContextPrompt`. Multi-empresa (DK-1.1): el
+// contexto (razón social, NIF, dirección, moneda) es de UNA empresa; si la empresa
+// por defecto cambió, el cacheado no se reusa aunque nadie lo haya tirado, y uno
+// armado mientras la empresa cambiaba no queda como válido para la nueva.
+let cachedContextCompanyId: string | null = null
 
 async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
-  if (cachedContextPrompt) return cachedContextPrompt
+  const companyId = getCompanyId()
+  if (cachedContextPrompt && cachedContextCompanyId === companyId) return cachedContextPrompt
 
   let context = '\n\n## Contexto de la empresa y usuario actual\n'
 
@@ -836,6 +897,7 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   context += `\nUsa estos datos cuando generes reportes, documentos o necesites informacion de la empresa. Formatea montos segun la moneda y formato regional configurado.\n`
 
   cachedContextPrompt = context
+  cachedContextCompanyId = companyId
   return context
 }
 
