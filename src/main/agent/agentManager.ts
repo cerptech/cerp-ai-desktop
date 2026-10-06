@@ -7,7 +7,7 @@ import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, getCompanyId, getUserId, fetchApiKey, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -268,6 +268,17 @@ async function startSession(
           mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
             conversationId,
             event: { type: 'error', message: err.message, code: 'NO_CREDITS' },
+          })
+          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
+        }
+        return
+      }
+      if (err instanceof DesktopAccessDeniedError) {
+        logger.warn(`startSession aborted (${conversationId}): access denied (${err.reason})`)
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, {
+            conversationId,
+            event: { type: 'error', message: err.message, code: err.code },
           })
           mainWindow.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
         }

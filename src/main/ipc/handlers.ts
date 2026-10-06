@@ -4,7 +4,7 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, getConfiguredModels, getModelPolicy, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, fetchApiKey, getApiKey, clearApiKey, getConfiguredModel, getConfiguredModels, getModelPolicy, isConfigStale, NoCreditsError } from '../auth/apiKeyManager'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
@@ -179,6 +179,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             if (err instanceof NoCreditsError) {
               return { started: false, error: err.message, code: 'NO_CREDITS' }
             }
+            // El core le quitó el acceso a este usuario (rol/grupo sin «CERP IA
+            // Desktop», o suscripción bloqueada): negativa definitiva, no se sigue
+            // con la key cacheada.
+            if (err instanceof DesktopAccessDeniedError) {
+              return { started: false, error: err.message, code: err.code }
+            }
             logger.warn(`No se pudo refrescar la config de modelo — se usa la cacheada: ${err}`)
           }
         }
@@ -202,6 +208,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           // toast de error genérico.
           if (err instanceof NoCreditsError) {
             return { started: false, error: err.message, code: 'NO_CREDITS' }
+          }
+          // 403 FORBIDDEN / SUBSCRIPTION_BLOCKED: el mensaje dice qué habilitar,
+          // en vez del genérico de red (HOT FIX Camacho 06-10-2026).
+          if (err instanceof DesktopAccessDeniedError) {
+            return { started: false, error: err.message, code: err.code }
           }
           // El httpClient ya intentó refrescar el token (onTokenExpired) antes de
           // llegar acá — si seguimos con 401 es porque el refresh falló y ya se
