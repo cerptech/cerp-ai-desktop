@@ -4,7 +4,7 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
 import { createSessionGuard } from '../auth/sessionGuard'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
 import { quitAndInstallUpdate } from '../updater'
@@ -237,6 +237,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             if (err instanceof NoCreditsError) {
               return { started: false, error: err.message, code: 'NO_CREDITS' }
             }
+            // El core le quitó el acceso a este usuario (rol/grupo sin «CERP IA
+            // Desktop», o suscripción bloqueada): negativa definitiva, no se sigue
+            // con la key cacheada.
+            if (err instanceof DesktopAccessDeniedError) {
+              return { started: false, error: err.message, code: err.code }
+            }
             // La cuenta se quedó sin empresas: el guard ya cerró la sesión.
             if (err instanceof NoActiveCompanyError) {
               return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }
@@ -264,6 +270,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           // toast de error genérico.
           if (err instanceof NoCreditsError) {
             return { started: false, error: err.message, code: 'NO_CREDITS' }
+          }
+          // 403 FORBIDDEN / SUBSCRIPTION_BLOCKED: el mensaje dice qué habilitar,
+          // en vez del genérico de red (HOT FIX Camacho 06-10-2026).
+          if (err instanceof DesktopAccessDeniedError) {
+            return { started: false, error: err.message, code: err.code }
           }
           if (err instanceof NoActiveCompanyError) {
             return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }

@@ -30,6 +30,29 @@ export class NoCreditsError extends Error {
 }
 
 /**
+ * El core no entrega la API key a este usuario: 403 `FORBIDDEN` (su rol o su
+ * grupo no tiene habilitado el módulo «CERP IA Desktop») o 403
+ * `SUBSCRIPTION_BLOCKED` (suscripción de la empresa inactiva). Hasta el
+ * 06-10-2026 los dos caían en el genérico «No se pudo conectar con el
+ * servidor» y Camacho lo reportó como una caída. Es una negativa definitiva,
+ * no un fallo de red: no se reintenta con la key cacheada.
+ */
+export class DesktopAccessDeniedError extends Error {
+  readonly code = 'ACCESS_DENIED' as const
+  readonly reason: 'FORBIDDEN' | 'SUBSCRIPTION_BLOCKED'
+
+  constructor(reason: 'FORBIDDEN' | 'SUBSCRIPTION_BLOCKED') {
+    super(
+      reason === 'SUBSCRIPTION_BLOCKED'
+        ? 'La suscripción de tu empresa está inactiva. Reactívala desde app.cerp.es para seguir usando CERP IA Desktop.'
+        : 'Tu usuario no tiene habilitado CERP IA Desktop. Pide al administrador de tu empresa que lo active en Configuración > Roles y permisos (módulo «CERP IA Desktop»).',
+    )
+    this.name = 'DesktopAccessDeniedError'
+    this.reason = reason
+  }
+}
+
+/**
  * Allowlist cerrada, como en cerp-ai-service: una política malformada (p.ej.
  * sin `maxTier` por un bug de serialización) se descarta ENTERA. Si se
  * aceptara a medias, `resolveModel` bloquearía "Potente" para todas las
@@ -154,6 +177,16 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
       if (code === 'NO_CREDITS') {
         logger.warn('fetchApiKey: la empresa no tiene créditos disponibles (402 NO_CREDITS)')
         throw new NoCreditsError()
+      }
+    }
+    if (err instanceof HttpError && err.status === 403) {
+      const body = err.body as { code?: string; error?: { code?: string } } | undefined
+      const code = body?.code ?? body?.error?.code
+      if (code === 'FORBIDDEN' || code === 'SUBSCRIPTION_BLOCKED') {
+        logger.warn(`fetchApiKey: acceso denegado por el core (403 ${code})`)
+        // Un usuario al que le quitaron el acceso no conserva la key en disco.
+        clearApiKey()
+        throw new DesktopAccessDeniedError(code)
       }
     }
     const msg = err instanceof Error ? err.message : String(err)

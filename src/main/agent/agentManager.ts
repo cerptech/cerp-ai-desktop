@@ -7,7 +7,7 @@ import { stopQuoteHeartbeat } from './quoteHeartbeat'
 import { setQuoteEventWindow } from './quoteEventsBridge'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -319,6 +319,11 @@ async function startSession(
       if (err instanceof NoCreditsError) {
         logger.warn(`startSession aborted (${conversationId}): no credits available`)
         emitStartAborted(mainWindow, conversationId, err.message, 'NO_CREDITS')
+        return
+      }
+      if (err instanceof DesktopAccessDeniedError) {
+        logger.warn(`startSession aborted (${conversationId}): access denied (${err.reason})`)
+        emitStartAborted(mainWindow, conversationId, err.message, err.code)
         return
       }
       logger.warn(`Could not fetch config: ${err}`)
