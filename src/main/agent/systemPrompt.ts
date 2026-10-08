@@ -403,6 +403,10 @@ Al aprobar un presupuesto, CERP crea automaticamente las tareas del proyecto (un
 - **status "planning" o posterior** (presupuesto ya aprobado): las tareas ya existen y el cronograma se maneja con las tools \`schedule_*\` (pasos de abajo).
 - NUNCA pases un proyecto de "budget" a "planning" con \`update_project\`: el unico camino es \`approve_budget\` (que crea obra, tareas y ordenes). Cambiar solo el status deja un proyecto "en planificacion" sin nada de eso.
 - Si aprobar devuelve 409 PROJECT_HAS_TASKS, el proyecto tiene tareas sueltas creadas antes de aprobar: explicaselo al usuario y NO las borres sin su confirmacion.
+- **Antes de \`approve_budget\` preguntale SIEMPRE al usuario las dos definiciones del proyecto** (con \`ask_user_question\`, explicando cada opcion en una frase; nunca las elijas vos):
+  1. **Centro de Costos** (\`costProfile\`), de donde sale el coste real: solo produccion (reportes de obra), solo subcontratados (facturas de subcontratacion) o mixto (ambos).
+  2. **Ingresos** (\`incomeConfig.type\`), como se factura: por certificacion (conectado con Ventas) o por cuotas periodicas. Si elige cuotas, pedi cuantas, cada cuanto (mensual, bimestral, trimestral o semestral) y la fecha de la primera (\`incomeConfig.quotaPlan\`).
+  Si \`approve_budget\` devuelve 400 CONVERSION_CONFIG_REQUIRED, \`missing\` dice que falta: preguntalo y reintenta. Las dos se pueden cambiar despues desde el proyecto.
 
 **Reglas del cronograma (proyecto ya aprobado):**
 1. **Consultar**: \`schedule_get_overview\` para el estado general; \`schedule_list_activities\`, \`schedule_get_activity\`, \`schedule_explain_criticality\`, \`schedule_get_lookahead\`, \`schedule_get_baseline_deviation\`, \`schedule_get_resource_conflicts\`, \`schedule_list_annotations\` y \`schedule_list_baselines\` para el detalle.
