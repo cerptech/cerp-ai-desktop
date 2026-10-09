@@ -532,9 +532,42 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/items/batch',
   },
   approve_budget: {
-    description: 'Aprueba un presupuesto (cambia estado a approved). Crea obra, almacen, tareas y ordenes automaticamente.',
+    description:
+      'Aprueba un presupuesto y lo convierte en proyecto: crea obra, almacen, tareas y ordenes automaticamente. ' +
+      'CERP exige definir en el mismo paso como se mide el coste real (costProfile) y como se factura la obra (incomeConfig): ' +
+      'sin ellos responde 400 CONVERSION_CONFIG_REQUIRED con `missing`. NUNCA los elijas por el usuario: preguntale ambos antes.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
+      costProfile: z
+        .enum(['solo_produccion', 'solo_subcontratados', 'mixto'])
+        .describe(
+          'Centro de Costos — de donde sale el coste real. "solo_produccion": reportes de produccion (partes de obra) confirmados. ' +
+            '"solo_subcontratados": facturas de proveedores subcontratados. "mixto": reportes de produccion + facturas generales y subcontratadas. ' +
+            'Los gastos suman siempre. Preguntale al usuario; no lo deduzcas.'
+        ),
+      incomeConfig: z
+        .object({
+          type: z
+            .enum(['certifications', 'quotas'])
+            .describe(
+              'Ingresos — como se factura la obra. "certifications": certificando el avance de las ordenes de construccion (conectado con Ventas). ' +
+                '"quotas": pagos de importe y fecha fijos (plan de pagos pactado).'
+            ),
+          quotaPlan: z
+            .object({
+              count: z.number().int().min(1).max(120).describe('Cantidad de cuotas.'),
+              frequency: z
+                .enum(['monthly', 'bimonthly', 'quarterly', 'semiannual'])
+                .describe('Cada cuanto cae una cuota: mensual, bimestral, trimestral o semestral.'),
+              firstDate: z.string().describe('Fecha de la primera cuota, YYYY-MM-DD.'),
+            })
+            .optional()
+            .describe(
+              'OBLIGATORIO si type es "quotas" (se ignora con "certifications"). CERP reparte el presupuesto total en cuotas iguales; ' +
+                'el usuario ajusta importes y fechas despues en la pestaña Ingresos.'
+            ),
+        })
+        .describe('Ingresos del proyecto. Preguntale al usuario; no lo deduzcas.'),
     }),
     method: 'POST',
     endpoint: '/budgets/:budgetId/approve',
