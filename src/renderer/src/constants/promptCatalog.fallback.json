@@ -1,9 +1,12 @@
 {
-  "version": "2026-10-15.2",
+  "version": "2026-10-15.3",
   "families": [
     {
       "id": "budget-import",
       "title": "Importar un presupuesto",
+      "en": {
+        "title": "Import a budget"
+      },
       "prompts": [
         {
           "id": "A1",
@@ -14,6 +17,10 @@
           ],
           "attachment": "required",
           "requiresTools": true,
+          "en": {
+            "title": "Import a budget into a project",
+            "prompt": "Import this budget into the project [project name]. Keep the chapters and line items exactly as they appear in the file, without grouping or renaming anything. Before creating anything, show me how many chapters and line items you found."
+          },
           "channels": [
             "web",
             "desktop"
@@ -26,6 +33,10 @@
           "fields": [],
           "attachment": "required",
           "requiresTools": false,
+          "en": {
+            "title": "Build a budget from an award",
+            "prompt": "Take this award PDF and build the budget in CERP. Use the measurement column as the quantity and the unit price column as the cost. If a line item has no price, set it to zero and tell me which ones were left unpriced."
+          },
           "channels": [
             "web",
             "desktop"
@@ -38,6 +49,10 @@
           "fields": [],
           "attachment": "required",
           "requiresTools": true,
+          "en": {
+            "title": "Price a budget against the bank",
+            "prompt": "Price this budget against the item bank, but do not change the original prices: show me the comparison line by line before applying anything."
+          },
           "channels": [
             "desktop"
           ]
@@ -49,6 +64,10 @@
           "fields": [],
           "attachment": "none",
           "requiresTools": false,
+          "en": {
+            "title": "Review incomplete line items",
+            "prompt": "Review the budget you just imported and tell me which line items are missing a unit, a quantity or a price."
+          },
           "channels": [
             "web",
             "desktop"
@@ -61,6 +80,10 @@
           "fields": [],
           "attachment": "required",
           "requiresTools": true,
+          "en": {
+            "title": "Create a construction quote",
+            "prompt": "I want to create a construction budget from the files in my working folder. Analyse them, build the budget in CERP and generate the quote PDF. Before creating anything, show me the chapters and line items you found."
+          },
           "channels": [
             "desktop"
           ]
@@ -70,6 +93,9 @@
     {
       "id": "project-dates",
       "title": "Fechas y datos del proyecto",
+      "en": {
+        "title": "Project dates and details"
+      },
       "prompts": [
         {
           "id": "B1",
@@ -82,6 +108,10 @@
           ],
           "attachment": "none",
           "requiresTools": false,
+          "en": {
+            "title": "Move a task and recalculate",
+            "prompt": "In the project [project name], move the start of the task [task] to [date] and recalculate the tasks that depend on it. Show me what moved before saving."
+          },
           "channels": [
             "desktop"
           ]
@@ -96,6 +126,10 @@
           ],
           "attachment": "none",
           "requiresTools": false,
+          "en": {
+            "title": "Change the project end date",
+            "prompt": "Change the end date of the project [project name] to [date] and tell me which tasks fall behind schedule."
+          },
           "channels": [
             "desktop"
           ]
@@ -109,6 +143,10 @@
           ],
           "attachment": "none",
           "requiresTools": false,
+          "en": {
+            "title": "See overdue tasks",
+            "prompt": "Show me which tasks in the project [project name] are overdue and by how many days each one is late."
+          },
           "channels": [
             "web",
             "desktop"
@@ -123,6 +161,10 @@
           ],
           "attachment": "required",
           "requiresTools": false,
+          "en": {
+            "title": "Update progress from a site report",
+            "prompt": "Update the progress of the line items in the project [project name] with the data from this site report. If you cannot find a line item, tell me instead of creating it."
+          },
           "channels": []
         },
         {
@@ -135,6 +177,10 @@
           ],
           "attachment": "none",
           "requiresTools": false,
+          "en": {
+            "title": "Assign a site to a project",
+            "prompt": "Assign the site [site] to the project [project name] and confirm what has been linked."
+          },
           "channels": []
         }
       ]
@@ -142,6 +188,9 @@
     {
       "id": "purchases-invoices",
       "title": "Órdenes de compra y facturas",
+      "en": {
+        "title": "Purchase orders and invoices"
+      },
       "prompts": [
         {
           "id": "C1",
@@ -153,6 +202,10 @@
           ],
           "attachment": "required",
           "requiresTools": false,
+          "en": {
+            "title": "Upload a supplier invoice",
+            "prompt": "Upload this supplier invoice to the project [project name], assigned to the construction order [order number]. If any material does not exist in the system, tell me before creating it."
+          },
           "channels": [
             "desktop"
           ]
@@ -167,6 +220,10 @@
           ],
           "attachment": "optional",
           "requiresTools": false,
+          "en": {
+            "title": "Create a purchase order",
+            "prompt": "Create a purchase order for the supplier [supplier] with these materials, for the site [site]. Show me the total before confirming it."
+          },
           "channels": [
             "desktop"
           ]
@@ -178,6 +235,10 @@
           "fields": [],
           "attachment": "required",
           "requiresTools": false,
+          "en": {
+            "title": "Upload several invoices",
+            "prompt": "Take these invoices and upload them one by one. For each one, tell me which site and which construction order you will assign it to before saving it."
+          },
           "channels": [
             "desktop"
           ]
@@ -191,6 +252,10 @@
           ],
           "attachment": "required",
           "requiresTools": false,
+          "en": {
+            "title": "Compare an invoice with its order",
+            "prompt": "Check this invoice against the purchase order [order number] and tell me which quantities or prices do not match."
+          },
           "channels": [
             "web",
             "desktop"
@@ -205,6 +270,10 @@
           ],
           "attachment": "none",
           "requiresTools": false,
+          "en": {
+            "title": "Invoices with no order assigned",
+            "prompt": "Show me the supplier invoices for the site [site] that are not yet assigned to any order."
+          },
           "channels": []
         }
       ]
