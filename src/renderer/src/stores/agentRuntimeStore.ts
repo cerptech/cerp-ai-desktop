@@ -548,6 +548,12 @@ function ensureIpcWired(): void {
 
   window.cerpAPI.onAskUserQuestion((questions, conversationId) => {
     const id = conversationId || '__default__'
+    // Lista vacía = el main canceló la pregunta (se cerró la sesión que la hizo): se
+    // saca el widget, nadie espera ya esa respuesta.
+    if (!questions?.length) {
+      update(id, (rt) => ({ ...rt, pendingQuestions: null, isSubmittingAnswers: false }))
+      return
+    }
     // El agente arranca un turno NUEVO al recibir la respuesta → marcar que el
     // próximo text debe ser un mensaje assistant nuevo (no pisar el contexto previo).
     update(id, (rt) => ({ ...rt, pendingQuestions: questions, needsNewAssistant: true }))
@@ -651,11 +657,16 @@ export async function abort(conversationId: string): Promise<void> {
   }))
 }
 
+/**
+ * `delivered: false` = el main ya no esperaba esa respuesta (la ejecución que preguntó
+ * terminó o se cortó): el widget se cierra y el caller debe mandar `fallbackPrompt`
+ * como mensaje normal para que la respuesta no se pierda.
+ */
 export async function submitAnswers(
   conversationId: string,
   pendingQuestions: AskUserQuestionItem[],
   answers: UserAnswerPayload,
-): Promise<void> {
+): Promise<{ delivered: boolean; fallbackPrompt: string }> {
   // Eco de las respuestas como mensaje de usuario (audit trail), igual que useAgent.
   const echoLines = pendingQuestions.map((q) => {
     const ans = answers[q.question]
@@ -665,6 +676,13 @@ export async function submitAnswers(
   const echoContent = pendingQuestions.length === 1
     ? `Respuesta: ${echoLines.replace(/^- \*\*[^*]+\*\*: /, '')}`
     : `Respondí:\n${echoLines}`
+
+  // Si la pregunta ya no estaba activa en el main, la respuesta viaja como mensaje
+  // normal: con el texto de cada pregunta, porque el agente ya no tiene la tool abierta.
+  const fallbackPrompt = 'Respondo a tus preguntas:\n' + pendingQuestions.map((q) => {
+    const ans = answers[q.question]
+    return `- ${q.question} → ${Array.isArray(ans) ? ans.join(', ') : (ans ?? '(sin respuesta)')}`
+  }).join('\n')
 
   update(conversationId, (rt) => ({
     ...rt,
@@ -676,12 +694,16 @@ export async function submitAnswers(
   }))
   persistNewMessages(conversationId, getRuntime(conversationId))
 
+  let delivered = true
   try {
-    await window.cerpAPI.submitUserAnswers(conversationId, answers)
-    update(conversationId, (rt) => ({ ...rt, pendingQuestions: null }))
+    delivered = await window.cerpAPI.submitUserAnswers(conversationId, answers)
+    update(conversationId, (rt) => (delivered
+      ? { ...rt, pendingQuestions: null }
+      : { ...rt, pendingQuestions: null, waitingAfterAnswer: false, isPending: false, isStreaming: false }))
   } finally {
     update(conversationId, (rt) => ({ ...rt, isSubmittingAnswers: false }))
   }
+  return { delivered, fallbackPrompt }
 }
 
 /** Restaura mensajes de una conversación cargada de la DB (no re-persistir).

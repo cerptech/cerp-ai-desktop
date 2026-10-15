@@ -354,7 +354,8 @@ const api = {
     ipcRenderer.on(IPC.AGENT_ASK_USER_QUESTION, handler)
     return () => ipcRenderer.removeListener(IPC.AGENT_ASK_USER_QUESTION, handler)
   },
-  submitUserAnswers: (conversationId: string, answers: UserAnswerPayload): Promise<void> =>
+  // true = la respuesta llegó a la pregunta en curso; false = ya nadie la esperaba.
+  submitUserAnswers: (conversationId: string, answers: UserAnswerPayload): Promise<boolean> =>
     ipcRenderer.invoke(IPC.AGENT_USER_ANSWER, { conversationId, answers }),
 
   // Cortafuegos de cotización: estado en vivo (reserva/commit/rollback)

@@ -299,6 +299,13 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     doSend(lastUserMessage.content, { skipUserEcho: true })
   }, [messages, isStreaming, isPending, pendingQuestions, doSend, addToast])
 
+  // Si la ejecución que hizo la pregunta ya terminó (o se cortó), nadie la espera en el
+  // main: la respuesta se manda como mensaje normal para que el agente la reciba igual.
+  const handleAnswer = useCallback(async (answers: Parameters<typeof submitAnswers>[0]) => {
+    const { delivered, fallbackPrompt } = await submitAnswers(answers)
+    if (!delivered) doSend(fallbackPrompt, { skipUserEcho: true })
+  }, [submitAnswers, doSend])
+
   const isEmpty = messages.length === 0
 
   return (
@@ -413,8 +420,11 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
             <span className="text-xs font-medium text-slate-500">El agente necesita tu decisión para continuar</span>
           </div>
           <AskUserQuestion
+            // Un juego de preguntas nuevo remonta el widget: sin key conservaba el paso y
+            // las respuestas del anterior.
+            key={pendingQuestions.map((q) => q.question).join('|')}
             questions={pendingQuestions}
-            onAnswer={submitAnswers}
+            onAnswer={handleAnswer}
             isSubmitting={isSubmittingAnswers}
           />
         </div>
