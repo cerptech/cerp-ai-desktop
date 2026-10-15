@@ -102,6 +102,7 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
     activeTool: rt.activeTool,
     error: rt.error,
     errorCode: rt.errorCode,
+    retryPrompt: rt.retryPrompt,
     activeAgentDelegation: rt.activeAgentDelegation,
     promptSuggestions: rt.promptSuggestions,
     statusMessage: rt.statusMessage,

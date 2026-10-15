@@ -12,6 +12,8 @@ import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
 import { startQuoteHeartbeat, stopQuoteHeartbeat } from './quoteHeartbeat'
 import { emitQuoteFirewallEvent } from './quoteEventsBridge'
+import { getLoadContext, rememberLoadContext } from './loadContext'
+import { notifyUser } from './desktopNotifier'
 import { emitHtmlCanvasEvent } from './htmlCanvasBridge'
 
 // ── create_tasks_batch: chunking + claves idempotentes ───────────────────────
@@ -371,6 +373,15 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
             return { content: [{ type: 'text' as const, text }] }
           }
 
+          // QA del caso "proceso que no responde" (RQM-166): con CERP_DEBUG_HANG_TOOL=<tool>
+          // esa tool nunca vuelve, como una llamada colgada. Junto con CERP_TURN_TIMEOUT_MS
+          // bajo permite ver saltar el watchdog sin esperar 15 min. Solo por env (.env del
+          // dev o junto al ejecutable): ningún cliente lo tiene.
+          if (process.env.CERP_DEBUG_HANG_TOOL && process.env.CERP_DEBUG_HANG_TOOL === name) {
+            logger.warn(`CERP_DEBUG_HANG_TOOL: ${name} queda colgada a propósito (QA del watchdog)`)
+            await new Promise<never>(() => { /* nunca resuelve */ })
+          }
+
           // `transformArgs` reforma los args cuando la diferencia con el API no es un
           // simple renombre (ids planos -> array de subdocumentos, campo plano ->
           // subdocumento anidado). Corre ANTES de buildRequest para que el resultado
@@ -413,45 +424,70 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
               break
           }
 
+          // Proyecto/presupuesto de la carga en curso (reintento y aviso de "listo").
+          rememberLoadContext(conversationId, name, args, data)
+
           // Cortafuegos: el heartbeat acompaña la vida de la reserva. Arranca al
           // reservar (extrae el quoteId de la respuesta) y se detiene al commitear
           // o refundar — el watchdog del backend cubre cualquier corte abrupto.
           if (name === 'quote_reserve') {
             const r = data as { quoteId?: string; source?: string; requiresAction?: boolean } | null
             if (r?.quoteId) {
-              startQuoteHeartbeat(String(r.quoteId), httpClient)
+              startQuoteHeartbeat(conversationId, String(r.quoteId), httpClient)
               emitQuoteFirewallEvent({
                 kind: 'reserved',
+                conversationId,
                 quoteId: String(r.quoteId),
                 source: String(r.source ?? ''),
                 requiresAction: Boolean(r.requiresAction),
               })
             }
           } else if (name === 'quote_commit') {
-            stopQuoteHeartbeat()
+            stopQuoteHeartbeat(conversationId)
             const c = data as
               | { committed?: boolean; validation?: { message?: string; failures?: string[] } }
               | null
             const quoteId = String((args as { id?: string }).id ?? '')
             if (c?.committed) {
-              emitQuoteFirewallEvent({ kind: 'committed', quoteId })
+              const ctx = getLoadContext(conversationId)
+              emitQuoteFirewallEvent({
+                kind: 'committed',
+                conversationId,
+                quoteId,
+                projectId: ctx?.projectId,
+                projectName: ctx?.projectName,
+                budgetId: String((args as { budgetId?: string }).budgetId ?? ctx?.budgetId ?? '') || undefined,
+              })
+              notifyUser('Presupuesto listo', ctx?.projectName ? `La carga de «${ctx.projectName}» terminó correctamente.` : 'La carga del presupuesto terminó correctamente.')
             } else {
+              const message = c?.validation?.message ?? 'La cotización no superó la validación.'
               emitQuoteFirewallEvent({
                 kind: 'rolled_back',
+                conversationId,
                 quoteId,
                 reason: 'post_flight_fail',
-                message: c?.validation?.message ?? 'La cotización no superó la validación.',
+                message,
                 failures: c?.validation?.failures ?? [],
+                cause: 'data',
               })
+              notifyUser('La carga no se completó', message)
             }
           } else if (name === 'quote_refund') {
-            stopQuoteHeartbeat()
+            stopQuoteHeartbeat(conversationId)
+            const reason = String((data as { refundReason?: string } | null)?.refundReason ?? (args as { reason?: string }).reason ?? 'user_aborted')
             emitQuoteFirewallEvent({
               kind: 'rolled_back',
+              conversationId,
               quoteId: String((args as { id?: string }).id ?? ''),
-              reason: String((data as { refundReason?: string } | null)?.refundReason ?? 'user_aborted'),
-              message: 'La cotización se canceló antes de finalizar.',
+              reason,
+              message:
+                reason === 'preflight_fail'
+                  ? 'Faltan datos para generar la cotización. CERP IA te indica en el chat qué necesita.'
+                  : reason === 'error'
+                    ? 'La cotización se detuvo por un error del sistema antes de finalizar.'
+                    : 'La cotización se canceló antes de finalizar.',
               failures: [],
+              cause: reason === 'preflight_fail' ? 'data' : reason === 'error' ? 'system' : 'user',
             })
           }
 
