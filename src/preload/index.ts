@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { CompanyChangedNotice } from '../main/ipc/types'
+import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse } from '../main/ipc/types'
 import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
 
 const IPC = {
@@ -48,6 +48,11 @@ const IPC = {
   ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
   APP_GET_VERSION: 'app:get-version',
   PROMPT_LIBRARY_GET: 'prompt-library:get',
+  INTEGRATIONS_CATALOG: 'integrations:catalog',
+  INTEGRATIONS_STATUS: 'integrations:status',
+  INTEGRATIONS_CONNECT: 'integrations:connect',
+  INTEGRATIONS_DISCONNECT: 'integrations:disconnect',
+  INTEGRATIONS_RECONCILE: 'integrations:reconcile',
   AGENT_GET_MODEL_POLICY: 'agent:get-model-policy',
   UPDATE_AVAILABLE: 'update:available',
   UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
@@ -488,6 +493,14 @@ const api = {
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
   // Biblioteca de prompts preparados (F1c): null si el servicio no responde → respaldo local.
   getPromptLibrary: (): Promise<PromptLibraryResponse | null> => ipcRenderer.invoke(IPC.PROMPT_LIBRARY_GET),
+
+  // Apps conectadas (Composio) — pantalla «Apps»
+  getIntegrationsCatalog: (q?: string, cursor?: string): Promise<IntegrationsCatalogResponse> =>
+    ipcRenderer.invoke(IPC.INTEGRATIONS_CATALOG, { q, cursor }),
+  getIntegrationsStatus: (): Promise<IntegrationsStatusResponse> => ipcRenderer.invoke(IPC.INTEGRATIONS_STATUS),
+  connectIntegration: (toolkit: string): Promise<IntegrationActionResult> => ipcRenderer.invoke(IPC.INTEGRATIONS_CONNECT, { toolkit }),
+  disconnectIntegration: (toolkit: string): Promise<IntegrationActionResult> => ipcRenderer.invoke(IPC.INTEGRATIONS_DISCONNECT, { toolkit }),
+  reconcileIntegration: (toolkit: string): Promise<IntegrationActionResult> => ipcRenderer.invoke(IPC.INTEGRATIONS_RECONCILE, { toolkit }),
   // Política de modelo (ADR 016): null si el backend no la informa o no hay sesión.
   getModelPolicy: (): Promise<AiModelPolicy | null> => ipcRenderer.invoke(IPC.AGENT_GET_MODEL_POLICY),
 

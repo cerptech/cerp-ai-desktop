@@ -194,6 +194,45 @@ export interface AskUserQuestionPayload {
   questions: AskUserQuestionItem[]
 }
 
+// ── Apps conectadas (Composio) — pantalla «Apps» ──
+
+/** `auth` = sesión vencida (401); `network` = el core no respondió o falló. */
+export type IntegrationsErrorCode = 'auth' | 'network'
+
+export interface IntegrationCatalogItem {
+  toolkit: string
+  displayName: string
+  description: string
+  /** Solo URLs https; sin logo la UI muestra la inicial. */
+  logo: string | null
+  /** Estado EN VIVO según Composio (no la tabla local). */
+  connected: boolean
+}
+
+export interface IntegrationsCatalogResponse {
+  items: IntegrationCatalogItem[]
+  nextCursor: string | null
+  error?: IntegrationsErrorCode
+}
+
+export interface ConnectedIntegration {
+  toolkit: string
+  displayName: string
+  logo: string | null
+}
+
+export interface IntegrationsStatusResponse {
+  items: ConnectedIntegration[]
+  error?: IntegrationsErrorCode
+}
+
+export interface IntegrationActionResult {
+  ok: boolean
+  /** Solo en RECONCILE: `active` = Composio confirmó la conexión. */
+  status?: 'active' | 'pending'
+  error?: IntegrationsErrorCode | 'invalid'
+}
+
 /** Map of question text → chosen label(s) or "Otro: <free text>" */
 export type UserAnswerPayload = Record<string, string | string[]>
 

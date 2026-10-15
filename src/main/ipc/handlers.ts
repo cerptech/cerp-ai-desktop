@@ -16,7 +16,7 @@ import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from
 import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
 import { getPromptLibrary, type PromptLibraryResponse } from '../utils/promptLibrary'
-import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice, ConnectedIntegration, IntegrationActionResult, IntegrationCatalogItem, IntegrationsCatalogResponse, IntegrationsErrorCode, IntegrationsStatusResponse } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 /**
@@ -668,6 +668,115 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // Biblioteca de prompts preparados (F1c): público, sin token. null = respaldo local.
   ipcMain.handle(IPC_CHANNELS.PROMPT_LIBRARY_GET, async (): Promise<PromptLibraryResponse | null> => {
     return getPromptLibrary()
+  })
+
+  // ── Apps conectadas (Composio): pantalla «Apps» ───────────────────────────
+  // Rutas /api/integrations/* del core con el Bearer del usuario: las conexiones
+  // son por empresa y usuario, el core los saca del token (nunca se mandan).
+
+  /** Slug de toolkit que viaja en el path: nada que pueda armar otra ruta. */
+  const TOOLKIT_SLUG = /^[a-z0-9_-]{1,60}$/i
+  /**
+   * Adónde vuelve el navegador tras autorizar. Electron no recibe el redirect de
+   * Composio: la pantalla reconcilia por su cuenta (polling a /reconcile). El core
+   * valida el origen contra su allowlist y, si no lo conoce, usa el del ERP.
+   */
+  const INTEGRATIONS_RETURN_URL = 'https://ai.cerp.es/integraciones'
+
+  const integrationsError = (err: unknown): IntegrationsErrorCode => (isAuthError(err) ? 'auth' : 'network')
+  const httpsOrNull = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null
+    try {
+      return new URL(v).protocol === 'https:' ? v : null
+    } catch {
+      return null
+    }
+  }
+
+  ipcMain.handle(
+    IPC_CHANNELS.INTEGRATIONS_CATALOG,
+    async (_event, { q, cursor }: { q?: string; cursor?: string } = {}): Promise<IntegrationsCatalogResponse> => {
+      try {
+        const params = new URLSearchParams({ limit: '30' })
+        if (typeof q === 'string' && q.trim()) params.set('q', q.trim().slice(0, 100))
+        if (typeof cursor === 'string' && cursor) params.set('cursor', cursor)
+        const res = await httpClient.get<{ data?: { items?: unknown[]; nextCursor?: unknown } }>(`/integrations/catalog?${params}`)
+        const items: IntegrationCatalogItem[] = (Array.isArray(res?.data?.items) ? res.data.items : [])
+          .map((raw) => raw as Record<string, unknown>)
+          .filter((t) => typeof t?.toolkit === 'string' && t.toolkit)
+          .map((t) => ({
+            toolkit: String(t.toolkit),
+            displayName: typeof t.displayName === 'string' && t.displayName ? t.displayName : String(t.toolkit),
+            description: typeof t.description === 'string' ? t.description : '',
+            logo: httpsOrNull(t.logo),
+            connected: t.connected === true,
+          }))
+        return { items, nextCursor: typeof res?.data?.nextCursor === 'string' ? res.data.nextCursor : null }
+      } catch (err) {
+        logger.error('Failed to fetch integrations catalog:', err)
+        return { items: [], nextCursor: null, error: integrationsError(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.INTEGRATIONS_STATUS, async (): Promise<IntegrationsStatusResponse> => {
+    try {
+      const res = await httpClient.get<{ data?: unknown[] }>('/integrations/status')
+      const items: ConnectedIntegration[] = (Array.isArray(res?.data) ? res.data : [])
+        .map((raw) => raw as Record<string, unknown>)
+        .filter((c) => typeof c?.toolkit === 'string' && c.toolkit && c.status === 'active')
+        .map((c) => ({
+          toolkit: String(c.toolkit),
+          displayName: typeof c.displayName === 'string' && c.displayName ? c.displayName : String(c.toolkit),
+          logo: httpsOrNull(c.logo),
+        }))
+      return { items }
+    } catch (err) {
+      logger.error('Failed to fetch integrations status:', err)
+      return { items: [], error: integrationsError(err) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INTEGRATIONS_CONNECT, async (_event, { toolkit }: { toolkit?: string } = {}): Promise<IntegrationActionResult> => {
+    if (typeof toolkit !== 'string' || !TOOLKIT_SLUG.test(toolkit)) return { ok: false, error: 'invalid' }
+    try {
+      const res = await httpClient.post<{ data?: { redirectUrl?: unknown } }>(
+        `/integrations/${encodeURIComponent(toolkit)}/connect`,
+        { returnTo: INTEGRATIONS_RETURN_URL },
+      )
+      const url = httpsOrNull(res?.data?.redirectUrl)
+      if (!url) {
+        logger.error(`Integrations connect: el core no devolvió un enlace https para ${toolkit}`)
+        return { ok: false, error: 'network' }
+      }
+      await shell.openExternal(url)
+      return { ok: true }
+    } catch (err) {
+      logger.error(`Failed to start integration connection (${toolkit}):`, err)
+      return { ok: false, error: integrationsError(err) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INTEGRATIONS_DISCONNECT, async (_event, { toolkit }: { toolkit?: string } = {}): Promise<IntegrationActionResult> => {
+    if (typeof toolkit !== 'string' || !TOOLKIT_SLUG.test(toolkit)) return { ok: false, error: 'invalid' }
+    try {
+      await httpClient.post(`/integrations/${encodeURIComponent(toolkit)}/disconnect`)
+      return { ok: true }
+    } catch (err) {
+      logger.error(`Failed to disconnect integration (${toolkit}):`, err)
+      return { ok: false, error: integrationsError(err) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.INTEGRATIONS_RECONCILE, async (_event, { toolkit }: { toolkit?: string } = {}): Promise<IntegrationActionResult> => {
+    if (typeof toolkit !== 'string' || !TOOLKIT_SLUG.test(toolkit)) return { ok: false, error: 'invalid' }
+    try {
+      const res = await httpClient.post<{ data?: { status?: unknown } }>(`/integrations/${encodeURIComponent(toolkit)}/reconcile`)
+      return { ok: true, status: res?.data?.status === 'active' ? 'active' : 'pending' }
+    } catch (err) {
+      logger.error(`Failed to reconcile integration (${toolkit}):`, err)
+      return { ok: false, error: integrationsError(err) }
+    }
   })
 
   // App: Get version
