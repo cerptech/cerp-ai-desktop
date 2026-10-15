@@ -84,6 +84,10 @@ export const IPC_CHANNELS = {
   // con la app por defecto del sistema — útil para imprimir.
   CANVAS_OPEN_EXTERNAL: 'canvas:open-external',
 
+  // Biblioteca de prompts preparados (F1c) — catálogo público de cerp-ai-service,
+  // pedido desde el main (timeout 3 s, cache por sesión). null = usar el respaldo local.
+  PROMPT_LIBRARY_GET: 'prompt-library:get',
+
   // App
   APP_GET_VERSION: 'app:get-version',
 

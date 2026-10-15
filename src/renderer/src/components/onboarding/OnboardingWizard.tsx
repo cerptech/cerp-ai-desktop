@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/Button'
-import { QUICK_ACTIONS } from '@/constants/quickActions'
+import { usePromptLibrary } from '@/hooks/usePromptLibrary'
 import {
   ONBOARDING_STEPS,
   ONBOARDING_TOTAL_STEPS,
@@ -175,6 +175,8 @@ interface StepBodyProps {
 }
 
 function StepBody({ step, connectedFolder, onConnect, onUsePrompt }: StepBodyProps) {
+  // Puntos de partida = los primeros prompts de la biblioteca (catálogo único, F1c).
+  const starterPrompts = usePromptLibrary().families.flatMap((f) => f.prompts).slice(0, 4)
   switch (step) {
     case 1:
       return (
@@ -249,13 +251,13 @@ function StepBody({ step, connectedFolder, onConnect, onUsePrompt }: StepBodyPro
             Elige un punto de partida. Se va a cargar en el chat para que lo edites antes de enviarlo.
           </p>
           <div className="grid sm:grid-cols-2 gap-2">
-            {QUICK_ACTIONS.slice(0, 4).map((action) => (
+            {starterPrompts.map((action) => (
               <button
-                key={action.label}
+                key={action.id}
                 onClick={() => onUsePrompt(action.prompt)}
                 className="text-left p-3 rounded-xl border border-slate-200 hover:border-brand-orange/40 hover:bg-orange-50/50 transition-all"
               >
-                <span className="text-sm font-medium text-slate-700">{action.label}</span>
+                <span className="text-sm font-medium text-slate-700">{action.title}</span>
                 <p className="text-xs text-slate-500 mt-1 line-clamp-2">{action.prompt}</p>
               </button>
             ))}

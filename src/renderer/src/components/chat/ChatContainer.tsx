@@ -6,7 +6,7 @@ import { MessageBubble } from './MessageBubble'
 import { MessageList } from './MessageList'
 import { Composer } from './Composer'
 import { AskUserQuestion } from './AskUserQuestion'
-import { QuickActions } from './QuickActions'
+import { PromptLibrary } from './PromptLibrary'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ThinkingLoader } from './ThinkingLoader'
 import { useToast } from '@/hooks/useToast'
@@ -16,6 +16,8 @@ import { useDictation, type DictationError } from '@/hooks/useDictation'
 import { useAttachments, MAX_ATTACHMENTS, type AttachmentFile } from '@/hooks/useAttachments'
 import { useModelChoice } from '@/hooks/useModelChoice'
 import { useToolsSetup } from '@/hooks/useToolsSetup'
+import { usePromptLibrary } from '@/hooks/usePromptLibrary'
+import { findFirstField, type PromptLibraryFamily, type PromptLibraryPrompt } from '@/lib/promptLibrary'
 import { buildConversationTitle } from '@/utils/conversationTitle'
 
 export interface ChatStateSnapshot {
@@ -52,8 +54,9 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   const { planMode, togglePlanMode } = usePlanMode()
   const { modelChoice, setModelChoice } = useModelChoice()
   // Ola 3 — Git/Python se preparan en background tras el login; esto gatea solo las
-  // quick actions que realmente los necesitan (ver QUICK_ACTIONS.requiresTools).
+  // prompts de la biblioteca que realmente los necesitan (`requiresTools`).
   const toolsSetup = useToolsSetup()
+  const promptLibrary = usePromptLibrary()
   const { attachments, addFiles, removeAttachment, clearAttachments } = useAttachments()
   const [input, setInput] = useState('')
   // La carpeta de trabajo REAL vive en el runtime de cada conversación (store) —
@@ -66,6 +69,24 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   const [showThoughts, setShowThoughts] = useState(true)
   const [appVersion, setAppVersion] = useState('...')
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Prompt de la biblioteca cargado en el composer (F1c). Mientras esté, el envío
+  // agrega la carpeta de trabajo al texto, igual que hacían las quick actions al
+  // enviar directo. Se descarta si el usuario vacía el composer.
+  const libraryPromptRef = useRef<{ id: string; family: string } | null>(null)
+  useEffect(() => { if (!input.trim()) libraryPromptRef.current = null }, [input])
+
+  // Enfoca el composer y selecciona el primer [campo] (o deja el cursor al final).
+  // Doble rAF: el textarea se re-renderiza y ajusta su alto tras setInput.
+  const focusFirstField = useCallback((text: string) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      const range = findFirstField(text)
+      if (range) el.setSelectionRange(range.start, range.end)
+      else el.setSelectionRange(el.value.length, el.value.length)
+    }))
+  }, [])
 
   // draftCwd en un ref para que doSend (callback estable) lea el valor actual sin recrearse.
   const draftCwdRef = useRef<string | null>(draftCwd)
@@ -139,10 +160,10 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     if (setInputRef) {
       setInputRef.current = (text: string) => {
         setInput(text)
-        requestAnimationFrame(() => inputRef.current?.focus())
+        focusFirstField(text)
       }
     }
-  }, [setCwdRef, setInputRef, activeConversationId])
+  }, [setCwdRef, setInputRef, activeConversationId, focusFirstField])
 
   // --- Dictado por voz (Ola 1) ---
   // El texto SIEMPRE se concatena al textarea existente — nunca se envía solo, el
@@ -195,8 +216,11 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     const attachmentsBlock = attachments.length
       ? '\n\n' + attachments.map((a) => `[Archivo adjunto: ${a.path}]`).join('\n')
       : ''
-    const fullPrompt = `${trimmed}${attachmentsBlock}`.trim()
+    // Prompt de la biblioteca: misma inyección de carpeta que hacía handleQuickAction.
+    const cwdLine = libraryPromptRef.current && cwd ? `\n\nMi carpeta de trabajo es: ${cwd}` : ''
+    const fullPrompt = `${trimmed}${cwdLine}${attachmentsBlock}`.trim()
 
+    libraryPromptRef.current = null
     setInput('')
     clearAttachments()
     doSend(fullPrompt)
@@ -213,12 +237,16 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     return () => window.removeEventListener('keydown', handleGlobalKeyDown)
   }, [isStreaming, abort])
 
-  const handleQuickAction = (prompt: string) => {
-    // If a working folder is selected, inject it into the prompt so the AI knows where to look
-    const fullPrompt = cwd
-      ? `${prompt}\n\nMi carpeta de trabajo es: ${cwd}`
-      : prompt
-    doSend(fullPrompt)
+  // Biblioteca de prompts (F1c): ya NO envía directo. Carga el prompt en el
+  // composer con el primer [campo] seleccionado para que el usuario lo complete;
+  // la carpeta de trabajo se agrega al enviar (handleSubmit).
+  const handleSelectLibraryPrompt = (prompt: PromptLibraryPrompt, family: PromptLibraryFamily) => {
+    setInput(prompt.prompt)
+    libraryPromptRef.current = { id: prompt.id, family: family.id }
+    focusFirstField(prompt.prompt)
+    if (prompt.attachment === 'required' && !cwd && attachments.length === 0) {
+      addToast('info', 'Este prompt trabaja con archivos: selecciona tu carpeta de trabajo o adjúntalos antes de enviar.')
+    }
   }
 
   const handleSelectFolder = async () => {
@@ -336,7 +364,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
                 Tu asistente para cotizaciones y licitaciones de obra. Arrastra tus archivos o selecciona una carpeta para empezar.
               </p>
             </div>
-            <QuickActions onSelect={handleQuickAction} disabled={isStreaming} toolsSetup={toolsSetup} />
+            <PromptLibrary families={promptLibrary.families} onSelect={handleSelectLibraryPrompt} disabled={isStreaming} toolsSetup={toolsSetup} />
             <p className="text-xs text-slate-400 mt-2">
               Arrastra archivos al chat o selecciona una carpeta de trabajo
             </p>

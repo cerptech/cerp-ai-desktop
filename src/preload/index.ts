@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { CompanyChangedNotice } from '../main/ipc/types'
+import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
 
 const IPC = {
   AUTH_LOGIN: 'auth:login',
@@ -46,6 +47,7 @@ const IPC = {
   ONBOARDING_GET_PROGRESS: 'onboarding:get-progress',
   ONBOARDING_PATCH_PROGRESS: 'onboarding:patch-progress',
   APP_GET_VERSION: 'app:get-version',
+  PROMPT_LIBRARY_GET: 'prompt-library:get',
   AGENT_GET_MODEL_POLICY: 'agent:get-model-policy',
   UPDATE_AVAILABLE: 'update:available',
   UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
@@ -457,6 +459,8 @@ const api = {
 
   // App
   getVersion: (): Promise<string> => ipcRenderer.invoke(IPC.APP_GET_VERSION),
+  // Biblioteca de prompts preparados (F1c): null si el servicio no responde → respaldo local.
+  getPromptLibrary: (): Promise<PromptLibraryResponse | null> => ipcRenderer.invoke(IPC.PROMPT_LIBRARY_GET),
   // Política de modelo (ADR 016): null si el backend no la informa o no hay sesión.
   getModelPolicy: (): Promise<AiModelPolicy | null> => ipcRenderer.invoke(IPC.AGENT_GET_MODEL_POLICY),
 
