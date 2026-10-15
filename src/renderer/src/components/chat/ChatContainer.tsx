@@ -17,6 +17,9 @@ import { useAttachments, MAX_ATTACHMENTS, type AttachmentFile } from '@/hooks/us
 import { useModelChoice } from '@/hooks/useModelChoice'
 import { useToolsSetup } from '@/hooks/useToolsSetup'
 import { buildConversationTitle } from '@/utils/conversationTitle'
+import { dataRetryPrompt, withAttachments } from '@/utils/retryPrompt'
+import { QuoteFirewallBanner } from '@/components/layout/QuoteFirewallBanner'
+import { dismissQuoteFirewall } from '@/hooks/useQuoteFirewall'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -47,7 +50,8 @@ interface ChatContainerProps {
 export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
-  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(activeConversationId ?? '__default__')
+  const runtimeId = activeConversationId ?? '__default__'
+  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, retryPrompt, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(runtimeId)
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { modelChoice, setModelChoice } = useModelChoice()
@@ -112,9 +116,12 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // NO_ACTIVE_COMPANY tampoco: el main ya cerró la sesión y App muestra su aviso.
   // COMPANY_CHANGED tampoco: App ya muestra el aviso del cambio de empresa; el banner
   // de abajo queda para recordar que el mensaje no se envió.
+  // Un turno cortado con Reintentar (RQM-166) tampoco: su caja de error persistente ya
+  // lo dice con el botón, y el toast repetía el mismo texto largo.
   useEffect(() => {
+    if (retryPrompt) return
     if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && errorCode !== 'COMPANY_CHANGED') addToast('error', error)
-  }, [error, errorCode, addToast])
+  }, [error, errorCode, retryPrompt, addToast])
 
   // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la
   // restauración/limpieza de runtimes las maneja agentRuntimeStore — ya no viven
@@ -299,6 +306,18 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
     doSend(lastUserMessage.content, { skipUserEcho: true })
   }, [messages, isStreaming, isPending, pendingQuestions, doSend, addToast])
 
+  // Reintentar una ejecución cortada (RQM-166): manda el prompt que retoma la carga donde
+  // quedó, con las rutas de los archivos ya adjuntados en la conversación (no hay que
+  // volver a cargarlos). El banner de la carga se limpia: el reintento abre una nueva.
+  const sendRetry = useCallback((prompt: string) => {
+    if (isStreaming || isPending || pendingQuestions) return
+    dismissQuoteFirewall(runtimeId)
+    doSend(withAttachments(prompt, messages))
+  }, [isStreaming, isPending, pendingQuestions, runtimeId, doSend, messages])
+
+  const handleRetry = retryPrompt ? () => sendRetry(retryPrompt) : undefined
+  const handleRetryData = useCallback((failures: string[]) => sendRetry(dataRetryPrompt(failures)), [sendRetry])
+
   const isEmpty = messages.length === 0
 
   return (
@@ -316,6 +335,15 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
           <span className="text-amber-500">— el agente planificará sin ejecutar acciones de escritura. Desactívalo para continuar con la ejecución.</span>
         </div>
       )}
+
+      {/* Estado de la carga del presupuesto (cortafuegos de cotización) de ESTA conversación */}
+      <QuoteFirewallBanner
+        conversationId={runtimeId}
+        busy={isStreaming || isPending}
+        activeTool={activeTool}
+        onRetry={handleRetry}
+        onRetryData={handleRetryData}
+      />
 
       {/* Drag overlay */}
       {isDragOver && (
@@ -392,8 +420,18 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
       {/* Error display — AUTH_EXPIRED se omite: el SessionExpiredModal global ya cubre ese caso */}
       {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && (
-        <div className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
-          {error}
+        <div role="alert" className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700 flex items-start justify-between gap-3">
+          <span>{error}</span>
+          {/* Un turno cortado por un fallo (watchdog, límite de la ejecución, error del
+              proceso) se puede retomar donde quedó sin volver a adjuntar nada. */}
+          {handleRetry && !isStreaming && !isPending && !pendingQuestions && (
+            <button
+              onClick={handleRetry}
+              className="shrink-0 font-medium text-red-700 hover:text-red-900 underline transition-colors"
+            >
+              Reintentar
+            </button>
+          )}
         </div>
       )}
 

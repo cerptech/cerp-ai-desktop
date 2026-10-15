@@ -1207,7 +1207,7 @@ export const toolSchemas: Record<string, ToolDef> = {
   },
   quote_commit: {
     description:
-      'CORTAFUEGOS — Finaliza la cotización: el backend valida el entregable contra el presupuesto persistido en CERP y, solo si es válido, consume/cobra el crédito. Llamar al FINAL, OBLIGATORIAMENTE después de recalculate_budget (los totales se leen tal cual quedaron). Devuelve { committed, validation }. Si committed=true: el crédito se aplicó correctamente. Si committed=false: el entregable no pasó la validación (validation.message explica el motivo), NO se cobró nada, el crédito quedó liberado y el presupuesto parcial se descartó — comunicá al usuario usando validation.message y ofrecé reintentar.',
+      'CORTAFUEGOS — Finaliza la cotización: el backend valida el entregable contra el presupuesto persistido en CERP y, solo si es válido, consume/cobra el crédito. Llamar al FINAL, OBLIGATORIAMENTE después de recalculate_budget (los totales se leen tal cual quedaron). Devuelve { committed, validation }. Si committed=true: el crédito se aplicó correctamente. Si committed=false: el entregable no pasó la validación (validation.message explica el motivo), NO se cobró nada, el crédito quedó liberado y el presupuesto parcial quedó guardado como borrador (no se borra) — comunicá al usuario usando validation.message y ofrecé completarlo sobre ese mismo presupuesto y reintentar.',
     schema: z.object({
       id: z.string().describe('quoteId devuelto por quote_reserve'),
       budgetId: z

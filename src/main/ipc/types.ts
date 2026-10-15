@@ -72,6 +72,10 @@ export type AgentStreamEvent =
   // Explicit turn-start signal — sent when the first system task_started arrives
   // so the renderer badge flips to "activa" even before the first text/tool event.
   | { type: 'stream_start' }
+  // Latido del main cada 5 s mientras hay un turno o una tarea de fondo en curso: el
+  // agente sigue vivo (si el SDK deja de responder, el watchdog del main corta el turno
+  // con un `error`). No toca el acumulador de texto, a diferencia de stream_start.
+  | { type: 'heartbeat' }
   | { type: 'session_id'; sessionId: string }
   // toolUseId links the delegation to the specific Agent ToolExecution it created
   | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
@@ -91,7 +95,9 @@ export type AgentStreamEvent =
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   // `code` distinguishes specific error causes the renderer needs to react to differently
   // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
-  | { type: 'error'; message: string; code?: string }
+  // `retryPrompt`: el turno se cortó por un fallo (RQM-166) y "Reintentar" puede mandar
+  // este prompt, que retoma la carga en curso donde quedó.
+  | { type: 'error'; message: string; code?: string; retryPrompt?: string }
 
 export interface AuthState {
   isAuthenticated: boolean

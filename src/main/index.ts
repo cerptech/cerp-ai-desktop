@@ -46,6 +46,11 @@ if (!gotTheLock) {
   app.whenReady().then(() => {
     logger.info('CERP AI Desktop starting...')
 
+    // Windows solo muestra notificaciones del sistema (aviso de carga terminada o
+    // fallida, ver desktopNotifier.ts) si el proceso tiene AppUserModelID; es el
+    // mismo appId que usa electron-builder para el instalador.
+    if (process.platform === 'win32') app.setAppUserModelId('com.cerp.ai-desktop')
+
     // Register IPC handlers
     registerIpcHandlers(() => mainWindow)
 

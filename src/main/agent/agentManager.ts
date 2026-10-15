@@ -2,9 +2,12 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
-import { setAskUserWindow, cancelPendingQuestion } from './askUserBridge'
-import { stopQuoteHeartbeat } from './quoteHeartbeat'
-import { setQuoteEventWindow } from './quoteEventsBridge'
+import { setAskUserWindow, cancelPendingQuestion, hasPendingQuestion } from './askUserBridge'
+import { getActiveQuoteId, getActiveReservationId, stopAllQuoteHeartbeats, stopQuoteHeartbeat } from './quoteHeartbeat'
+import { emitQuoteFirewallEvent, setQuoteEventWindow } from './quoteEventsBridge'
+import { notifyUser, setNotifierWindow } from './desktopNotifier'
+import { getLoadContext } from './loadContext'
+import { buildRetryPrompt, classifyResult, describeTurnFailure, resultErrorDetail, type TurnFailureCode } from './turnOutcome'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
 import { DesktopAccessDeniedError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
@@ -101,9 +104,119 @@ interface AgentSession {
   // backend suma acumulados y multiplica el gasto real).
   lastReportedCostUsd: number
   lastReportedTurns: number
+  // ── Desenlace garantizado del turno (RQM-166) ─────────────────────────────
+  httpClient: HttpClient
+  /** Último mensaje recibido del SDK (cualquiera, incluidos los de subagentes). */
+  lastActivityAt: number
+  turnStartedAt: number
+  /** El turno en curso ya terminó en error (se avisó al usuario): no se avisa dos veces. */
+  turnFailed: boolean
+  /** El usuario (Detener) o el cambio de empresa interrumpieron el turno: el abort no es un error. */
+  interruptRequested: boolean
+  /** closeSession en curso: lo que tire el stream al cerrarse no es un error del turno. */
+  closing: boolean
+  /** `done` retenido mientras quedaban tareas de fondo (ver processStreamLoop). */
+  heldDone: AgentStreamEvent | null
+  heldDoneTimer: ReturnType<typeof setTimeout> | null
 }
 
 const sessions = new Map<string, AgentSession>()
+
+/**
+ * Watchdog de turno (RQM-166): si el SDK no manda NINGÚN mensaje durante este tiempo
+ * mientras hay un turno o una tarea de fondo en curso, el turno se da por colgado: se
+ * corta, se libera la reserva de la cotización y se avisa con un error accionable.
+ * 15 min deja margen sobre lo que puede tardar legítimamente sin emitir nada (un Bash
+ * llega a 10 min; una llamada al core, a 5). No corre mientras se espera al usuario.
+ * `CERP_TURN_TIMEOUT_MS` lo baja para probar el caso en QA.
+ */
+const TURN_INACTIVITY_TIMEOUT_MS = Number(process.env.CERP_TURN_TIMEOUT_MS) || 15 * 60_000
+/** Con el último task_notification, si el SDK no arranca otro turno en este plazo se libera el `done` retenido. */
+const HELD_DONE_GRACE_MS = 30_000
+/** Un turno más largo que esto avisa por notificación del sistema al terminar (si la ventana no tiene foco). */
+const LONG_TURN_NOTIFY_MS = 2 * 60_000
+
+/** Todo evento al renderer va etiquetado con su conversación. */
+function emitToRenderer(conversationId: string, event: AgentStreamEvent): void {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, { conversationId, event })
+  }
+}
+
+function emitDoneToRenderer(conversationId: string): void {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
+  }
+}
+
+/** Marca el arranque de un turno: el watchdog cuenta desde acá, aunque el SDK todavía no haya respondido. */
+function beginTurn(session: AgentSession): void {
+  const now = Date.now()
+  session.turnStartedAt = now
+  session.lastActivityAt = now
+  session.turnFailed = false
+  session.interruptRequested = false
+  session.processingTurn = true
+  session.heldDone = null
+  if (session.heldDoneTimer) { clearTimeout(session.heldDoneTimer); session.heldDoneTimer = null }
+  const quoteId = getActiveReservationId(session.conversationId)
+  if (quoteId) emitQuoteFirewallEvent({ kind: 'resumed', conversationId: session.conversationId, quoteId })
+}
+
+/**
+ * Libera la reserva abierta de una carga que se cortó por un fallo nuestro: el crédito
+ * no se consume y el presupuesto parcial queda como borrador (CreditFirewallService del
+ * core). Si el refund falla, el heartbeat ya está detenido y el watchdog del core la
+ * refunda igual a los 15 min.
+ */
+async function releaseReservationAfterFailure(session: AgentSession, message: string): Promise<void> {
+  const conversationId = session.conversationId
+  const quoteId = getActiveReservationId(conversationId)
+  if (!quoteId) return
+  stopQuoteHeartbeat(conversationId)
+  try {
+    await session.httpClient.post(`/quotes/${quoteId}/refund`, { reason: 'error' })
+    logger.info(`Reserva ${quoteId} liberada tras el fallo del turno (${conversationId})`)
+  } catch (err) {
+    logger.warn(`No se pudo liberar la reserva ${quoteId} (la libera el watchdog del core): ${err instanceof Error ? err.message : String(err)}`)
+  }
+  emitQuoteFirewallEvent({ kind: 'rolled_back', conversationId, quoteId, reason: 'error', message, failures: [], cause: 'system' })
+}
+
+/**
+ * El turno terminó en error: avisa UNA vez con un mensaje accionable (+ el prompt de
+ * Reintentar), libera la reserva y notifica al sistema. No cierra la sesión: lo decide
+ * el caller (el watchdog la cierra en el acto; un `result` de error, después del `done`).
+ */
+function failTurn(session: AgentSession, code: TurnFailureCode, detail: string): void {
+  if (session.turnFailed) return
+  session.turnFailed = true
+  const conversationId = session.conversationId
+  const ctx = getLoadContext(conversationId)
+  const inLoad = !!getActiveReservationId(conversationId) || !!ctx
+  const failure = describeTurnFailure(code, inLoad, Math.round(TURN_INACTIVITY_TIMEOUT_MS / 60_000))
+  logger.error(`Turno fallido [${conversationId}] ${code}: ${detail}`)
+  emitToRenderer(conversationId, { type: 'error', code, message: failure.message, retryPrompt: buildRetryPrompt(ctx) })
+  void releaseReservationAfterFailure(session, failure.message)
+  notifyUser('CERP IA se detuvo', failure.short)
+}
+
+/** Cierre normal de un turno: libera la UI y, si la cotización quedó abierta, la marca en pausa. */
+function finishTurn(session: AgentSession, doneEvent: AgentStreamEvent): void {
+  const conversationId = session.conversationId
+  session.heldDone = null
+  if (session.heldDoneTimer) { clearTimeout(session.heldDoneTimer); session.heldDoneTimer = null }
+  emitToRenderer(conversationId, doneEvent)
+  emitDoneToRenderer(conversationId)
+  session.processingTurn = false
+  if (session.turnFailed) return
+  const quoteId = getActiveReservationId(conversationId)
+  if (quoteId) emitQuoteFirewallEvent({ kind: 'paused', conversationId, quoteId })
+  if (Date.now() - session.turnStartedAt > LONG_TURN_NOTIFY_MS) {
+    if (quoteId) notifyUser('CERP IA espera tu respuesta', 'La carga del presupuesto está en pausa hasta que respondas en la conversación.')
+    else notifyUser('CERP IA terminó', 'La respuesta ya está en la conversación.')
+  }
+}
 let mainWindowRef: BrowserWindow | null = null
 
 // Conversaciones que arrancan antes de tener id real (legacy / primer mensaje)
@@ -127,7 +240,9 @@ export function setPlanMode(enabled: boolean): void {
   if (planModeEnabled === enabled) return
   planModeEnabled = enabled
   logger.info(`Plan Mode ${enabled ? 'enabled' : 'disabled'}`)
-  for (const id of [...sessions.keys()]) closeSession(id)
+  // La conversación sigue (el próximo mensaje reabre la sesión): una cotización
+  // en curso conserva su reserva.
+  for (const id of [...sessions.keys()]) closeSession(id, { keepReservation: true })
 }
 
 export function isAgentRunning(): boolean {
@@ -145,6 +260,8 @@ export function hasActiveSession(): boolean {
 export async function interruptAgent(conversationId: string = DEFAULT_CONV): Promise<void> {
   const session = sessions.get(conversationId)
   if (!session) return
+  // El `result` abortado que sigue NO es un fallo: lo pidió el usuario (o el cambio de empresa).
+  session.interruptRequested = true
   try {
     await session.query.interrupt()
     logger.info(`Agent interrupted (${conversationId})`)
@@ -156,18 +273,22 @@ export async function interruptAgent(conversationId: string = DEFAULT_CONV): Pro
 
 /**
  * Close one conversation's session entirely and clean up.
+ * `keepReservation`: la conversación sigue (reinicio por cambio de carpeta/modelo/Plan
+ * Mode) — la reserva de una cotización en curso no se suelta.
  */
-export function closeSession(conversationId: string = DEFAULT_CONV): void {
+export function closeSession(conversationId: string = DEFAULT_CONV, opts: { keepReservation?: boolean } = {}): void {
   const session = sessions.get(conversationId)
   if (!session) return
+  session.closing = true
   // Cancel any pending ask_user_question for THIS conversation so the MCP promise doesn't hang
   cancelPendingQuestion(conversationId)
   // Stop the credit reservation heartbeat — if a quote was mid-flight, the backend
   // watchdog will refund it on heartbeat timeout (no credit lost to an aborted run).
-  stopQuoteHeartbeat()
+  if (!opts.keepReservation) stopQuoteHeartbeat(conversationId)
   try { session.messageQueue.close() } catch { /* ignore */ }
   try { session.query.close() } catch { /* ignore */ }
   if (session.heartbeat) clearInterval(session.heartbeat)
+  if (session.heldDoneTimer) clearTimeout(session.heldDoneTimer)
   session.activeDelegations.clear()
   sessions.delete(conversationId)
   logger.info(`Session closed (${conversationId})`)
@@ -176,6 +297,7 @@ export function closeSession(conversationId: string = DEFAULT_CONV): void {
 /** Close every active session (logout / global reset). */
 export function closeAllSessions(): void {
   for (const id of [...sessions.keys()]) closeSession(id)
+  stopAllQuoteHeartbeats()
   cachedContextPrompt = null
   setAskUserWindow(null)
   setHtmlCanvasWindow(null)
@@ -226,6 +348,7 @@ export async function runAgent(
   setAskUserWindow(mainWindow)
   setQuoteEventWindow(mainWindow)
   setHtmlCanvasWindow(mainWindow)
+  setNotifierWindow(mainWindow)
   const conversationId = payload.conversationId || DEFAULT_CONV
   const cwd = payload.cwd || app.getPath('home')
   const contextId = payload.activeContextId || null
@@ -249,7 +372,7 @@ export async function runAgent(
   // quedó vacía si el refetch falló, y startSession la vuelve a pedir).
   if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful || getCompanyId() !== session.companyId)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
-    closeSession(conversationId)
+    closeSession(conversationId, { keepReservation: true })
     session = undefined
   }
 
@@ -522,8 +645,17 @@ async function startSession(
     heartbeat: null,
     lastReportedCostUsd: 0,
     lastReportedTurns: 0,
+    httpClient,
+    lastActivityAt: Date.now(),
+    turnStartedAt: Date.now(),
+    turnFailed: false,
+    interruptRequested: false,
+    closing: false,
+    heldDone: null,
+    heldDoneTimer: null,
   }
   sessions.set(conversationId, session)
+  beginTurn(session)
 
   // Process stream in background
   processStreamLoop(session)
@@ -531,6 +663,7 @@ async function startSession(
 
 function sendFollowUp(session: AgentSession, prompt: string): void {
   logger.info(`Sending follow-up (${session.conversationId}): "${prompt.slice(0, 80)}..."`)
+  beginTurn(session)
   session.messageQueue.push(prompt)
 }
 
@@ -544,42 +677,61 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
 
   // Every IPC event is tagged with conversationId so the renderer routes it to the
   // right conversation — that's what lets background conversations keep streaming.
-  const sendEvent = (event: AgentStreamEvent): void => {
-    if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_MESSAGE, { conversationId, event })
-    }
-  }
-
-  const sendDone = (): void => {
-    if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-      mainWindowRef.webContents.send(IPC_CHANNELS.AGENT_STREAM_DONE, { conversationId })
-    }
-  }
+  const sendEvent = (event: AgentStreamEvent): void => emitToRenderer(conversationId, event)
+  const sendDone = (): void => emitDoneToRenderer(conversationId)
 
   let activeTaskCount = 0
 
-  // Heartbeat: keep the renderer's "IA activa" badge alive during long SILENT gaps.
-  // The for-await loop BLOCKS while awaiting the next SDK message, so during a multi-minute
-  // pause (e.g. a background subagent generating with no parent stream_events) nothing is
-  // forwarded and the renderer's safety timer would flip the badge to inactive even though
-  // the agent is actively working. A standalone interval forwards a lightweight stream_start
-  // every 5s WHILE actively processing — a background task is running (`activeTaskCount > 0`)
-  // OR a turn is in progress (`session.processingTurn`). It stops emitting on its own once the
-  // turn completes and is cleared in `finally`.
+  // Heartbeat + watchdog. The for-await loop BLOCKS while awaiting the next SDK message,
+  // so during a multi-minute pause (e.g. a background subagent generating with no parent
+  // stream_events) nothing is forwarded. Every 5s, WHILE a turn or a background task is
+  // in progress, this interval:
+  //  - forwards a lightweight `heartbeat` so the renderer's stall timer knows the main
+  //    process is alive and the agent is working;
+  //  - checks the SDK is ALSO alive: with no SDK message for TURN_INACTIVITY_TIMEOUT_MS
+  //    the turn is hung (RQM-166: a subagent whose task never notified kept the UI on
+  //    "trabajando" for days). It fails the turn and closes the session. Waiting on the
+  //    user (ask_user_question / schedule confirmation) does not count as inactivity.
   session.heartbeat = setInterval(() => {
     if (!mainWindowRef || mainWindowRef.isDestroyed()) return
-    if (activeTaskCount > 0 || session.processingTurn) {
-      sendEvent({ type: 'stream_start' })
+    if (!(activeTaskCount > 0 || session.processingTurn) || session.closing) return
+    if (hasPendingQuestion(conversationId)) {
+      session.lastActivityAt = Date.now()
+    } else if (Date.now() - session.lastActivityAt >= TURN_INACTIVITY_TIMEOUT_MS) {
+      const idleMin = Math.round((Date.now() - session.lastActivityAt) / 60_000)
+      failTurn(session, 'TURN_TIMEOUT', `sin mensajes del SDK hace ${idleMin} min (tareas de fondo=${activeTaskCount}, processingTurn=${session.processingTurn})`)
+      // Una sesión colgada no se puede "interrumpir" con confianza (el SDK puede estar
+      // esperando una tool que no vuelve): se cierra. El próximo mensaje (Reintentar)
+      // abre una sesión nueva con el historial de la conversación.
+      closeSession(conversationId)
+      return
     }
+    sendEvent({ type: 'heartbeat' })
   }, 5000)
+
+  // Releases a `done` that was held for background tasks once the last one notified and
+  // the SDK did not start a follow-up turn on its own (otherwise the UI would stay busy
+  // and the watchdog would report a hang that isn't one).
+  const scheduleHeldDoneRelease = (): void => {
+    if (!session.heldDone || session.heldDoneTimer) return
+    session.heldDoneTimer = setTimeout(() => {
+      session.heldDoneTimer = null
+      if (session.heldDone && activeTaskCount === 0 && !session.closing) {
+        logger.info(`Releasing held done (${conversationId}): no follow-up turn after background tasks`)
+        finishTurn(session, session.heldDone)
+      }
+    }, HELD_DONE_GRACE_MS)
+  }
 
   try {
     for await (const msg of session.query) {
       if (!mainWindowRef || mainWindowRef.isDestroyed()) break
+      session.lastActivityAt = Date.now()
 
       const msgObj = msg as Record<string, unknown>
       const msgType = msgObj.type as string
       const msgSubtype = msgObj.subtype as string | undefined
+      const parentToolUseId = parentToolUseIdOf(msgObj)
 
       logger.debug(`Stream[${conversationId}]: type=${msgType} subtype=${msgSubtype || '-'} tasks=${activeTaskCount}`)
 
@@ -595,7 +747,10 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
           logger.info(`Background task started (${activeTaskCount} active)`)
         } else if (msgSubtype === 'task_notification') {
           activeTaskCount = Math.max(0, activeTaskCount - 1)
-          logger.info(`Background task completed (${activeTaskCount} remaining)`)
+          const status = (msgObj as { status?: string }).status ?? 'completed'
+          if (status !== 'completed') logger.warn(`Background task ${status}: ${String((msgObj as { summary?: string }).summary ?? '').slice(0, 300)}`)
+          logger.info(`Background task ${status} (${activeTaskCount} remaining)`)
+          if (activeTaskCount === 0) scheduleHeldDoneRelease()
         } else if (msgSubtype === 'api_retry') {
           // SDK is retrying an API call — show feedback so UI doesn't look stuck
           sendEvent({ type: 'status', message: 'Reconectando con el servidor...' })
@@ -606,13 +761,18 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
       // Track turn state (the heartbeat interval handles keep-alive during silent gaps)
       if (msgType === 'assistant' || msgType === 'stream_event') {
         session.processingTurn = true
+        // A follow-up turn of the main agent started (typically to process a background
+        // task's result): it ends with its own `result`, so the held `done` is superseded.
+        if (session.heldDone && !parentToolUseId) {
+          session.heldDone = null
+          if (session.heldDoneTimer) { clearTimeout(session.heldDoneTimer); session.heldDoneTimer = null }
+        }
       }
 
       // ── Subagent inner activity routing ──────────────────────────────────
       // Messages from inside a subagent carry parent_tool_use_id = the Agent
       // tool_use_id that spawned them. We route these to dedicated subagent
       // events instead of discarding them.
-      const parentToolUseId = (msgObj as any).parent_tool_use_id as string | null | undefined
       if (parentToolUseId) {
         const agentName = session.activeDelegations.get(parentToolUseId) ?? 'agente'
 
@@ -663,23 +823,51 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
         continue
       }
 
+      // A `result` that is not a clean success (max turns, budget ceiling, execution
+      // error, API error) used to reach the UI as a silent `done` (RQM-166). Classify it
+      // here; the `done` handling below turns it into an actionable error.
+      let resultFailure: TurnFailureCode | null = null
+      if (msgType === 'result') {
+        const outcome = classifyResult(msgObj)
+        if (outcome) logger.warn(`Result con error [${conversationId}]: ${resultErrorDetail(msgObj)}`)
+        if (outcome === 'ABORTED') {
+          // Detener / cambio de empresa / watchdog: no es un fallo que avisar. Un abort
+          // que nadie pidió, sí.
+          if (!session.interruptRequested && !session.turnFailed) resultFailure = 'EXECUTION_ERROR'
+        } else if (outcome) {
+          resultFailure = outcome
+        }
+      }
+
       // Map and forward events
       const events = mapMessage(msgObj, session.activeDelegations, session)
       if (events) {
         const arr = Array.isArray(events) ? events : [events]
         for (const event of arr) {
           if (event.type === 'done') {
-            logger.info(`Turn complete [${conversationId}] (cost=$${(event as any).cost?.toFixed(4) || '?'}, tasks=${activeTaskCount})`)
-            if (activeTaskCount > 0) {
-              // Background tasks still running — don't signal done to UI yet
+            logger.info(`Turn complete [${conversationId}] (cost=$${(event as any).cost?.toFixed(4) || '?'}, tasks=${activeTaskCount}, failure=${resultFailure ?? '-'})`)
+            if (resultFailure) {
+              // The turn is over and failed: no waiting for background tasks. Error first
+              // (with the retry prompt), then the usual done. The session is closed so the
+              // retry starts fresh — after a max-turns / budget-ceiling result the same
+              // query would fail again right away.
+              failTurn(session, resultFailure, resultErrorDetail(msgObj))
+              finishTurn(session, event)
+              closeSession(conversationId)
+              continue
+            }
+            if (activeTaskCount > 0 && !session.interruptRequested) {
+              // Background tasks still running — don't signal done to UI yet. The watchdog
+              // covers a task that never notifies; scheduleHeldDoneRelease, a task that
+              // notifies without the SDK starting a follow-up turn. (After Detener the turn
+              // is over for the user: nothing is held.)
+              session.heldDone = event
               logger.info(`Holding done: ${activeTaskCount} tasks still active`)
               continue
             }
             // Turn complete and no background tasks — unlock UI for next input
             // Session stays alive (MessageQueue keeps the query running)
-            sendEvent(event)
-            sendDone()
-            session.processingTurn = false
+            finishTurn(session, event)
             continue
           }
           sendEvent(event)
@@ -689,25 +877,41 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
 
-    if (message.includes('aborted') || message.includes('interrupt')) {
+    if (session.closing || session.turnFailed) {
+      // closeSession (watchdog, failed result, logout): what the stream throws while
+      // closing is not news for the user.
+      logger.info(`Stream closed (${conversationId}): ${message}`)
+    } else if (message.includes('aborted') || message.includes('interrupt')) {
       logger.info(`Session interrupted/aborted (${conversationId})`)
       sendEvent({ type: 'done' })
     } else {
       logger.error(`Stream error (${conversationId}): ${message}`)
-      sendEvent({ type: 'error', message })
+      failTurn(session, 'PROCESS_ERROR', message)
     }
     sendDone()
   } finally {
+    // The stream ended in the middle of a turn without a `result` and nobody closed it
+    // (e.g. the CLI process died): that turn has no outcome yet — give it one.
+    if (session.processingTurn && !session.closing && !session.turnFailed && !session.interruptRequested) {
+      failTurn(session, 'PROCESS_ERROR', 'el stream del SDK terminó sin result')
+    }
     if (session.heartbeat) { clearInterval(session.heartbeat); session.heartbeat = null }
+    if (session.heldDoneTimer) { clearTimeout(session.heldDoneTimer); session.heldDoneTimer = null }
     session.processingTurn = false
     // The for-await loop only ends when the message queue closes (closeSession) or the
-    // stream errors — the session is truly over, so drop it from the registry.
-    sessions.delete(conversationId)
+    // stream errors — the session is truly over, so drop it from the registry (only if
+    // it is still THIS session: a retry may already have opened the next one).
+    if (sessions.get(conversationId) === session) sessions.delete(conversationId)
     // Always ensure UI resets — covers budget exceeded, errors, etc.
     sendEvent({ type: 'done' })
     sendDone()
     logger.info(`Stream loop ended (${conversationId})`)
   }
+}
+
+function parentToolUseIdOf(msgObj: Record<string, unknown>): string | null {
+  const id = (msgObj as { parent_tool_use_id?: string | null }).parent_tool_use_id
+  return typeof id === 'string' && id ? id : null
 }
 
 // ============================================================
@@ -1072,6 +1276,7 @@ function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string,
         // Campo heredado del antiguo Modo Turbo (nombre sin cambios por contrato con el
         // backend) — ahora refleja si ESTA sesión corrió en modo "Potente" (Opus + xhigh).
         turbo: session?.powerful ?? false,
+        quoteId: session ? getActiveQuoteId(session.conversationId) : undefined,
       })
     }
     // El evento al renderer conserva el costo ACUMULADO (footer de costo de la sesión).

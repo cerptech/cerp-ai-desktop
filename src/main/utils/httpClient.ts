@@ -63,6 +63,51 @@ export class SessionRevokedError extends HttpError {
   }
 }
 
+/**
+ * Tope de una llamada al core (RQM-166). Sin él, una respuesta que no llega dejaba la
+ * tool del agente esperando y la carga "trabajando" sin desenlace. 5 min = el request
+ * timeout de Cloud Run: nada que tarde más llega a responder igual.
+ */
+const REQUEST_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * El core no respondió a tiempo. El `message` es el texto que recibe el modelo cuando
+ * la lanza una tool (todas devuelven `err.message`): fallo del sistema, no de los datos,
+ * y una escritura pudo haberse aplicado igual — se verifica antes de repetirla.
+ */
+export class RequestTimeoutError extends Error {
+  readonly code = 'REQUEST_TIMEOUT' as const
+
+  constructor(method: string, path: string) {
+    super(
+      `El servidor de CERP no respondió en ${REQUEST_TIMEOUT_MS / 60_000} minutos (${method} ${path.split('?')[0]}). ` +
+        'Es un fallo del sistema, no de los datos. Si era una escritura, comprobá con una lectura si se aplicó antes de repetirla; ' +
+        'si vuelve a fallar, avisá al usuario que el servidor no responde.',
+    )
+    this.name = 'RequestTimeoutError'
+  }
+}
+
+/** `fetch` con el tope de REQUEST_TIMEOUT_MS (cubre también la lectura del body). */
+async function fetchWithTimeout(method: string, path: string, url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) throw new RequestTimeoutError(method, path)
+    throw err
+  }
+}
+
+/** Lee el body de una respuesta ok traduciendo un corte por timeout a RequestTimeoutError. */
+async function readJson<T>(res: Response, method: string, path: string): Promise<T> {
+  try {
+    return (await res.json()) as T
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) throw new RequestTimeoutError(method, path)
+    throw err
+  }
+}
+
 function parseErrorBody(text: string): unknown {
   if (!text) return undefined
   try {
@@ -176,7 +221,7 @@ export class HttpClient {
     if (!token) throw new Error('No auth token available')
 
     const url = `${getApiBaseUrl()}${path}`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout('POST', path, url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -195,7 +240,7 @@ export class HttpClient {
 
     if (!res.ok) throw await this.errorFromResponse(res, retried)
 
-    return res.json() as Promise<T>
+    return readJson<T>(res, 'POST', path)
   }
 
   async downloadFile(path: string, savePath: string, retried = false): Promise<void> {
@@ -203,7 +248,7 @@ export class HttpClient {
     if (!token) throw new Error('No auth token available')
 
     const url = `${getApiBaseUrl()}${path}`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout('GET', path, url, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -221,7 +266,13 @@ export class HttpClient {
     if (!res.ok) throw await this.errorFromResponse(res, retried)
 
     const { writeFileSync } = require('fs')
-    const buffer = Buffer.from(await res.arrayBuffer())
+    let buffer: Buffer
+    try {
+      buffer = Buffer.from(await res.arrayBuffer())
+    } catch (err) {
+      if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) throw new RequestTimeoutError('GET', path)
+      throw err
+    }
     writeFileSync(savePath, buffer)
   }
 
@@ -237,7 +288,7 @@ export class HttpClient {
     if (!token) throw new Error('No auth token available')
 
     const url = `${getApiBaseUrl()}${path}`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(method, path, url, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -265,6 +316,6 @@ export class HttpClient {
     // siempre); si el reintento también lo recibe, la sesión está revocada.
     if (!res.ok) throw await this.errorFromResponse(res, retried)
 
-    return res.json() as Promise<T>
+    return readJson<T>(res, method, path)
   }
 }
