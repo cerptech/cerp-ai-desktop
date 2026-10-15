@@ -4,7 +4,6 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { HttpClient } from '../utils/httpClient'
 import { logger } from '../utils/logger'
-import { getActiveQuoteId } from './quoteHeartbeat'
 
 /**
  * Reporta el consumo de tokens por ejecución al backend (rentabilidad por cliente,
@@ -98,6 +97,8 @@ export interface ExecutionUsage {
   /** true si la sesión corrió en modo "Potente" (Opus + xhigh). Nombre heredado del
    *  antiguo Modo Turbo — se mantiene sin cambios por contrato con el backend. */
   turbo?: boolean
+  /** Reserva del cortafuegos de la conversación que generó este consumo, si hay una. */
+  quoteId?: string
 }
 
 /**
@@ -155,7 +156,7 @@ export function reportExecutionUsage(usage: ExecutionUsage): void {
     turbo: usage.turbo ?? false,
     contextId: sessionContextId ?? undefined,
     kind: 'desktop_agent',
-    quoteId: getActiveQuoteId(),
+    quoteId: usage.quoteId,
     idempotencyKey,
   }
 

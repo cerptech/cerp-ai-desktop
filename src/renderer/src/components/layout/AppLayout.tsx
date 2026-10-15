@@ -1,7 +1,6 @@
 import { ReactNode, useState } from 'react'
 import cerpLogo from '@/assets/images/cerp-logo.png'
 import { CreditBalanceBadge } from './CreditBalanceBadge'
-import { QuoteFirewallBanner } from './QuoteFirewallBanner'
 import { CreditHistoryPanel } from './CreditHistoryPanel'
 import { SessionStatusBadge } from './SessionStatusBadge'
 
@@ -75,9 +74,6 @@ export function AppLayout({ children, userName, onLogout, sessionActive = false,
           </div>
         )}
       </header>
-
-      {/* Cortafuegos de cotización — estado en vivo (reserva/commit/rollback) */}
-      <QuoteFirewallBanner />
 
       {/* Main content */}
       <main className="flex-1 overflow-hidden">{children}</main>

@@ -111,6 +111,15 @@ export function resolveAnswer(conversationId: string, answers: UserAnswerPayload
 }
 
 /**
+ * true mientras la conversación espera la respuesta del usuario a una pregunta
+ * (ask_user_question o una confirmación de cronograma). El watchdog de turno no
+ * cuenta ese tiempo como inactividad: es el usuario el que tiene que moverse.
+ */
+export function hasPendingQuestion(conversationId: string = DEFAULT_CONV): boolean {
+  return pending.has(conversationId)
+}
+
+/**
  * Called when a session is closed or aborted — rejects its pending question.
  */
 export function cancelPendingQuestion(conversationId: string = DEFAULT_CONV): void {

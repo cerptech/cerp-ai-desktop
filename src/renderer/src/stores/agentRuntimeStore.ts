@@ -1,5 +1,6 @@
 import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload, ModelChoice } from '../../../preload/index'
 import type { ChatMessage, ToolExecution, SubagentStep, AgentDelegation } from '../hooks/useAgent'
+import { GENERIC_RETRY_PROMPT } from '../utils/retryPrompt'
 
 /**
  * agentRuntimeStore — estado de streaming POR conversación.
@@ -26,6 +27,11 @@ export interface ConversationRuntime {
   error: string | null
   /** Distinguishes specific error causes (e.g. 'NO_CREDITS') so the UI can react differently. */
   errorCode: string | null
+  /**
+   * El turno se cortó por un fallo (RQM-166): prompt que manda "Reintentar" para
+   * retomar donde quedó. null = el error no se resuelve reintentando.
+   */
+  retryPrompt: string | null
   activeAgentDelegation: AgentDelegation | null
   promptSuggestions: string[]
   statusMessage: string | null
@@ -92,6 +98,7 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   activeTool: null,
   error: null,
   errorCode: null,
+  retryPrompt: null,
   activeAgentDelegation: null,
   promptSuggestions: [],
   statusMessage: null,
@@ -227,6 +234,20 @@ function persistNewMessages(conversationId: string, rt: ConversationRuntime): vo
 
 // ── Reducer (port fiel del switch de useAgent) ───────────────────────────────
 
+/**
+ * Cierra lo que haya quedado "running" al terminar el turno — incluidos los pasos de
+ * subagente: antes solo se cerraban las tools de nivel superior y un paso cuyo
+ * resultado nunca llegó quedaba girando con un contador de días (captura de RQM-166).
+ */
+function settleRunningTools(tools: ToolExecution[], status: 'done' | 'error', now: number): ToolExecution[] {
+  return tools.map((t) => {
+    const steps = t.subagentSteps?.some((s) => s.status === 'running')
+      ? t.subagentSteps.map((s) => (s.status === 'running' ? { ...s, status, endTime: now } : s))
+      : t.subagentSteps
+    return t.status === 'running' ? { ...t, status, endTime: now, subagentSteps: steps } : steps !== t.subagentSteps ? { ...t, subagentSteps: steps } : t
+  })
+}
+
 function updateLastAssistant(
   messages: ChatMessage[],
   currentDelegation: string | null,
@@ -255,6 +276,13 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
   // arrastrar el `committed`/`buffer` del turno anterior.
   if (event.type === 'stream_start') {
     return { ...rt, isStreaming: true, isPending: false, lastEvent: now, textAccumulator: EMPTY_TEXT_ACCUMULATOR }
+  }
+
+  // Latido del main (cada 5 s con un turno en curso): el agente sigue vivo. Como
+  // stream_start, no limpia el gate de waitingAfterAnswer (Bug #4); a diferencia de
+  // stream_start, NO resetea el acumulador de texto: llega en medio de un bloque.
+  if (event.type === 'heartbeat') {
+    return { ...rt, isStreaming: true, isPending: false, lastEvent: now }
   }
 
   // Primer evento real: limpiar pending + el gate de waitingAfterAnswer (Bug #4, línea 173 del hook).
@@ -473,11 +501,12 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       }
     }
     case 'error': {
-      const tools = r.tools.map((t) => (t.status === 'running' ? { ...t, status: 'error' as const, endTime: now } : t))
+      const tools = settleRunningTools(r.tools, 'error', now)
       return {
         ...r,
         error: event.message,
         errorCode: event.code ?? null,
+        retryPrompt: event.retryPrompt ?? null,
         isStreaming: false,
         isPending: false,
         activeTool: null,
@@ -500,7 +529,7 @@ function handleDone(conversationId: string): void {
     // no emitió nada, un done viejo no debe resetear isStreaming/isPending.
     if (rt.waitingAfterAnswer) return rt
     const now = Date.now()
-    const tools = rt.tools.map((t) => (t.status === 'running' ? { ...t, status: 'done' as const, endTime: now } : t))
+    const tools = settleRunningTools(rt.tools, 'done', now)
     const messages = (() => {
       const last = rt.messages[rt.messages.length - 1]
       if (last?.role === 'assistant' && tools.length > 0) {
@@ -516,6 +545,11 @@ function handleDone(conversationId: string): void {
 // ── Suscripción IPC única (se monta una sola vez) ────────────────────────────
 
 let ipcWired = false
+
+/** Sin eventos con el agente ya trabajando: el main late cada 5 s, así que 90 s = no responde. */
+const STALL_STREAMING_MS = 90_000
+/** Sin el primer evento del turno: el arranque de una sesión nueva puede tardar varios minutos. */
+const STALL_PENDING_MS = 12 * 60_000
 
 function ensureIpcWired(): void {
   if (ipcWired) return
@@ -559,21 +593,42 @@ function ensureIpcWired(): void {
     update(id, (rt) => ({ ...rt, pendingQuestions: questions, needsNewAssistant: true }))
   })
 
-  // Timer de inactividad (fallback): 60s sin eventos con isStreaming = stall real.
-  // El heartbeat del main (cada 5s mientras procesa) evita que se dispare en pausas legítimas.
+  // Timer de inactividad (fallback). Con un turno en curso el main late cada 5 s y su
+  // propio watchdog corta un SDK colgado (con un error que ya trae Reintentar), así que
+  // 90 s sin NINGÚN evento = el main dejó de responder. Antes esto apagaba el spinner en
+  // silencio (RQM-166: el usuario no se enteraba de nada); ahora deja un error visible
+  // con Reintentar. Antes del primer evento (isPending) el arranque de la sesión puede
+  // tardar (config + contexto de empresa), por eso el margen es mayor.
   setInterval(() => {
     const now = Date.now()
     for (const [id, rt] of runtimes) {
-      if (rt.isStreaming && now - rt.lastEvent > 60_000) {
-        update(id, (r) => {
-          const tools = r.tools.map((t) => (t.status === 'running' ? { ...t, status: 'done' as const, endTime: now } : t))
-          const last = r.messages[r.messages.length - 1]
-          const messages = last?.role === 'assistant' && tools.length > 0
-            ? [...r.messages.slice(0, -1), { ...last, tools: [...tools] }]
-            : r.messages
-          return { ...r, isStreaming: false, activeTool: null, activeAgentDelegation: null, currentDelegation: null, tools, messages }
-        })
-      }
+      if (!rt.isStreaming && !rt.isPending) continue
+      const stalledMs = now - rt.lastEvent
+      if (stalledMs <= (rt.isPending ? STALL_PENDING_MS : STALL_STREAMING_MS)) continue
+      update(id, (r) => {
+        const tools = settleRunningTools(r.tools, 'error', now)
+        const last = r.messages[r.messages.length - 1]
+        const messages = last?.role === 'assistant' && tools.length > 0
+          ? [...r.messages.slice(0, -1), { ...last, tools: [...tools] }]
+          : r.messages
+        return {
+          ...r,
+          isStreaming: false,
+          isPending: false,
+          activeTool: null,
+          activeAgentDelegation: null,
+          currentDelegation: null,
+          tools,
+          messages,
+          error: 'CERP IA dejó de responder y la ejecución se detuvo. Es un problema del sistema, no de tus datos. Lo que ya se cargó en CERP quedó guardado: pulsa «Reintentar» para continuar donde quedó.',
+          errorCode: 'STALLED',
+          retryPrompt: GENERIC_RETRY_PROMPT,
+        }
+      })
+      // La sesión de esa conversación puede seguir viva pero inaccesible: se cierra para
+      // que el reintento arranque una limpia (best-effort: si el main no responde, nada).
+      window.cerpAPI.resetSession(id).catch(() => { /* main sin respuesta */ })
+      persistNewMessages(id, getRuntime(id))
     }
   }, 5_000)
 }
@@ -609,8 +664,10 @@ export async function sendPrompt(
     ...rt,
     error: null,
     errorCode: null,
+    retryPrompt: null,
     isStreaming: true,
     isPending: true,
+    lastEvent: Date.now(),
     activeTool: null,
     activeAgentDelegation: null,
     promptSuggestions: [],
@@ -691,6 +748,7 @@ export async function submitAnswers(
     waitingAfterAnswer: true,
     isPending: true,
     isStreaming: true,
+    lastEvent: Date.now(),
   }))
   persistNewMessages(conversationId, getRuntime(conversationId))
 

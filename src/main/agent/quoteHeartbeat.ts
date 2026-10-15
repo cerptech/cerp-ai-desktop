@@ -9,42 +9,52 @@ import { logger } from '../utils/logger'
  * cuelga o el usuario cierra la app sin terminar, los latidos se detienen y el
  * watchdog del backend refunda la reserva por timeout. Así un crédito nunca queda
  * "consumido" por una tarea que murió a mitad de camino.
+ *
+ * Una reserva POR CONVERSACIÓN (RQM-166): antes había un solo timer global, así que
+ * la reserva de una segunda conversación reemplazaba a la primera (que dejaba de latir
+ * y el watchdog la refundaba a mitad de la carga), y cerrar cualquier sesión detenía
+ * el latido de todas.
  */
 
 const HEARTBEAT_INTERVAL_MS = 10_000
 
-let timer: NodeJS.Timeout | null = null
-let activeQuoteId: string | null = null
+interface ActiveReservation {
+  quoteId: string
+  timer: NodeJS.Timeout
+}
 
-/** Arranca (o reemplaza) el heartbeat para una reserva recién creada. */
-export function startQuoteHeartbeat(quoteId: string, httpClient: HttpClient): void {
-  stopQuoteHeartbeat()
-  activeQuoteId = quoteId
-  logger.info(`Quote heartbeat iniciado para reserva ${quoteId}`)
-  timer = setInterval(() => {
-    if (!activeQuoteId) return
-    httpClient.post(`/quotes/${activeQuoteId}/heartbeat`, {}).catch((err) => {
+const reservations = new Map<string, ActiveReservation>()
+
+/** Arranca (o reemplaza) el heartbeat de la reserva recién creada en esta conversación. */
+export function startQuoteHeartbeat(conversationId: string, quoteId: string, httpClient: HttpClient): void {
+  stopQuoteHeartbeat(conversationId)
+  logger.info(`Quote heartbeat iniciado para reserva ${quoteId} (${conversationId})`)
+  const timer = setInterval(() => {
+    httpClient.post(`/quotes/${quoteId}/heartbeat`, {}).catch((err) => {
       // 409 (reserva ya no activa) o error de red: no es fatal — el watchdog cubre el caso.
-      logger.warn(`Quote heartbeat falló para ${activeQuoteId}: ${err instanceof Error ? err.message : String(err)}`)
+      logger.warn(`Quote heartbeat falló para ${quoteId}: ${err instanceof Error ? err.message : String(err)}`)
     })
   }, HEARTBEAT_INTERVAL_MS)
+  reservations.set(conversationId, { quoteId, timer })
 }
 
-/** Detiene el heartbeat (commit, refund, abort o cierre de sesión). */
-export function stopQuoteHeartbeat(): void {
-  if (timer) {
-    clearInterval(timer)
-    timer = null
-  }
-  if (activeQuoteId) {
-    logger.info(`Quote heartbeat detenido para reserva ${activeQuoteId}`)
-    activeQuoteId = null
-  }
+/** Detiene el heartbeat de esta conversación (commit, refund, abort o cierre de sesión). */
+export function stopQuoteHeartbeat(conversationId: string): void {
+  const r = reservations.get(conversationId)
+  if (!r) return
+  clearInterval(r.timer)
+  reservations.delete(conversationId)
+  logger.info(`Quote heartbeat detenido para reserva ${r.quoteId} (${conversationId})`)
 }
 
-/** quoteId de la reserva activa, o null si no hay ninguna. */
-export function getActiveReservationId(): string | null {
-  return activeQuoteId
+/** Detiene todos los heartbeats (logout / reset global). */
+export function stopAllQuoteHeartbeats(): void {
+  for (const id of [...reservations.keys()]) stopQuoteHeartbeat(id)
+}
+
+/** quoteId de la reserva activa de esta conversación, o null si no hay ninguna. */
+export function getActiveReservationId(conversationId: string): string | null {
+  return reservations.get(conversationId)?.quoteId ?? null
 }
 
 /**
@@ -52,6 +62,6 @@ export function getActiveReservationId(): string | null {
  * conveniente para spread en bodies de request donde `undefined` se omite en el JSON
  * (usageReporter la usa para adjuntar el quoteId de la cotización en curso, si hay una).
  */
-export function getActiveQuoteId(): string | undefined {
-  return activeQuoteId ?? undefined
+export function getActiveQuoteId(conversationId: string): string | undefined {
+  return getActiveReservationId(conversationId) ?? undefined
 }

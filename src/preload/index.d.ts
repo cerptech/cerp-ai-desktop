@@ -39,10 +39,16 @@ export interface AskUserQuestionItem {
 
 export type UserAnswerPayload = Record<string, string | string[]>
 
+// Cada evento lleva su conversationId. `cause` del rollback: 'data' = el entregable no
+// pasó la validación; 'system' = la ejecución se cortó por un fallo nuestro; 'user' =
+// la canceló el usuario. Espejo de main/agent/quoteEventsBridge.ts.
+export type QuoteFailureCause = 'data' | 'system' | 'user'
 export type QuoteFirewallEvent =
-  | { kind: 'reserved'; quoteId: string; source: string; requiresAction: boolean }
-  | { kind: 'committed'; quoteId: string }
-  | { kind: 'rolled_back'; quoteId: string; reason: string; message: string; failures: string[] }
+  | { kind: 'reserved'; conversationId: string; quoteId: string; source: string; requiresAction: boolean }
+  | { kind: 'paused'; conversationId: string; quoteId: string }
+  | { kind: 'resumed'; conversationId: string; quoteId: string }
+  | { kind: 'committed'; conversationId: string; quoteId: string; projectId?: string; projectName?: string; budgetId?: string }
+  | { kind: 'rolled_back'; conversationId: string; quoteId: string; reason: string; message: string; failures: string[]; cause: QuoteFailureCause }
 
 export type AgentStreamEvent =
   | { type: 'text'; text: string }
@@ -54,6 +60,8 @@ export type AgentStreamEvent =
   | { type: 'thinking'; text: string }
   | { type: 'status'; message: string }
   | { type: 'stream_start' }
+  // Latido del main mientras hay un turno en curso (no toca el acumulador de texto).
+  | { type: 'heartbeat' }
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
@@ -68,7 +76,8 @@ export type AgentStreamEvent =
   | { type: 'done'; cost?: number; turns?: number; duration?: number; tokensIn?: number; tokensOut?: number }
   // `code` distinguishes specific error causes the renderer needs to react to differently
   // (e.g. 'NO_CREDITS' → paywall banner instead of the generic error toast).
-  | { type: 'error'; message: string; code?: string }
+  // `retryPrompt`: el turno se cortó por un fallo y "Reintentar" retoma donde quedó.
+  | { type: 'error'; message: string; code?: string; retryPrompt?: string }
 
 /** Lienzo HTML emitido por la tool `show_html` durante un turno del asistente. */
 export interface HtmlCanvas {
