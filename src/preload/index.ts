@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse } from '../main/ipc/types'
+
+// Tipos de la pantalla «Apps» (apps conectadas) para el renderer.
+export type {
+  ConnectedIntegration,
+  IntegrationActionResult,
+  IntegrationCatalogItem,
+  IntegrationsCatalogResponse,
+  IntegrationsErrorCode,
+  IntegrationsStatusResponse,
+} from '../main/ipc/types'
 import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
 
 const IPC = {

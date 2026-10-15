@@ -1,8 +1,10 @@
 import { ReactNode, useState } from 'react'
+import { Plug } from 'lucide-react'
 import cerpLogo from '@/assets/images/cerp-logo.png'
 import { CreditBalanceBadge } from './CreditBalanceBadge'
 import { CreditHistoryPanel } from './CreditHistoryPanel'
 import { SessionStatusBadge } from './SessionStatusBadge'
+import { ConnectedAppsPanel } from '../integrations/ConnectedAppsPanel'
 
 interface AppLayoutProps {
   children: ReactNode
@@ -16,6 +18,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ children, userName, onLogout, sessionActive = false, onShowOnboarding }: AppLayoutProps) {
   const [showHistory, setShowHistory] = useState(false)
+  const [showApps, setShowApps] = useState(false)
   // Ventana única (Ola 2): sin barra de título nativa — este header ES la barra
   // de arrastre. `titleBarOverlay` (Windows/Linux) dibuja min/max/cerrar sobre
   // la esquina superior derecha; `hiddenInset` (macOS) deja el semáforo a la
@@ -54,6 +57,14 @@ export function AppLayout({ children, userName, onLogout, sessionActive = false,
                 Cómo empezar
               </button>
             )}
+            <button
+              onClick={() => setShowApps(true)}
+              className="flex items-center gap-1 text-xs text-slate-400 hover:text-brand-orange transition-colors"
+              title="Conectar Gmail, Calendar, Drive y otras apps para que CERP AI pueda usarlas"
+            >
+              <Plug className="size-3.5" strokeWidth={2} aria-hidden="true" />
+              Apps
+            </button>
             <CreditBalanceBadge />
             <button
               onClick={() => setShowHistory(true)}
@@ -79,6 +90,7 @@ export function AppLayout({ children, userName, onLogout, sessionActive = false,
       <main className="flex-1 overflow-hidden">{children}</main>
 
       {showHistory && <CreditHistoryPanel onClose={() => setShowHistory(false)} />}
+      {showApps && <ConnectedAppsPanel onClose={() => setShowApps(false)} />}
     </div>
   )
 }
