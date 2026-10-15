@@ -7,47 +7,39 @@
       "prompts": [
         {
           "id": "A1",
-          "title": "Importar respetando capítulos y partidas",
+          "title": "Importar un presupuesto a un proyecto",
           "prompt": "Importa este presupuesto en el proyecto [nombre]. Respeta los capítulos y las partidas tal como vienen en el archivo, sin agrupar ni renombrar nada. Antes de crear nada, muéstrame cuántos capítulos y cuántas partidas has detectado.",
-          "channels": [
-            "web",
-            "desktop"
-          ],
+          "fields": ["nombre"],
           "attachment": "required",
-          "requiresTools": true
+          "requiresTools": true,
+          "channels": ["web", "desktop"]
         },
         {
           "id": "A2",
-          "title": "Montar el presupuesto desde un PDF de adjudicación",
+          "title": "Montar un presupuesto de adjudicación",
           "prompt": "Toma este PDF de adjudicación y monta el presupuesto en CERP. Usa la columna de medición como cantidad y la de precio unitario como coste. Si una partida no trae precio, déjala a cero y dime cuáles han quedado sin valorar.",
-          "channels": [
-            "web",
-            "desktop"
-          ],
+          "fields": [],
           "attachment": "required",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["web", "desktop"]
         },
         {
           "id": "A3",
-          "title": "Valorar contra el banco de ítems",
+          "title": "Valorar un presupuesto con el banco",
           "prompt": "Valora este presupuesto contra el banco de ítems, pero no toques los precios del original: muéstrame la comparación partida por partida antes de aplicar nada.",
-          "channels": [
-            "web",
-            "desktop"
-          ],
+          "fields": [],
           "attachment": "required",
-          "requiresTools": true
+          "requiresTools": true,
+          "channels": ["web", "desktop"]
         },
         {
           "id": "A4",
           "title": "Revisar partidas incompletas",
           "prompt": "Revisa el presupuesto que acabas de importar y dime qué partidas han quedado sin unidad, sin cantidad o sin precio.",
-          "channels": [
-            "web",
-            "desktop"
-          ],
+          "fields": [],
           "attachment": "none",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["web", "desktop"]
         }
       ]
     },
@@ -59,48 +51,46 @@
           "id": "B1",
           "title": "Mover una tarea y recalcular",
           "prompt": "En el proyecto [nombre], mueve el inicio de la tarea [tarea] al [fecha] y recalcula las tareas que dependen de ella. Muéstrame qué se ha movido antes de guardar.",
-          "channels": [
-            "desktop"
-          ],
+          "fields": ["nombre", "tarea", "fecha"],
           "attachment": "none",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["desktop"]
         },
         {
           "id": "B2",
           "title": "Cambiar la fecha de fin del proyecto",
           "prompt": "Cambia la fecha de fin del proyecto [nombre] al [fecha] y dime qué tareas quedan fuera de plazo.",
-          "channels": [
-            "desktop"
-          ],
+          "fields": ["nombre", "fecha"],
           "attachment": "none",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["desktop"]
         },
         {
           "id": "B3",
-          "title": "Tareas atrasadas",
+          "title": "Ver las tareas atrasadas",
           "prompt": "Muéstrame qué tareas del proyecto [nombre] van atrasadas y cuántos días lleva cada una.",
-          "channels": [
-            "web",
-            "desktop"
-          ],
+          "fields": ["nombre"],
           "attachment": "none",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["web", "desktop"]
         },
         {
           "id": "B4",
           "title": "Actualizar el avance desde un parte",
           "prompt": "Actualiza el avance de las partidas del proyecto [nombre] con los datos de este parte de obra. Si no encuentras alguna partida, avísame en vez de crearla.",
-          "channels": [],
+          "fields": ["nombre"],
           "attachment": "required",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": []
         },
         {
           "id": "B5",
           "title": "Asignar una obra a un proyecto",
           "prompt": "Asigna la obra [obra] al proyecto [nombre] y confírmame qué ha quedado vinculado.",
-          "channels": [],
+          "fields": ["obra", "nombre"],
           "attachment": "none",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": []
         }
       ]
     },
@@ -112,50 +102,46 @@
           "id": "C1",
           "title": "Cargar una factura de proveedor",
           "prompt": "Carga esta factura de proveedor en el proyecto [nombre], asignada a la orden de construcción [OC]. Si algún material no existe en el sistema, avísame antes de crearlo.",
-          "channels": [
-            "desktop"
-          ],
+          "fields": ["nombre", "OC"],
           "attachment": "required",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["desktop"]
         },
         {
           "id": "C2",
           "title": "Crear una orden de compra",
           "prompt": "Crea una orden de compra para el proveedor [proveedor] con estos materiales, para la obra [obra]. Muéstrame el total antes de confirmarla.",
-          "channels": [
-            "desktop"
-          ],
+          "fields": ["proveedor", "obra"],
           "attachment": "optional",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["desktop"]
         },
         {
           "id": "C3",
-          "title": "Cargar varias facturas una por una",
+          "title": "Cargar varias facturas",
           "prompt": "Toma estas facturas y cárgalas una por una. Para cada una dime a qué obra y a qué orden la vas a asignar antes de guardarla.",
-          "channels": [
-            "desktop"
-          ],
+          "fields": [],
           "attachment": "required",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["desktop"]
         },
         {
           "id": "C4",
-          "title": "Comparar una factura con su orden de compra",
+          "title": "Comparar una factura con su orden",
           "prompt": "Revisa esta factura contra la orden de compra [OC] y dime qué cantidades o precios no coinciden.",
-          "channels": [
-            "web",
-            "desktop"
-          ],
+          "fields": ["OC"],
           "attachment": "required",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": ["web", "desktop"]
         },
         {
           "id": "C5",
           "title": "Facturas sin orden asignada",
           "prompt": "Muéstrame las facturas de proveedor de la obra [obra] que todavía no están asignadas a ninguna orden.",
-          "channels": [],
+          "fields": ["obra"],
           "attachment": "none",
-          "requiresTools": false
+          "requiresTools": false,
+          "channels": []
         }
       ]
     }

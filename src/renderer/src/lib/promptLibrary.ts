@@ -9,6 +9,7 @@ export interface CatalogPrompt {
   title: string
   prompt: string
   channels: string[]
+  fields?: string[]
   attachment?: string
   requiresTools?: boolean
 }
@@ -61,7 +62,7 @@ export function filterCatalogForChannel(catalog: PromptCatalog, channel: string)
         id: p.id,
         title: p.title,
         prompt: p.prompt,
-        fields: extractFields(p.prompt),
+        fields: Array.isArray(p.fields) ? p.fields : extractFields(p.prompt),
         attachment: toAttachment(p.attachment),
         ...(p.requiresTools ? { requiresTools: true } : {}),
       }))
