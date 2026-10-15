@@ -248,7 +248,8 @@ interface CerpAPI {
   getPathForFile(file: File): string
   transcribeDictation(buffer: ArrayBuffer, mimeType: string): Promise<DictationTranscribeResult>
   onAskUserQuestion(callback: (questions: AskUserQuestionItem[], conversationId: string) => void): () => void
-  submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<void>
+  /** true = la respuesta llegó a la pregunta en curso; false = ya nadie la esperaba. */
+  submitUserAnswers(conversationId: string, answers: UserAnswerPayload): Promise<boolean>
   onQuoteFirewallEvent(callback: (event: QuoteFirewallEvent) => void): () => void
   registerCanvasHtml(html: string): Promise<string | null>
   openCanvasExternal(canvasId: string): Promise<{ success: boolean; error?: string }>

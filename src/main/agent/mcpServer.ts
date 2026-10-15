@@ -10,6 +10,7 @@ import { createScheduleTools } from './scheduleTools'
 import { HttpClient, CompanyChangedError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
+import { normalizeQuestions } from './askUserQuestions'
 import { startQuoteHeartbeat, stopQuoteHeartbeat } from './quoteHeartbeat'
 import { emitQuoteFirewallEvent } from './quoteEventsBridge'
 import { getLoadContext, rememberLoadContext } from './loadContext'
@@ -158,30 +159,42 @@ const DownloadBudgetAttachmentSchema = z.object({
 })
 
 // ── ask_user_question Zod schema ──────────────────────────────────────────────
+// Tolerante a propósito (ver askUserQuestions.ts): una pregunta que no pasa la
+// validación no se muestra, y el agente quedaba anunciando un widget que el usuario
+// nunca veía. Las descripciones dicen lo IDEAL; los límites duros solo rechazan lo
+// que el widget no puede dibujar (sin pregunta, sin opciones, o una lista absurda).
 
 const AskUserQuestionOptionSchema = z.object({
-  label: z.string().describe('Texto corto de la opcion que ve el usuario (1-5 palabras).'),
-  description: z.string().describe('Explicacion adicional de la opcion.'),
+  label: z.string().min(1).describe('Texto corto de la opcion que ve el usuario (1-5 palabras).'),
+  description: z.string().optional().describe('Explicacion adicional de la opcion.'),
 })
 
 const AskUserQuestionItemSchema = z.object({
-  question: z.string().describe('La pregunta completa terminando en signo de interrogacion.'),
-  header: z.string().max(12).describe('Etiqueta corta tipo chip (max 12 chars). Ej: "IVA", "Cliente".'),
-  multiSelect: z.boolean().describe('true si el usuario puede elegir varias opciones.'),
+  question: z.string().min(1).describe('La pregunta completa terminando en signo de interrogacion.'),
+  header: z.string().optional().describe('Etiqueta corta tipo chip, idealmente de hasta 12 caracteres. Ej: "IVA", "Cliente".'),
+  multiSelect: z.boolean().optional().describe('true si el usuario puede elegir varias opciones (por defecto false).'),
   options: z
     .array(AskUserQuestionOptionSchema)
-    .min(2)
-    .max(4)
-    .describe('Entre 2 y 4 opciones. El sistema agrega "Otro..." automaticamente.'),
+    .min(1)
+    .max(8)
+    .describe('Idealmente entre 2 y 4 opciones. El sistema agrega "Otro..." automaticamente.'),
 })
 
 const AskUserQuestionSchema = z.object({
   questions: z
     .array(AskUserQuestionItemSchema)
     .min(1)
-    .max(4)
-    .describe('Entre 1 y 4 preguntas para hacer al usuario en este turno.'),
+    .max(8)
+    .describe('Idealmente entre 1 y 4 preguntas para hacer al usuario en este turno.'),
 })
+
+/** Resumen legible de un error de validación de Zod, para que el modelo sepa qué corregir. */
+function describeValidationError(err: unknown): string {
+  if (err instanceof z.ZodError) {
+    return err.issues.map((i) => `${i.path.join('.') || '(raíz)'}: ${i.message}`).join('; ')
+  }
+  return err instanceof Error ? err.message : String(err)
+}
 
 // ── show_html Zod schema ──────────────────────────────────────────────────
 // Contrato equivalente al part `html` del canal web (cerp-ai-service/lib/agents/parts.ts
@@ -283,18 +296,37 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
 
   // ── ask_user_question tool ────────────────────────────────────────────────
   // Suspends agent execution and shows a structured question widget in the UI.
+  // Es la ÚNICA vía de preguntas en Desktop (la `AskUserQuestion` nativa del SDK está
+  // deshabilitada en agentManager). Si no se puede mostrar, el error le dice al modelo
+  // que pregunte en texto — nunca debe dar por mostrado un widget que no apareció.
   const askUserTool = tool(
     'ask_user_question',
-    'Pide aclaraciones estructuradas al usuario con opciones predefinidas. ' +
-      'Usar SOLO cuando se necesita una decision especifica (IVA, cliente, porcentaje, etc.) ' +
+    'Pide aclaraciones estructuradas al usuario con opciones predefinidas: es la UNICA forma de mostrarle preguntas con opciones en CERP IA Desktop. ' +
+      'Usar cuando se necesita una decision especifica (IVA, cliente, porcentaje, etc.) ' +
       'y hay opciones discretas claramente definidas. ' +
       'NO usar para preguntas abiertas — para eso, escribir texto libre en el chat. ' +
-      'El sistema agrega automaticamente una opcion "Otro..." al final de cada pregunta.',
+      'El sistema agrega automaticamente una opcion "Otro..." al final de cada pregunta. ' +
+      'Si esta tool devuelve error, el usuario NO vio las preguntas: hacelas en texto.',
     AskUserQuestionSchema as any,
     async (args: Record<string, unknown>) => {
+      let questions
       try {
-        const parsed = AskUserQuestionSchema.parse(args)
-        const answers = await waitForAnswer(conversationId, { questions: parsed.questions })
+        questions = normalizeQuestions(AskUserQuestionSchema.parse(args).questions)
+      } catch (err) {
+        const detail = describeValidationError(err)
+        logger.error(`ask_user_question: formato inválido — ${detail}`)
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              error: `Las preguntas no tienen un formato que el selector pueda mostrar (${detail}). El usuario NO las vio. Corregilas y volvé a llamar a ask_user_question, o hacelas en texto.`,
+            }),
+          }],
+          isError: true,
+        }
+      }
+      try {
+        const answers = await waitForAnswer(conversationId, { questions })
         const answerText = Object.entries(answers)
           .map(([q, a]) => `${q}: ${Array.isArray(a) ? a.join(', ') : a}`)
           .join('\n')
@@ -304,12 +336,19 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
         const message = err instanceof Error ? err.message : String(err)
         logger.error(`ask_user_question failed: ${message}`)
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }],
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              error: `No se pudo mostrar la pregunta al usuario (${message}). El usuario NO la vio: no digas que le mostraste opciones; hacé la pregunta en texto.`,
+            }),
+          }],
           isError: true,
         }
       }
     },
-    { annotations: { readOnlyHint: true } },
+    // NO readOnly: las tools read-only pueden correr en paralelo, y dos preguntas a la
+    // vez competían por el mismo widget (la primera volvía al agente como error).
+    { annotations: { readOnlyHint: false } },
   )
 
   // ── show_html tool ────────────────────────────────────────────────────────

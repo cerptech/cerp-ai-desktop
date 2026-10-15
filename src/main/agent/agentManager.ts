@@ -594,6 +594,12 @@ async function startSession(
       // (absorbe lo que antes hacía el Modo Turbo).
       ...(powerful ? ['Workflow'] : []),
     ],
+    // La tool nativa `AskUserQuestion` del SDK espera que el host responda por
+    // canUseTool, y Desktop no lo hace: en las conversaciones de Camacho (2026-09) todas
+    // sus llamadas terminaron en error y el agente quedaba anunciando preguntas que nunca
+    // aparecían. Las preguntas van SOLO por nuestro widget (mcp__cerp__ask_user_question),
+    // que el prompt nombra casi igual — el modelo las confundía.
+    disallowedTools: ['AskUserQuestion'],
     // Potente: orquestación de workflows dinámicos (MVP conservador, sin ultracode).
     enableWorkflows: powerful,
     // NOTE: we never use permissionMode:'plan' because the SDK then auto-injects

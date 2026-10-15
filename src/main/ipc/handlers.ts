@@ -659,8 +659,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   })
 
   // ask_user_question: renderer sends back the user's answers (for a given conversation)
-  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, { conversationId, answers }: { conversationId?: string; answers: UserAnswerPayload }): Promise<void> => {
-    resolveAnswer(conversationId || '__default__', answers)
+  // true = la respuesta destrabó la pregunta en curso; false = ya nadie la esperaba.
+  ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, { conversationId, answers }: { conversationId?: string; answers: UserAnswerPayload }): Promise<boolean> => {
+    return resolveAnswer(conversationId || '__default__', answers)
   })
 
   // App: Get version
