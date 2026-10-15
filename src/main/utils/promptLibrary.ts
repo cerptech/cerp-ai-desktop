@@ -45,10 +45,14 @@ function isString(v: unknown): v is string {
 }
 
 /** Valida la forma del contrato; descarta lo que no encaje en vez de romper la UI. */
+const MAX_TITLE = 80
+const MAX_PROMPT = 2000
+
 export function parsePromptLibrary(raw: unknown): PromptLibraryResponse | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  if (!Array.isArray(r.families)) return null
+  // Un catálogo de otro canal (servicio mal configurado) no se pinta: respaldo.
+  if (r.channel !== 'desktop' || !Array.isArray(r.families)) return null
   const families: PromptLibraryFamily[] = []
   for (const f of r.families as unknown[]) {
     if (!f || typeof f !== 'object') continue
@@ -59,6 +63,7 @@ export function parsePromptLibrary(raw: unknown): PromptLibraryResponse | null {
       if (!p || typeof p !== 'object') continue
       const pr = p as Record<string, unknown>
       if (!isString(pr.id) || !isString(pr.title) || !isString(pr.prompt)) continue
+      if (pr.title.length > MAX_TITLE || pr.prompt.length > MAX_PROMPT) continue
       prompts.push({
         id: pr.id,
         title: pr.title,
@@ -73,7 +78,7 @@ export function parsePromptLibrary(raw: unknown): PromptLibraryResponse | null {
   if (!families.length) return null
   return {
     version: isString(r.version) ? r.version : String(r.version ?? ''),
-    channel: isString(r.channel) ? r.channel : 'desktop',
+    channel: 'desktop',
     families,
   }
 }

@@ -175,8 +175,12 @@ interface StepBodyProps {
 }
 
 function StepBody({ step, connectedFolder, onConnect, onUsePrompt }: StepBodyProps) {
-  // Puntos de partida = los primeros prompts de la biblioteca (catálogo único, F1c).
-  const starterPrompts = usePromptLibrary().families.flatMap((f) => f.prompts).slice(0, 4)
+  // Puntos de partida = un prompt por familia de la biblioteca (catálogo único, F1c),
+  // completando hasta 4 con los siguientes si hay menos familias.
+  const families = usePromptLibrary().families
+  const firstOfEach = families.map((f) => f.prompts[0]).filter(Boolean)
+  const rest = families.flatMap((f) => f.prompts.slice(1))
+  const starterPrompts = [...firstOfEach, ...rest].slice(0, 4)
   switch (step) {
     case 1:
       return (
