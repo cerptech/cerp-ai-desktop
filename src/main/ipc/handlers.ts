@@ -15,6 +15,7 @@ import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
+import { getPromptLibrary, type PromptLibraryResponse } from '../utils/promptLibrary'
 import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
@@ -662,6 +663,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   // true = la respuesta destrabó la pregunta en curso; false = ya nadie la esperaba.
   ipcMain.handle(IPC_CHANNELS.AGENT_USER_ANSWER, async (_event, { conversationId, answers }: { conversationId?: string; answers: UserAnswerPayload }): Promise<boolean> => {
     return resolveAnswer(conversationId || '__default__', answers)
+  })
+
+  // Biblioteca de prompts preparados (F1c): público, sin token. null = respaldo local.
+  ipcMain.handle(IPC_CHANNELS.PROMPT_LIBRARY_GET, async (): Promise<PromptLibraryResponse | null> => {
+    return getPromptLibrary()
   })
 
   // App: Get version

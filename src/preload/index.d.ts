@@ -1,4 +1,5 @@
 import type { CompanyChangedNotice } from '../main/ipc/types'
+import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
 
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
 export type ModelChoice = 'auto' | 'fast' | 'powerful'
@@ -293,6 +294,8 @@ interface CerpAPI {
   getOnboardingProgress(): Promise<OnboardingProgressResponse>
   updateOnboardingProgress(payload: OnboardingProgressUpdate): Promise<OnboardingProgressResponse>
   getVersion(): Promise<string>
+  /** Biblioteca de prompts preparados (F1c): null si cerp-ai-service no responde (se usa el respaldo local). */
+  getPromptLibrary(): Promise<PromptLibraryResponse | null>
   /** Política de modelo de la empresa (ADR 016): null sin sesión o con un backend anterior. */
   getModelPolicy(): Promise<AiModelPolicy | null>
   onUpdateAvailable(callback: (data: { version: string }) => void): () => void

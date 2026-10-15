@@ -1,0 +1,282 @@
+{
+  "version": "2026-10-15.3",
+  "families": [
+    {
+      "id": "budget-import",
+      "title": "Importar un presupuesto",
+      "en": {
+        "title": "Import a budget"
+      },
+      "prompts": [
+        {
+          "id": "A1",
+          "title": "Importar un presupuesto a un proyecto",
+          "prompt": "Importa este presupuesto en el proyecto [nombre]. Respeta los capítulos y las partidas tal como vienen en el archivo, sin agrupar ni renombrar nada. Antes de crear nada, muéstrame cuántos capítulos y cuántas partidas has detectado.",
+          "fields": [
+            "nombre"
+          ],
+          "attachment": "required",
+          "requiresTools": true,
+          "en": {
+            "title": "Import a budget into a project",
+            "prompt": "Import this budget into the project [project name]. Keep the chapters and line items exactly as they appear in the file, without grouping or renaming anything. Before creating anything, show me how many chapters and line items you found."
+          },
+          "channels": [
+            "web",
+            "desktop"
+          ]
+        },
+        {
+          "id": "A2",
+          "title": "Montar un presupuesto de adjudicación",
+          "prompt": "Toma este PDF de adjudicación y monta el presupuesto en CERP. Usa la columna de medición como cantidad y la de precio unitario como coste. Si una partida no trae precio, déjala a cero y dime cuáles han quedado sin valorar.",
+          "fields": [],
+          "attachment": "required",
+          "requiresTools": false,
+          "en": {
+            "title": "Build a budget from an award",
+            "prompt": "Take this award PDF and build the budget in CERP. Use the measurement column as the quantity and the unit price column as the cost. If a line item has no price, set it to zero and tell me which ones were left unpriced."
+          },
+          "channels": [
+            "web",
+            "desktop"
+          ]
+        },
+        {
+          "id": "A3",
+          "title": "Valorar un presupuesto con el banco",
+          "prompt": "Valora este presupuesto contra el banco de ítems, pero no toques los precios del original: muéstrame la comparación partida por partida antes de aplicar nada.",
+          "fields": [],
+          "attachment": "required",
+          "requiresTools": true,
+          "en": {
+            "title": "Price a budget against the bank",
+            "prompt": "Price this budget against the item bank, but do not change the original prices: show me the comparison line by line before applying anything."
+          },
+          "channels": [
+            "desktop"
+          ]
+        },
+        {
+          "id": "A4",
+          "title": "Revisar partidas incompletas",
+          "prompt": "Revisa el presupuesto que acabas de importar y dime qué partidas han quedado sin unidad, sin cantidad o sin precio.",
+          "fields": [],
+          "attachment": "none",
+          "requiresTools": false,
+          "en": {
+            "title": "Review incomplete line items",
+            "prompt": "Review the budget you just imported and tell me which line items are missing a unit, a quantity or a price."
+          },
+          "channels": [
+            "web",
+            "desktop"
+          ]
+        },
+        {
+          "id": "A5",
+          "title": "Crear una cotización de obra",
+          "prompt": "Quiero crear un presupuesto de obra a partir de los archivos de mi carpeta de trabajo. Analízalos, monta el presupuesto en CERP y genera el PDF de la cotización. Antes de crear nada, muéstrame los capítulos y partidas que has detectado.",
+          "fields": [],
+          "attachment": "required",
+          "requiresTools": true,
+          "en": {
+            "title": "Create a construction quote",
+            "prompt": "I want to create a construction budget from the files in my working folder. Analyse them, build the budget in CERP and generate the quote PDF. Before creating anything, show me the chapters and line items you found."
+          },
+          "channels": [
+            "desktop"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "project-dates",
+      "title": "Fechas y datos del proyecto",
+      "en": {
+        "title": "Project dates and details"
+      },
+      "prompts": [
+        {
+          "id": "B1",
+          "title": "Mover una tarea y recalcular",
+          "prompt": "En el proyecto [nombre], mueve el inicio de la tarea [tarea] al [fecha] y recalcula las tareas que dependen de ella. Muéstrame qué se ha movido antes de guardar.",
+          "fields": [
+            "nombre",
+            "tarea",
+            "fecha"
+          ],
+          "attachment": "none",
+          "requiresTools": false,
+          "en": {
+            "title": "Move a task and recalculate",
+            "prompt": "In the project [project name], move the start of the task [task] to [date] and recalculate the tasks that depend on it. Show me what moved before saving."
+          },
+          "channels": [
+            "desktop"
+          ]
+        },
+        {
+          "id": "B2",
+          "title": "Cambiar la fecha de fin del proyecto",
+          "prompt": "Cambia la fecha de fin del proyecto [nombre] al [fecha] y dime qué tareas quedan fuera de plazo.",
+          "fields": [
+            "nombre",
+            "fecha"
+          ],
+          "attachment": "none",
+          "requiresTools": false,
+          "en": {
+            "title": "Change the project end date",
+            "prompt": "Change the end date of the project [project name] to [date] and tell me which tasks fall behind schedule."
+          },
+          "channels": [
+            "desktop"
+          ]
+        },
+        {
+          "id": "B3",
+          "title": "Ver las tareas atrasadas",
+          "prompt": "Muéstrame qué tareas del proyecto [nombre] van atrasadas y cuántos días lleva cada una.",
+          "fields": [
+            "nombre"
+          ],
+          "attachment": "none",
+          "requiresTools": false,
+          "en": {
+            "title": "See overdue tasks",
+            "prompt": "Show me which tasks in the project [project name] are overdue and by how many days each one is late."
+          },
+          "channels": [
+            "web",
+            "desktop"
+          ]
+        },
+        {
+          "id": "B4",
+          "title": "Actualizar el avance desde un parte",
+          "prompt": "Actualiza el avance de las partidas del proyecto [nombre] con los datos de este parte de obra. Si no encuentras alguna partida, avísame en vez de crearla.",
+          "fields": [
+            "nombre"
+          ],
+          "attachment": "required",
+          "requiresTools": false,
+          "en": {
+            "title": "Update progress from a site report",
+            "prompt": "Update the progress of the line items in the project [project name] with the data from this site report. If you cannot find a line item, tell me instead of creating it."
+          },
+          "channels": []
+        },
+        {
+          "id": "B5",
+          "title": "Asignar una obra a un proyecto",
+          "prompt": "Asigna la obra [obra] al proyecto [nombre] y confírmame qué ha quedado vinculado.",
+          "fields": [
+            "obra",
+            "nombre"
+          ],
+          "attachment": "none",
+          "requiresTools": false,
+          "en": {
+            "title": "Assign a site to a project",
+            "prompt": "Assign the site [site] to the project [project name] and confirm what has been linked."
+          },
+          "channels": []
+        }
+      ]
+    },
+    {
+      "id": "purchases-invoices",
+      "title": "Órdenes de compra y facturas",
+      "en": {
+        "title": "Purchase orders and invoices"
+      },
+      "prompts": [
+        {
+          "id": "C1",
+          "title": "Cargar una factura de proveedor",
+          "prompt": "Carga esta factura de proveedor en el proyecto [nombre], asignada a la orden de construcción [número de orden]. Si algún material no existe en el sistema, avísame antes de crearlo.",
+          "fields": [
+            "nombre",
+            "número de orden"
+          ],
+          "attachment": "required",
+          "requiresTools": false,
+          "en": {
+            "title": "Upload a supplier invoice",
+            "prompt": "Upload this supplier invoice to the project [project name], assigned to the construction order [order number]. If any material does not exist in the system, tell me before creating it."
+          },
+          "channels": [
+            "desktop"
+          ]
+        },
+        {
+          "id": "C2",
+          "title": "Crear una orden de compra",
+          "prompt": "Crea una orden de compra para el proveedor [proveedor] con estos materiales, para la obra [obra]. Muéstrame el total antes de confirmarla.",
+          "fields": [
+            "proveedor",
+            "obra"
+          ],
+          "attachment": "optional",
+          "requiresTools": false,
+          "en": {
+            "title": "Create a purchase order",
+            "prompt": "Create a purchase order for the supplier [supplier] with these materials, for the site [site]. Show me the total before confirming it."
+          },
+          "channels": [
+            "desktop"
+          ]
+        },
+        {
+          "id": "C3",
+          "title": "Cargar varias facturas",
+          "prompt": "Toma estas facturas y cárgalas una por una. Para cada una dime a qué obra y a qué orden de construcción la vas a asignar antes de guardarla.",
+          "fields": [],
+          "attachment": "required",
+          "requiresTools": false,
+          "en": {
+            "title": "Upload several invoices",
+            "prompt": "Take these invoices and upload them one by one. For each one, tell me which site and which construction order you will assign it to before saving it."
+          },
+          "channels": [
+            "desktop"
+          ]
+        },
+        {
+          "id": "C4",
+          "title": "Comparar una factura con su orden",
+          "prompt": "Revisa esta factura contra la orden de compra [número de orden] y dime qué cantidades o precios no coinciden.",
+          "fields": [
+            "número de orden"
+          ],
+          "attachment": "required",
+          "requiresTools": false,
+          "en": {
+            "title": "Compare an invoice with its order",
+            "prompt": "Check this invoice against the purchase order [order number] and tell me which quantities or prices do not match."
+          },
+          "channels": [
+            "web",
+            "desktop"
+          ]
+        },
+        {
+          "id": "C5",
+          "title": "Facturas sin orden asignada",
+          "prompt": "Muéstrame las facturas de proveedor de la obra [obra] que todavía no están asignadas a ninguna orden.",
+          "fields": [
+            "obra"
+          ],
+          "attachment": "none",
+          "requiresTools": false,
+          "en": {
+            "title": "Invoices with no order assigned",
+            "prompt": "Show me the supplier invoices for the site [site] that are not yet assigned to any order."
+          },
+          "channels": []
+        }
+      ]
+    }
+  ]
+}
