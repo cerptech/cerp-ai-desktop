@@ -562,8 +562,9 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       // schedule_update_annotation y schedule_set_settings piden confirmación al
       // usuario en esta conversación antes de escribir.
       ...createScheduleTools(httpClient, conversationId),
-      // Apps conectadas (Composio): POST /ai-tools/:name sin companyId, igual que el cronograma.
-      ...createAppTools(httpClient),
+      // Apps conectadas (Composio): POST /ai-tools/:name sin companyId, igual que el cronograma;
+      // run_app_tool pide confirmación al usuario en esta conversación antes de escribir.
+      ...createAppTools(httpClient, conversationId),
     ],
   })
 }
