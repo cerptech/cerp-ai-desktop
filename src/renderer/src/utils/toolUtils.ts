@@ -102,6 +102,12 @@ const KNOWN_TOOL_LABELS: Record<string, string> = {
   create_supplier_invoice_from_document: 'Cargando factura de proveedor',
   create_client_invoice_from_document: 'Cargando factura de cliente',
   create_expense_from_document: 'Registrando gasto',
+  // Apps conectadas (Composio)
+  list_connected_apps: 'Viendo tus apps conectadas',
+  search_apps_tools: 'Buscando acciones en tus apps',
+  get_app_tool_schema: 'Revisando la acción',
+  run_app_tool: 'Ejecutando la acción en tu app',
+  connect_app: 'Preparando la conexión de la app',
 }
 
 /**
