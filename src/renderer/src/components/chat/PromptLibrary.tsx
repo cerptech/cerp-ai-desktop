@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { FileText, FileInput, FolderOpen, RotateCw } from 'lucide-react'
+import { ChevronRight, FileText, FileInput, RotateCw } from 'lucide-react'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import type { PromptLibraryFamily, PromptLibraryPrompt } from '@/lib/promptLibrary'
 
@@ -27,8 +27,8 @@ interface PromptLibraryProps {
  * un id, su tarjeta simplemente no se muestra.
  */
 const FEATURED: { id: string; icon: LucideIcon; description: string }[] = [
-  { id: 'A5', icon: FileText, description: 'A partir de planos, mediciones o una descripción del trabajo.' },
-  { id: 'A1', icon: FileInput, description: 'Lee tu Excel o PDF y lo carga en CERP con capítulos y partidas.' },
+  { id: 'A5', icon: FileText, description: 'Desde planos, mediciones o una descripción.' },
+  { id: 'A1', icon: FileInput, description: 'Tu Excel o PDF, cargado con capítulos y partidas.' },
 ]
 
 /** Estado de un prompt que necesita Git/Python mientras se preparan. */
@@ -42,9 +42,10 @@ function gateOf(prompt: PromptLibraryPrompt, toolsSetup?: ToolsSetupInfo) {
 }
 
 /**
- * Inicio del chat (F1c, rediseño): dos tareas destacadas y «Más tareas» por
- * familia en pestañas. El catálogo es único (cerp-ai-service, con respaldo
- * local) y llega ya filtrado al canal desktop, agrupado por familia.
+ * Tareas del inicio (F1c, rediseño «escribir primero»): debajo del cuadro de
+ * mensaje, dos destacadas y el resto por familia en pestañas. El catálogo es
+ * único (cerp-ai-service, con respaldo local) y llega ya filtrado al canal
+ * desktop, agrupado por familia.
  */
 export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: PromptLibraryProps) {
   const featured = useMemo(
@@ -86,9 +87,9 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
   }
 
   return (
-    <div className="flex w-full flex-col gap-6">
+    <div className="flex w-full flex-col gap-4">
       {featured.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2.5">
           {featured.map(({ id, icon: Icon, description, prompt, family }) => {
             const { isPreparing, hasFailed, percent } = gateOf(prompt, toolsSetup)
             return (
@@ -98,23 +99,21 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
                 onClick={() => pick(prompt, family)}
                 disabled={disabled || isPreparing}
                 title={titleOf(prompt)}
-                className="flex flex-col items-start gap-2.5 rounded-2xl border border-composer-border bg-white p-[18px] text-left shadow-[0_1px_2px_rgba(16,24,40,0.04)] outline-none transition-colors hover:border-brand-orange/40 hover:bg-orange-50/40 focus-visible:ring-2 focus-visible:ring-brand-orange/40 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-3 rounded-[14px] border border-composer-border bg-white px-3.5 py-3 text-left outline-none transition-colors hover:border-primary-200 hover:bg-orange-50/40 focus-visible:ring-2 focus-visible:ring-brand-orange/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <span className="inline-flex size-9 items-center justify-center rounded-[10px] bg-primary-50 text-primary-600">
-                  {isPreparing ? <LoadingSpinner size="sm" /> : <Icon className="size-[18px]" strokeWidth={2} aria-hidden="true" />}
+                <span className="inline-flex size-[34px] shrink-0 items-center justify-center rounded-[10px] bg-primary-50 text-primary-600">
+                  {isPreparing ? <LoadingSpinner size="sm" /> : <Icon className="size-[17px]" strokeWidth={2} aria-hidden="true" />}
                 </span>
-                <span className="text-[15px] font-semibold text-brand-black">{prompt.title}</span>
-                <span className="text-[13px] leading-[19px] text-[#52525b]">{description}</span>
-                {isPreparing ? (
-                  <span className="text-[11.5px] text-slate-500">Preparando herramientas… {percent}%</span>
-                ) : hasFailed ? (
-                  <span className="text-[11.5px] text-error">No disponible · Reintentar</span>
-                ) : prompt.attachment === 'required' ? (
-                  <span className="inline-flex items-center gap-1.5 text-[11.5px] text-slate-500">
-                    <FolderOpen className="size-3" strokeWidth={2} aria-hidden="true" />
-                    Usa los archivos de tu carpeta
-                  </span>
-                ) : null}
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-sm font-semibold text-brand-black">{prompt.title}</span>
+                  {isPreparing ? (
+                    <span className="text-xs text-slate-500">Preparando herramientas… {percent}%</span>
+                  ) : hasFailed ? (
+                    <span className="text-xs text-error">No disponible · Reintentar</span>
+                  ) : (
+                    <span className="text-xs leading-[17px] text-[#52525b]">{description}</span>
+                  )}
+                </span>
               </button>
             )
           })}
@@ -122,9 +121,8 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
       )}
 
       {current && (
-        <section aria-label="Más tareas" className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-[11px] font-semibold tracking-[0.08em] text-slate-500">MÁS TAREAS</span>
+        <section aria-label="Más tareas" className="flex flex-col gap-2.5">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             {tabs.map(({ family }) => {
               const selected = family.id === current.family.id
               return (
@@ -133,10 +131,10 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
                   type="button"
                   onClick={() => setSelectedId(family.id)}
                   aria-pressed={selected}
-                  className={`h-[30px] rounded-full border px-3 text-[12.5px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
+                  className={`h-[30px] rounded-full border px-3 text-[12.5px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
                     selected
-                      ? 'border-brand-black bg-brand-black text-white'
-                      : 'border-composer-border bg-white text-[#3f3f46] hover:bg-black/5'
+                      ? 'border-primary-200 bg-primary-50 font-semibold text-primary-800'
+                      : 'border-composer-border bg-white font-medium text-[#3f3f46] hover:bg-black/5'
                   }`}
                 >
                   {family.title}
@@ -144,7 +142,7 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
               )
             })}
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col overflow-hidden rounded-[14px] border border-composer-border">
             {current.prompts.map((prompt) => {
               const { isPreparing, hasFailed } = gateOf(prompt, toolsSetup)
               return (
@@ -154,16 +152,23 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
                   onClick={() => pick(prompt, current.family)}
                   disabled={disabled || isPreparing}
                   title={titleOf(prompt)}
-                  className="flex min-h-11 items-center justify-between gap-2.5 rounded-xl border border-sidebar-border bg-sidebar px-3.5 text-left text-[13px] text-brand-black outline-none transition-colors hover:border-brand-orange/40 hover:bg-orange-50/40 focus-visible:ring-2 focus-visible:ring-brand-orange/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="group flex min-h-[46px] items-center gap-2.5 border-b border-[#f1f1f1] bg-white px-3.5 text-left text-[13.5px] text-brand-black outline-none transition-colors last:border-b-0 hover:bg-orange-50/40 focus-visible:bg-orange-50/40 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <span>{prompt.title}</span>
+                  <span className="flex-1">{prompt.title}</span>
                   {isPreparing ? (
-                    <LoadingSpinner size="sm" />
+                    <span className="inline-flex items-center gap-1.5 text-[11.5px] text-slate-500">
+                      <LoadingSpinner size="sm" />
+                      Preparando…
+                    </span>
                   ) : hasFailed ? (
-                    <RotateCw className="size-3.5 shrink-0 text-error" strokeWidth={2} aria-label="No disponible, reintentar" />
+                    <span className="inline-flex items-center gap-1 text-[11.5px] text-error">
+                      <RotateCw className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      Reintentar
+                    </span>
                   ) : prompt.attachment === 'required' ? (
-                    <FolderOpen className="size-3.5 shrink-0 text-slate-400" strokeWidth={2} aria-label="Usa los archivos de tu carpeta" />
+                    <span className="text-[11.5px] text-slate-500">Usa archivos</span>
                   ) : null}
+                  <ChevronRight className="size-4 shrink-0 text-slate-300 transition-colors group-hover:text-primary-600" strokeWidth={2} aria-hidden="true" />
                 </button>
               )
             })}

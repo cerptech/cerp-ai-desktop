@@ -14,6 +14,7 @@ import {
   Upload,
   X,
   ClipboardCheck,
+  Paperclip,
 } from 'lucide-react'
 import type { ModelChoice } from '@/hooks/useModelChoice'
 import { useModelPolicy } from '@/hooks/useModelPolicy'
@@ -50,6 +51,8 @@ interface ComposerProps {
   onSelectFolder: () => void
   onClearFolder: () => void
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  /** `hero`: el cuadro grande del inicio (3 líneas, letra mayor). Por defecto, el de la conversación. */
+  size?: 'default' | 'hero'
 }
 
 const MODEL_OPTIONS: Array<{ value: ModelChoice; label: string; hint: string; icon: typeof Sparkles }> = [
@@ -93,6 +96,7 @@ export function Composer({
   onSelectFolder,
   onClearFolder,
   textareaRef,
+  size = 'default',
 }: ComposerProps) {
   const [openMenu, setOpenMenu] = useState<'attach' | 'model' | null>(null)
   const attachMenuRef = useRef<HTMLDivElement>(null)
@@ -178,9 +182,28 @@ export function Composer({
   const CurrentModelIcon = currentModel.icon
 
   return (
-    <div className="w-full rounded-3xl border border-composer-border bg-white px-5 pb-[13px] pt-[18px] shadow-[0_4px_18px_rgba(16,24,40,0.05)]">
-      {attachments.length > 0 && (
+    <div className="w-full rounded-3xl border border-zinc-300 bg-white px-5 pb-[13px] pt-[18px] shadow-[0_8px_28px_rgba(16,24,40,0.08)] transition-[border-color,box-shadow] focus-within:border-brand-orange focus-within:shadow-[0_0_0_4px_rgba(254,112,11,0.12),0_8px_28px_rgba(16,24,40,0.08)]">
+      {/* Carpeta de trabajo y adjuntos: fichas dentro del cuadro, cada una con su × */}
+      {(cwd || attachments.length > 0) && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
+          {cwd && (
+            <span
+              className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-lg border border-primary-100 bg-primary-50 pl-2.5 pr-1.5 text-xs font-medium text-primary-800"
+              title={cwd}
+            >
+              <FolderOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span className="truncate">{cwd.split(/[\\/]/).filter(Boolean).pop() || cwd}</span>
+              <button
+                type="button"
+                onClick={onClearFolder}
+                className="shrink-0 rounded p-0.5 text-primary-700 hover:bg-primary-100"
+                title="Quitar carpeta"
+                aria-label="Quitar carpeta"
+              >
+                <X className="size-3" strokeWidth={2} aria-hidden="true" />
+              </button>
+            </span>
+          )}
           {attachments.map((a) => (
             <AttachmentCard key={a.path} attachment={a} onRemove={onRemoveAttachment} />
           ))}
@@ -204,7 +227,9 @@ export function Composer({
           placeholder={placeholder ?? 'Pregunta lo que necesites…'}
           aria-label={placeholder ?? 'Pregunta lo que necesites'}
           disabled={disabled}
-          className="max-h-40 min-h-[26px] w-full resize-none bg-transparent text-base leading-[1.45] text-brand-black outline-none placeholder:text-[#9aa1ad] disabled:text-slate-400"
+          className={`max-h-40 w-full resize-none bg-transparent text-brand-black outline-none placeholder:text-zinc-500 disabled:text-slate-400 ${
+            size === 'hero' ? 'min-h-[69px] text-[15px] leading-[23px]' : 'min-h-[26px] text-base leading-[1.45]'
+          }`}
         />
       )}
 
@@ -281,7 +306,10 @@ export function Composer({
             Modo plan
           </button>
           {/* Formatos que más se usan (la lista completa: ALLOWED_ATTACHMENT_EXTENSIONS) */}
-          <span className="ml-1 truncate text-[11.5px] text-slate-500">PDF · XLSX · DWG</span>
+          <span className="ml-1 inline-flex min-w-0 items-center gap-1.5 text-[11.5px] text-slate-500">
+            <Paperclip className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+            <span className="truncate">PDF, Excel o DWG</span>
+          </span>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -364,8 +392,10 @@ export function Composer({
               title="Enviar"
               onClick={onSubmit}
               disabled={disabled || !canSend}
-              className={`flex size-[34px] items-center justify-center rounded-full bg-brand-orange text-white shadow-[0_2px_8px_rgba(254,112,11,0.35)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 hover:bg-brand-orange-dark ${
-                disabled || !canSend ? 'cursor-default opacity-50 hover:bg-brand-orange' : ''
+              className={`flex size-[34px] items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
+                disabled || !canSend
+                  ? 'cursor-default bg-zinc-100 text-zinc-400'
+                  : 'bg-brand-orange text-white shadow-[0_2px_8px_rgba(254,112,11,0.35)] hover:bg-brand-orange-dark'
               }`}
             >
               <ArrowUp className="size-[19px]" strokeWidth={2.2} aria-hidden="true" />
@@ -375,21 +405,6 @@ export function Composer({
       </div>
       )}
 
-      {/* Chip de carpeta activa — visible cuando hay cwd seleccionado */}
-      {cwd && (
-        <div className="mt-2.5 flex items-center gap-1.5 text-xs text-slate-400">
-          <FolderOpen className="size-3" strokeWidth={2} aria-hidden="true" />
-          <span className="truncate font-mono">{cwd}</span>
-          <button
-            type="button"
-            onClick={onClearFolder}
-            className="ml-auto shrink-0 rounded p-0.5 text-slate-300 hover:text-slate-500 hover:bg-black/5"
-            title="Quitar carpeta"
-          >
-            <X className="size-3" strokeWidth={2} aria-hidden="true" />
-          </button>
-        </div>
-      )}
     </div>
   )
 }

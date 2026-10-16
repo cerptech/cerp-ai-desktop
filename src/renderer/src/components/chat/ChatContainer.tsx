@@ -375,6 +375,44 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   const isEmpty = messages.length === 0
 
+  // Un solo Composer (mismas funciones siempre): en el inicio va grande bajo el
+  // saludo («escribir primero»); dentro de una conversación, abajo como siempre.
+  const composer = (
+    <Composer
+      value={input}
+      onChange={setInput}
+      onSubmit={handleSubmit}
+      disabled={isStreaming || !!pendingQuestions}
+      placeholder={
+        cwd
+          ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…`
+          : isEmpty
+            ? 'Por ejemplo: «Cotiza la reforma de una cocina de 12 m² con los planos de mi carpeta»'
+            : 'Pregunta lo que necesites o arrastra tus archivos…'
+      }
+      streaming={isStreaming}
+      onStop={abort}
+      attachments={attachments}
+      onRemoveAttachment={removeAttachment}
+      attachmentsMaxed={attachments.length >= MAX_ATTACHMENTS}
+      onSelectAttachments={handleSelectAttachments}
+      dictationStatus={dictation.status}
+      onDictate={handleDictate}
+      dictationLevel={dictation.level}
+      dictationElapsedSeconds={dictation.elapsedSeconds}
+      dictationSilence={dictation.silence}
+      modelChoice={modelChoice}
+      onModelChange={setModelChoice}
+      planMode={planMode}
+      onTogglePlanMode={togglePlanMode}
+      cwd={cwd}
+      onSelectFolder={handleSelectFolder}
+      onClearFolder={handleClearFolder}
+      textareaRef={inputRef}
+      size={isEmpty ? 'hero' : 'default'}
+    />
+  )
+
   return (
     <div
       className={`relative flex flex-col flex-1 min-w-0 bg-white ${isDragOver ? 'ring-2 ring-brand-orange/50 ring-inset' : ''}`}
@@ -410,15 +448,21 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       {/* Messages area — autoscroll "stick to bottom" (Ola 2, MessageList) */}
       <MessageList deps={[messages, activeTool, pendingQuestions]} busy={isStreaming} className="px-6">
         {isEmpty ? (
-          <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col gap-6 pb-6 pt-11">
-            <div className="flex flex-col gap-2">
+          <div className="mx-auto flex min-h-full w-full max-w-[720px] flex-col gap-5 pb-6 pt-12">
+            <div className="flex flex-col items-center gap-2 text-center">
               <p className="text-[11px] font-semibold tracking-[0.1em] text-primary-700">{todayLabel()}</p>
               <h2 className="text-[30px] font-bold leading-[38px] tracking-[-0.01em] text-brand-black">
                 Hola{firstName ? `, ${firstName}` : ''}. ¿Qué cotizamos hoy?
               </h2>
               <p className="text-sm leading-[22px] text-brand-gray-dark">
-                Sube pliegos, planos o presupuestos y CERP AI los convierte en cotizaciones listas para revisar.
+                Cuéntale a CERP AI qué necesitas o arrastra tus pliegos, planos o presupuestos.
               </p>
+            </div>
+            {composer}
+            <div className="mt-1.5 flex items-center gap-3" aria-hidden="true">
+              <span className="h-px flex-1 bg-sidebar-border" />
+              <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">O EMPIEZA CON UNA TAREA</span>
+              <span className="h-px flex-1 bg-sidebar-border" />
             </div>
             <PromptLibrary families={promptLibrary.families} onSelect={handleSelectLibraryPrompt} disabled={isStreaming} toolsSetup={toolsSetup} />
           </div>
@@ -532,39 +576,14 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
-      {/* Composer — converge con ai.cerp.es (Ola 2) */}
-      <div className="px-6 pb-4 pt-2">
+      {/* Composer — converge con ai.cerp.es (Ola 2). En el inicio vive arriba (ver `composer`). */}
+      <div className={`px-6 pb-4 ${isEmpty ? 'pt-1' : 'pt-2'}`}>
         <div className="mx-auto max-w-[780px]">
-          <Composer
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            disabled={isStreaming || !!pendingQuestions}
-            placeholder={cwd ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…` : 'Pregunta lo que necesites o arrastra tus archivos…'}
-            streaming={isStreaming}
-            onStop={abort}
-            attachments={attachments}
-            onRemoveAttachment={removeAttachment}
-            attachmentsMaxed={attachments.length >= MAX_ATTACHMENTS}
-            onSelectAttachments={handleSelectAttachments}
-            dictationStatus={dictation.status}
-            onDictate={handleDictate}
-            dictationLevel={dictation.level}
-            dictationElapsedSeconds={dictation.elapsedSeconds}
-            dictationSilence={dictation.silence}
-            modelChoice={modelChoice}
-            onModelChange={setModelChoice}
-            planMode={planMode}
-            onTogglePlanMode={togglePlanMode}
-            cwd={cwd}
-            onSelectFolder={handleSelectFolder}
-            onClearFolder={handleClearFolder}
-            textareaRef={inputRef}
-          />
+          {!isEmpty && composer}
 
           {/* Pie: versión + aviso, centrado. «Nueva conversación» vive en la barra
               lateral; acá solo queda el interruptor de ejecuciones dentro de un chat. */}
-          <div className="relative mt-2 flex items-center justify-center">
+          <div className={`relative flex items-center justify-center ${isEmpty ? '' : 'mt-2'}`}>
             <span className="text-[11px] text-slate-500">v{appVersion} · Revisa siempre las cifras antes de enviar una cotización</span>
             {messages.length > 0 && (
               <button
