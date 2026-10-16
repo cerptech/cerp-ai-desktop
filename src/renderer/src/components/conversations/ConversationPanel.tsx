@@ -359,7 +359,8 @@ export function ConversationPanel({
                   >
                     <div className="flex items-start gap-2">
                       <AgentIconGlyph icon={getAgentIcon(conv.agentName)} className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
-                      <div className="min-w-0 flex-1">
+                      {/* Con el ratón encima, el texto deja lugar a los botones de exportar/eliminar */}
+                      <div className={`min-w-0 flex-1 ${isHovered ? 'pr-[58px]' : ''}`}>
                         <div className="flex items-center gap-1.5">
                           <p className={`text-[13px] truncate text-brand-black ${isActive ? 'font-medium' : ''}`}>
                             {conv.title}
@@ -380,17 +381,18 @@ export function ConversationPanel({
                       </div>
                       {/* Exportar + eliminar (hover) — botones HERMANOS del contenedor, no anidados */}
                       {isHovered && (
-                        <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 shadow-sm">
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
                               onExportConversation(conv._id)
                             }}
-                            className="p-0.5 rounded text-slate-400 hover:text-brand-orange hover:bg-orange-50 transition-colors"
+                            className="inline-flex size-6 items-center justify-center rounded-md text-slate-500 hover:text-primary-600 hover:bg-orange-50 transition-colors"
                             title="Exportar a Markdown"
+                            aria-label="Exportar a Markdown"
                           >
-                            <Download className="size-3" strokeWidth={2} aria-hidden="true" />
+                            <Download className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                           <button
                             type="button"
@@ -398,10 +400,11 @@ export function ConversationPanel({
                               e.stopPropagation()
                               onDeleteConversation(conv._id)
                             }}
-                            className="p-0.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="inline-flex size-6 items-center justify-center rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
                             title="Eliminar"
+                            aria-label="Eliminar conversación"
                           >
-                            <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
+                            <Trash2 className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                         </div>
                       )}
