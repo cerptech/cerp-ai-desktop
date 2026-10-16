@@ -206,7 +206,7 @@ export function ConversationPanel({
 
   if (collapsed) {
     return (
-      <div className="w-12 border-r border-sidebar-border bg-sidebar flex flex-col items-center py-3 gap-2 shrink-0">
+      <div className="w-12 border-r border-zinc-300 bg-[#f5f5f6] flex flex-col items-center py-3 gap-2 shrink-0">
         <button
           onClick={onToggleCollapse}
           className="p-1.5 rounded-lg hover:bg-black/5 transition-colors text-slate-500"
@@ -226,7 +226,7 @@ export function ConversationPanel({
   }
 
   return (
-    <div className="relative border-r border-sidebar-border bg-sidebar flex flex-col shrink-0" style={{ width }}>
+    <div className="relative border-r border-zinc-300 bg-[#f5f5f6] flex flex-col shrink-0" style={{ width }}>
       <div className="flex flex-col gap-3 px-3 pt-4">
         <button
           type="button"
@@ -247,7 +247,7 @@ export function ConversationPanel({
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar"
             aria-label="Buscar conversaciones"
-            className="h-[34px] w-full rounded-[10px] bg-[#f1f1f1] pl-8 pr-7 text-[13px] text-brand-black placeholder:text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40"
+            className="h-[34px] w-full rounded-[10px] border border-zinc-200 bg-white pl-8 pr-7 text-[13px] text-brand-black placeholder:text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40"
           />
           {search && (
             <button

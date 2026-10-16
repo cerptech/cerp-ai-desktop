@@ -182,7 +182,7 @@ export function Composer({
   const CurrentModelIcon = currentModel.icon
 
   return (
-    <div className="w-full rounded-3xl border border-zinc-300 bg-white px-5 pb-[13px] pt-[18px] shadow-[0_8px_28px_rgba(16,24,40,0.08)] transition-[border-color,box-shadow] focus-within:border-brand-orange focus-within:shadow-[0_0_0_4px_rgba(254,112,11,0.12),0_8px_28px_rgba(16,24,40,0.08)]">
+    <div className="w-full rounded-3xl border-[1.5px] border-zinc-300 bg-white px-5 pb-[13px] pt-[18px] shadow-[0_8px_28px_rgba(16,24,40,0.08)] transition-[border-color,box-shadow] focus-within:border-brand-orange focus-within:shadow-[0_0_0_4px_rgba(254,112,11,0.12),0_8px_28px_rgba(16,24,40,0.08)]">
       {/* Carpeta de trabajo y adjuntos: fichas dentro del cuadro, cada una con su × */}
       {(cwd || attachments.length > 0) && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -228,7 +228,7 @@ export function Composer({
           aria-label={placeholder ?? 'Pregunta lo que necesites'}
           disabled={disabled}
           className={`max-h-40 w-full resize-none bg-transparent text-brand-black outline-none placeholder:text-zinc-500 disabled:text-slate-400 ${
-            size === 'hero' ? 'min-h-[69px] text-[15px] leading-[23px]' : 'min-h-[26px] text-base leading-[1.45]'
+            size === 'hero' ? 'min-h-[46px] text-[15px] leading-[23px]' : 'min-h-[26px] text-base leading-[1.45]'
           }`}
         />
       )}

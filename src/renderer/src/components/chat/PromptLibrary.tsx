@@ -99,7 +99,7 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
                 onClick={() => pick(prompt, family)}
                 disabled={disabled || isPreparing}
                 title={titleOf(prompt)}
-                className="flex items-center gap-3 rounded-[14px] border border-composer-border bg-white px-3.5 py-3 text-left outline-none transition-colors hover:border-primary-200 hover:bg-orange-50/40 focus-visible:ring-2 focus-visible:ring-brand-orange/40 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-3 rounded-[14px] border border-zinc-200 bg-white px-3.5 py-2.5 text-left outline-none transition-colors hover:border-primary-200 hover:bg-orange-50/40 focus-visible:ring-2 focus-visible:ring-brand-orange/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="inline-flex size-[34px] shrink-0 items-center justify-center rounded-[10px] bg-primary-50 text-primary-600">
                   {isPreparing ? <LoadingSpinner size="sm" /> : <Icon className="size-[17px]" strokeWidth={2} aria-hidden="true" />}
@@ -142,7 +142,8 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
               )
             })}
           </div>
-          <div className="flex flex-col overflow-hidden rounded-[14px] border border-composer-border">
+          {/* Dos columnas: entra entera en la ventana sin scroll en el inicio */}
+          <div className="grid grid-cols-2 gap-1.5">
             {current.prompts.map((prompt) => {
               const { isPreparing, hasFailed } = gateOf(prompt, toolsSetup)
               return (
@@ -152,7 +153,7 @@ export function PromptLibrary({ families, onSelect, disabled, toolsSetup }: Prom
                   onClick={() => pick(prompt, current.family)}
                   disabled={disabled || isPreparing}
                   title={titleOf(prompt)}
-                  className="group flex min-h-[46px] items-center gap-2.5 border-b border-[#f1f1f1] bg-white px-3.5 text-left text-[13.5px] text-brand-black outline-none transition-colors last:border-b-0 hover:bg-orange-50/40 focus-visible:bg-orange-50/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="group flex min-h-[42px] items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-left text-[13px] text-brand-black outline-none transition-colors hover:border-primary-200 hover:bg-orange-50/40 focus-visible:ring-2 focus-visible:ring-brand-orange/40 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span className="flex-1">{prompt.title}</span>
                   {isPreparing ? (

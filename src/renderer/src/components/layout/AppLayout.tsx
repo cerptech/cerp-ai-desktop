@@ -32,7 +32,7 @@ export function AppLayout({ children, userName, userEmail, onLogout, sessionActi
     <div className="flex flex-col h-screen bg-sidebar">
       {/* Title bar — 48px, igual al `height` del titleBarOverlay (main/index.ts) */}
       <header
-        className={`flex h-12 items-center gap-3 border-b border-sidebar-border bg-white shrink-0 ${isMac ? 'pl-20 pr-4' : 'pl-4 pr-[150px]'}`}
+        className={`flex h-12 items-center gap-3 border-b border-zinc-200 bg-white shrink-0 ${isMac ? 'pl-20 pr-4' : 'pl-4 pr-[150px]'}`}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <div className="flex items-center gap-2 shrink-0" style={NO_DRAG}>
