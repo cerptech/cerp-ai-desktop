@@ -170,15 +170,67 @@ export interface AskUserQuestionOption {
   description: string
 }
 
+/**
+ * Ficha de confirmación de una acción (apps conectadas): la arma el CÓDIGO con el
+ * input real que se va a ejecutar, nunca el modelo. Opcional: sin ella el widget
+ * muestra solo `question`, como siempre.
+ */
+export interface AskUserQuestionCard {
+  title: string
+  fields: Array<{ label: string; value: string }>
+  preview?: string
+  destructive?: boolean
+}
+
 export interface AskUserQuestionItem {
   question: string
   header: string
   multiSelect: boolean
   options: AskUserQuestionOption[]
+  card?: AskUserQuestionCard
 }
 
 export interface AskUserQuestionPayload {
   questions: AskUserQuestionItem[]
+}
+
+// ── Apps conectadas (Composio) — pantalla «Apps» ──
+
+/** `auth` = sesión vencida (401); `network` = el core no respondió o falló. */
+export type IntegrationsErrorCode = 'auth' | 'network'
+
+export interface IntegrationCatalogItem {
+  toolkit: string
+  displayName: string
+  description: string
+  /** Solo URLs https; sin logo la UI muestra la inicial. */
+  logo: string | null
+  /** Estado EN VIVO según Composio (no la tabla local). */
+  connected: boolean
+}
+
+export interface IntegrationsCatalogResponse {
+  items: IntegrationCatalogItem[]
+  nextCursor: string | null
+  error?: IntegrationsErrorCode
+}
+
+export interface ConnectedIntegration {
+  toolkit: string
+  displayName: string
+  logo: string | null
+}
+
+export interface IntegrationsStatusResponse {
+  items: ConnectedIntegration[]
+  error?: IntegrationsErrorCode
+}
+
+export interface IntegrationActionResult {
+  ok: boolean
+  /** Solo en RECONCILE: `active` = Composio confirmó la conexión. */
+  status?: 'active' | 'pending'
+  error?: IntegrationsErrorCode | 'invalid'
 }
 
 /** Map of question text → chosen label(s) or "Otro: <free text>" */

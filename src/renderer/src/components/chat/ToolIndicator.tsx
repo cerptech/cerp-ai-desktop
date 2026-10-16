@@ -167,6 +167,8 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
         ? `${resolvedAgentName} · ${subSteps.length} paso${subSteps.length !== 1 ? 's' : ''}`
         : `${resolvedAgentName}`
     }
+  } else if (tool.status === 'running' && tool.awaitingUser) {
+    label = 'Esperando tu respuesta'
   } else if (isVagueRunning) {
     label = getVagueActivityLabel(tool.name, tool.agentName)
   } else {
@@ -217,7 +219,7 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
             {duration !== null && (
               <span className="text-[10px] text-slate-400">{formatDuration(duration)}</span>
             )}
-            {tool.status === 'running' && !hasSubSteps && <ElapsedTime startTime={tool.startTime} />}
+            {tool.status === 'running' && !hasSubSteps && !tool.awaitingUser && <ElapsedTime startTime={tool.startTime} />}
             {tool.status === 'running' && hasSubSteps && subStepsRunning > 0 && (
               <LoadingSpinner size="sm" />
             )}
