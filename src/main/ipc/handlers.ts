@@ -15,6 +15,7 @@ import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { logger } from '../utils/logger'
+import { httpsUrlOrNull } from '../utils/httpsUrl'
 import { getPromptLibrary, type PromptLibraryResponse } from '../utils/promptLibrary'
 import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice, ConnectedIntegration, IntegrationActionResult, IntegrationCatalogItem, IntegrationsCatalogResponse, IntegrationsErrorCode, IntegrationsStatusResponse } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
@@ -684,14 +685,6 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   const INTEGRATIONS_RETURN_URL = 'https://ai.cerp.es/integraciones'
 
   const integrationsError = (err: unknown): IntegrationsErrorCode => (isAuthError(err) ? 'auth' : 'network')
-  const httpsOrNull = (v: unknown): string | null => {
-    if (typeof v !== 'string') return null
-    try {
-      return new URL(v).protocol === 'https:' ? v : null
-    } catch {
-      return null
-    }
-  }
 
   ipcMain.handle(
     IPC_CHANNELS.INTEGRATIONS_CATALOG,
@@ -708,7 +701,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             toolkit: String(t.toolkit),
             displayName: typeof t.displayName === 'string' && t.displayName ? t.displayName : String(t.toolkit),
             description: typeof t.description === 'string' ? t.description : '',
-            logo: httpsOrNull(t.logo),
+            logo: httpsUrlOrNull(t.logo),
             connected: t.connected === true,
           }))
         return { items, nextCursor: typeof res?.data?.nextCursor === 'string' ? res.data.nextCursor : null }
@@ -728,7 +721,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         .map((c) => ({
           toolkit: String(c.toolkit),
           displayName: typeof c.displayName === 'string' && c.displayName ? c.displayName : String(c.toolkit),
-          logo: httpsOrNull(c.logo),
+          logo: httpsUrlOrNull(c.logo),
         }))
       return { items }
     } catch (err) {
@@ -744,7 +737,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         `/integrations/${encodeURIComponent(toolkit)}/connect`,
         { returnTo: INTEGRATIONS_RETURN_URL },
       )
-      const url = httpsOrNull(res?.data?.redirectUrl)
+      const url = httpsUrlOrNull(res?.data?.redirectUrl)
       if (!url) {
         logger.error(`Integrations connect: el core no devolvió un enlace https para ${toolkit}`)
         return { ok: false, error: 'network' }

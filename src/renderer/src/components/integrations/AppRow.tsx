@@ -48,6 +48,9 @@ export function AppRow({ app, onChanged }: AppRowProps) {
   const [hint, setHint] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startedAtRef = useRef(0)
+  // Un chequeo a la vez: si el core tarda más que el intervalo, no se apilan
+  // (dos respuestas «active» darían dos avisos de «quedó conectada»).
+  const checkingRef = useRef(false)
 
   const stopPolling = (): void => {
     if (pollRef.current) clearInterval(pollRef.current)
@@ -58,7 +61,14 @@ export function AppRow({ app, onChanged }: AppRowProps) {
   useEffect(() => stopPolling, [])
 
   const checkNow = async (): Promise<void> => {
-    const res = await window.cerpAPI.reconcileIntegration(app.toolkit)
+    if (checkingRef.current) return
+    checkingRef.current = true
+    let res: Awaited<ReturnType<typeof window.cerpAPI.reconcileIntegration>>
+    try {
+      res = await window.cerpAPI.reconcileIntegration(app.toolkit)
+    } finally {
+      checkingRef.current = false
+    }
     if (res.ok && res.status === 'active') {
       stopPolling()
       setPhase('idle')

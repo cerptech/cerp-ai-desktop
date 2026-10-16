@@ -3,6 +3,7 @@ import { shell } from 'electron'
 import { z } from 'zod'
 import { CompanyChangedError, HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
+import { httpsUrlOrNull } from '../utils/httpsUrl'
 import { waitForAnswer } from './askUserBridge'
 import { describeAppAction, toolkitDisplayName } from './appActionCard'
 import type { AskUserQuestionItem } from '../ipc/types'
@@ -315,16 +316,6 @@ function createRunAppTool(httpClient: HttpClient, conversationId: string) {
 
 // ── connect_app ──────────────────────────────────────────────────────────────
 
-/** Solo se abren enlaces https (el que devuelve Composio por el core). */
-function isSafeExternalUrl(url: unknown): url is string {
-  if (typeof url !== 'string') return false
-  try {
-    return new URL(url).protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
 function createConnectAppTool(httpClient: HttpClient) {
   return tool(
     'connect_app',
@@ -345,14 +336,15 @@ function createConnectAppTool(httpClient: HttpClient) {
         return errorResult(message)
       }
 
-      let enlace: unknown
+      let enlace: string | null
       try {
-        enlace = (JSON.parse(raw) as { enlace?: unknown }).enlace
+        // Solo se abren enlaces https (el que devuelve Composio por el core).
+        enlace = httpsUrlOrNull((JSON.parse(raw) as { enlace?: unknown }).enlace)
       } catch {
         // Texto plano del core: app vetada o enlace imposible de generar.
         return errorResult(raw)
       }
-      if (!isSafeExternalUrl(enlace)) {
+      if (!enlace) {
         logger.error(`MCP connect_app: el core no devolvió un enlace https para ${app}`)
         return errorResult(`No se pudo generar el enlace de conexión para "${app}".`)
       }
