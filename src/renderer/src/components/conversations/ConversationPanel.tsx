@@ -373,7 +373,9 @@ export function ConversationPanel({
                           )}
                         </div>
                         <p className="mt-0.5 text-[11px] text-slate-500">
-                          {formatRelativeDate(conv.updatedAt)} · {conv.messageCount === 1 ? '1 mensaje' : `${conv.messageCount} mensajes`}
+                          {formatRelativeDate(conv.updatedAt)}
+                          {/* El listado del core no siempre trae `messageCount` (pese al tipo): sin número, solo la fecha. */}
+                          {typeof conv.messageCount === 'number' && ` · ${conv.messageCount === 1 ? '1 mensaje' : `${conv.messageCount} mensajes`}`}
                         </p>
                       </div>
                       {/* Exportar + eliminar (hover) — botones HERMANOS del contenedor, no anidados */}

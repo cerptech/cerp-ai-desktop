@@ -51,6 +51,12 @@ interface ChatContainerProps {
   onCwdChange?: (cwd: string | null) => void
 }
 
+/** Primer nombre con mayúscula inicial: la cuenta puede venir toda en minúsculas. */
+function firstNameOf(userName?: string): string {
+  const first = userName?.trim().split(/\s+/)[0] ?? ''
+  return first ? first[0].toLocaleUpperCase('es-ES') + first.slice(1) : ''
+}
+
 /** «VIERNES 16 OCT»: la fecha del día para el saludo del inicio. */
 function todayLabel(date = new Date()): string {
   const weekday = date.toLocaleDateString('es-ES', { weekday: 'long' })
@@ -62,6 +68,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
   const runtimeId = activeConversationId ?? '__default__'
+  const firstName = firstNameOf(userName)
   const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, retryPrompt, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(runtimeId)
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
@@ -407,7 +414,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
             <div className="flex flex-col gap-2">
               <p className="text-[11px] font-semibold tracking-[0.1em] text-primary-700">{todayLabel()}</p>
               <h2 className="text-[30px] font-bold leading-[38px] tracking-[-0.01em] text-brand-black">
-                Hola{userName ? `, ${userName.split(' ')[0]}` : ''}. ¿Qué cotizamos hoy?
+                Hola{firstName ? `, ${firstName}` : ''}. ¿Qué cotizamos hoy?
               </h2>
               <p className="text-sm leading-[22px] text-brand-gray-dark">
                 Sube pliegos, planos o presupuestos y CERP AI los convierte en cotizaciones listas para revisar.
