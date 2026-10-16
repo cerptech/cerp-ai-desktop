@@ -47,12 +47,28 @@ interface ChatContainerProps {
   setCwdRef?: MutableRefObject<((path: string) => void) | null>
   /** Exposes a setter so the onboarding wizard can inject a pre-armed prompt. */
   setInputRef?: MutableRefObject<((text: string) => void) | null>
+  /** Informa la carpeta de la conversación visible (bloque «Carpeta» de la barra lateral). */
+  onCwdChange?: (cwd: string | null) => void
 }
 
-export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
+/** Primer nombre con mayúscula inicial: la cuenta puede venir toda en minúsculas. */
+function firstNameOf(userName?: string): string {
+  const first = userName?.trim().split(/\s+/)[0] ?? ''
+  return first ? first[0].toLocaleUpperCase('es-ES') + first.slice(1) : ''
+}
+
+/** «VIERNES 16 OCT»: la fecha del día para el saludo del inicio. */
+function todayLabel(date = new Date()): string {
+  const weekday = date.toLocaleDateString('es-ES', { weekday: 'long' })
+  const month = date.toLocaleDateString('es-ES', { month: 'short' }).replace('.', '')
+  return `${weekday} ${date.getDate()} ${month}`.toUpperCase()
+}
+
+export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef, onCwdChange }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
   const runtimeId = activeConversationId ?? '__default__'
+  const firstName = firstNameOf(userName)
   const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, retryPrompt, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(runtimeId)
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
@@ -147,6 +163,10 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la
   // restauración/limpieza de runtimes las maneja agentRuntimeStore — ya no viven
   // acá. Esta vista solo lee el runtime de la conversación activa.
+
+  useEffect(() => {
+    onCwdChange?.(cwd ?? null)
+  }, [cwd, onCwdChange])
 
   // Notify parent when the session goes active/idle — drives the header badge.
   useEffect(() => {
@@ -355,6 +375,44 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   const isEmpty = messages.length === 0
 
+  // Un solo Composer (mismas funciones siempre): en el inicio va grande bajo el
+  // saludo («escribir primero»); dentro de una conversación, abajo como siempre.
+  const composer = (
+    <Composer
+      value={input}
+      onChange={setInput}
+      onSubmit={handleSubmit}
+      disabled={isStreaming || !!pendingQuestions}
+      placeholder={
+        cwd
+          ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…`
+          : isEmpty
+            ? 'Por ejemplo: «Cotiza la reforma de una cocina de 12 m² con los planos de mi carpeta»'
+            : 'Pregunta lo que necesites o arrastra tus archivos…'
+      }
+      streaming={isStreaming}
+      onStop={abort}
+      attachments={attachments}
+      onRemoveAttachment={removeAttachment}
+      attachmentsMaxed={attachments.length >= MAX_ATTACHMENTS}
+      onSelectAttachments={handleSelectAttachments}
+      dictationStatus={dictation.status}
+      onDictate={handleDictate}
+      dictationLevel={dictation.level}
+      dictationElapsedSeconds={dictation.elapsedSeconds}
+      dictationSilence={dictation.silence}
+      modelChoice={modelChoice}
+      onModelChange={setModelChoice}
+      planMode={planMode}
+      onTogglePlanMode={togglePlanMode}
+      cwd={cwd}
+      onSelectFolder={handleSelectFolder}
+      onClearFolder={handleClearFolder}
+      textareaRef={inputRef}
+      size={isEmpty ? 'hero' : 'default'}
+    />
+  )
+
   return (
     <div
       className={`relative flex flex-col flex-1 min-w-0 bg-white ${isDragOver ? 'ring-2 ring-brand-orange/50 ring-inset' : ''}`}
@@ -390,19 +448,29 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       {/* Messages area — autoscroll "stick to bottom" (Ola 2, MessageList) */}
       <MessageList deps={[messages, activeTool, pendingQuestions]} busy={isStreaming} className="px-6">
         {isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full gap-8 py-16">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-brand-black mb-2">
-                Hola{userName ? ` ${userName.split(' ')[0]}` : ''}, soy CERP AI
-              </h2>
-              <p className="text-slate-500 text-sm max-w-md">
-                Tu asistente para cotizaciones y licitaciones de obra. Arrastra tus archivos o selecciona una carpeta para empezar.
-              </p>
+          // Centrado vertical con `my-auto` (no `justify-center`): si el contenido no
+          // entra, el margen cae a 0 y no desborda por arriba (ver el arreglo de la
+          // biblioteca cortada). Horizontal: centrado en el área del chat, con la
+          // barra lateral abierta u oculta.
+          <div className="flex min-h-full flex-col">
+            <div className="mx-auto my-auto flex w-full max-w-[720px] flex-col gap-4 py-6 [@media(max-height:680px)]:gap-3 [@media(max-height:680px)]:py-3">
+              <div className="flex flex-col items-center gap-1.5 text-center">
+                <p className="text-[11px] font-semibold tracking-[0.1em] text-primary-700">{todayLabel()}</p>
+                <h2 className="text-[30px] font-bold leading-[38px] tracking-[-0.01em] text-brand-black">
+                  Hola{firstName ? `, ${firstName}` : ''}. ¿Qué cotizamos hoy?
+                </h2>
+                <p className="text-sm leading-[22px] text-brand-gray-dark">
+                  Cuéntale a CERP AI qué necesitas o arrastra tus pliegos, planos o presupuestos.
+                </p>
+              </div>
+              {composer}
+              <div className="flex items-center gap-3" aria-hidden="true">
+                <span className="h-px flex-1 bg-sidebar-border" />
+                <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">O EMPIEZA CON UNA TAREA</span>
+                <span className="h-px flex-1 bg-sidebar-border" />
+              </div>
+              <PromptLibrary families={promptLibrary.families} onSelect={handleSelectLibraryPrompt} disabled={isStreaming} toolsSetup={toolsSetup} />
             </div>
-            <PromptLibrary families={promptLibrary.families} onSelect={handleSelectLibraryPrompt} disabled={isStreaming} toolsSetup={toolsSetup} />
-            <p className="text-xs text-slate-400 mt-2">
-              Arrastra archivos al chat o selecciona una carpeta de trabajo
-            </p>
           </div>
         ) : (
           <div className="mx-auto flex w-full max-w-[780px] flex-col gap-5 py-6">
@@ -514,59 +582,24 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
-      {/* Composer — converge con ai.cerp.es (Ola 2) */}
-      <div className="px-6 pb-4 pt-2">
+      {/* Composer — converge con ai.cerp.es (Ola 2). En el inicio vive arriba (ver `composer`). */}
+      <div className={`px-6 ${isEmpty ? 'pb-3 pt-1' : 'pb-4 pt-2'}`}>
         <div className="mx-auto max-w-[780px]">
-          <Composer
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            disabled={isStreaming || !!pendingQuestions}
-            placeholder={cwd ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…` : 'Pregunta lo que necesites…'}
-            streaming={isStreaming}
-            onStop={abort}
-            attachments={attachments}
-            onRemoveAttachment={removeAttachment}
-            attachmentsMaxed={attachments.length >= MAX_ATTACHMENTS}
-            onSelectAttachments={handleSelectAttachments}
-            dictationStatus={dictation.status}
-            onDictate={handleDictate}
-            dictationLevel={dictation.level}
-            dictationElapsedSeconds={dictation.elapsedSeconds}
-            dictationSilence={dictation.silence}
-            modelChoice={modelChoice}
-            onModelChange={setModelChoice}
-            planMode={planMode}
-            onTogglePlanMode={togglePlanMode}
-            cwd={cwd}
-            onSelectFolder={handleSelectFolder}
-            onClearFolder={handleClearFolder}
-            textareaRef={inputRef}
-          />
+          {!isEmpty && composer}
 
-          <div className="mt-2 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[11px] text-slate-300">v{appVersion}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              {messages.length > 0 && (
-                <button
-                  onClick={toggleShowThoughts}
-                  className={`text-xs transition-colors ${showThoughts ? 'text-brand-orange' : 'text-slate-400 hover:text-slate-600'}`}
-                  title={showThoughts ? 'Ocultar ejecuciones' : 'Mostrar ejecuciones'}
-                >
-                  {showThoughts ? 'Ocultar ejecuciones' : 'Ver ejecuciones'}
-                </button>
-              )}
-              {messages.length > 0 && (
-                <button
-                  onClick={handleNewConversation}
-                  className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  + Nueva conversación
-                </button>
-              )}
-            </div>
+          {/* Pie: versión + aviso, centrado. «Nueva conversación» vive en la barra
+              lateral; acá solo queda el interruptor de ejecuciones dentro de un chat. */}
+          <div className={`relative flex items-center justify-center ${isEmpty ? '' : 'mt-2'}`}>
+            <span className="text-[11px] text-slate-500">v{appVersion} · Revisa siempre las cifras antes de enviar una cotización</span>
+            {messages.length > 0 && (
+              <button
+                onClick={toggleShowThoughts}
+                className={`absolute right-0 text-xs transition-colors ${showThoughts ? 'text-brand-orange' : 'text-slate-400 hover:text-slate-600'}`}
+                title={showThoughts ? 'Ocultar ejecuciones' : 'Mostrar ejecuciones'}
+              >
+                {showThoughts ? 'Ocultar ejecuciones' : 'Ver ejecuciones'}
+              </button>
+            )}
           </div>
         </div>
       </div>

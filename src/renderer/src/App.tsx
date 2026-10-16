@@ -73,7 +73,7 @@ export default function App() {
   } else {
     content = (
       <ToastProvider>
-        <ChatPage key={sessionKey} userName={user?.name} onLogout={logout} />
+        <ChatPage key={sessionKey} userName={user?.name} userEmail={user?.email} onLogout={logout} />
         <ToastContainer />
         <UpdateBanner />
       </ToastProvider>

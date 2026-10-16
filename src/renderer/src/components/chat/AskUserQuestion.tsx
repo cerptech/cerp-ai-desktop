@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { AskUserQuestionItem, UserAnswerPayload } from '../../../../preload/index'
 
 interface AskUserQuestionProps {
@@ -6,6 +6,36 @@ interface AskUserQuestionProps {
   onAnswer: (answers: UserAnswerPayload) => void
   /** True while the answers are being submitted (disables the button) */
   isSubmitting?: boolean
+}
+
+// ── Ficha de confirmación (apps conectadas) ──────────────────────────────────
+
+function ConfirmCardDetails({ card }: { card: NonNullable<AskUserQuestionItem['card']> }) {
+  return (
+    <div className="px-4 pt-3 pb-2">
+      <p className={`text-sm font-semibold leading-snug ${card.destructive ? 'text-error' : 'text-slate-800'}`}>
+        {card.title}
+      </p>
+      {card.fields.length > 0 && (
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          {card.fields.map((f) => (
+            <Fragment key={f.label}>
+              <dt className="text-slate-400">{f.label}</dt>
+              <dd className="min-w-0 break-words text-slate-700">{f.value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {card.preview && (
+        <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+          {card.preview}
+        </div>
+      )}
+      {card.destructive && (
+        <p className="mt-2 text-[11px] font-medium text-error">Esta acción borra o archiva algo en la app.</p>
+      )}
+    </div>
+  )
 }
 
 // ── Single question card ────────────────────────────────────────────────────
@@ -58,10 +88,15 @@ function QuestionCard({
         )}
       </div>
 
-      {/* Question text */}
-      <p className="px-4 pt-3 pb-2 text-sm font-medium text-slate-700 leading-snug">
-        {item.question}
-      </p>
+      {/* Question text — o la ficha de confirmación (apps conectadas), armada por
+          el código con el input real que se va a ejecutar, nunca por el modelo. */}
+      {item.card ? (
+        <ConfirmCardDetails card={item.card} />
+      ) : (
+        <p className="px-4 pt-3 pb-2 text-sm font-medium text-slate-700 leading-snug">
+          {item.question}
+        </p>
+      )}
 
       {/* Options */}
       <div className="px-4 pb-3 flex flex-col gap-1.5">

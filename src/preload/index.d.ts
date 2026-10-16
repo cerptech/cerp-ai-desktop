@@ -1,4 +1,4 @@
-import type { CompanyChangedNotice } from '../main/ipc/types'
+import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse } from '../main/ipc/types'
 import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
 
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
@@ -31,11 +31,24 @@ export interface AskUserQuestionOption {
   description: string
 }
 
+/**
+ * Ficha de confirmación de una acción (apps conectadas): la arma el CÓDIGO con el
+ * input real que se va a ejecutar, nunca el modelo. Opcional: sin ella el widget
+ * muestra solo `question`, como siempre.
+ */
+export interface AskUserQuestionCard {
+  title: string
+  fields: Array<{ label: string; value: string }>
+  preview?: string
+  destructive?: boolean
+}
+
 export interface AskUserQuestionItem {
   question: string
   header: string
   multiSelect: boolean
   options: AskUserQuestionOption[]
+  card?: AskUserQuestionCard
 }
 
 export type UserAnswerPayload = Record<string, string | string[]>
@@ -296,6 +309,15 @@ interface CerpAPI {
   getVersion(): Promise<string>
   /** Biblioteca de prompts preparados (F1c): null si cerp-ai-service no responde (se usa el respaldo local). */
   getPromptLibrary(): Promise<PromptLibraryResponse | null>
+  /** Apps conectadas (Composio): catálogo paginado con el estado EN VIVO de cada app. */
+  getIntegrationsCatalog(q?: string, cursor?: string): Promise<IntegrationsCatalogResponse>
+  /** Apps conectadas activas del usuario en esta empresa. */
+  getIntegrationsStatus(): Promise<IntegrationsStatusResponse>
+  /** Abre en el navegador la autorización de la app. */
+  connectIntegration(toolkit: string): Promise<IntegrationActionResult>
+  disconnectIntegration(toolkit: string): Promise<IntegrationActionResult>
+  /** Pregunta al core (que verifica en Composio) si la app ya quedó conectada. */
+  reconcileIntegration(toolkit: string): Promise<IntegrationActionResult>
   /** Política de modelo de la empresa (ADR 016): null sin sesión o con un backend anterior. */
   getModelPolicy(): Promise<AiModelPolicy | null>
   onUpdateAvailable(callback: (data: { version: string }) => void): () => void

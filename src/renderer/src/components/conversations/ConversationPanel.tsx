@@ -9,7 +9,7 @@ const SIDEBAR_WIDTH_KEY = 'cerp-sidebar-width'
 const COLLAPSED_GROUPS_KEY = 'cerp-sidebar-collapsed-groups'
 const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 360
-const SIDEBAR_DEFAULT_WIDTH = 224
+const SIDEBAR_DEFAULT_WIDTH = 248
 
 interface ConversationPanelProps {
   conversations: ConversationSummary[]
@@ -28,6 +28,10 @@ interface ConversationPanelProps {
   onExportConversation: (id: string) => void
   /** Ref that external callers can use to focus the search input (e.g. Ctrl+K) */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>
+  /** Carpeta de trabajo de la conversación visible (null = ninguna). */
+  cwd?: string | null
+  /** Abre el selector de carpeta para la conversación visible. */
+  onSelectFolder?: () => void
 }
 
 function formatRelativeDate(dateStr: string): string {
@@ -39,9 +43,10 @@ function formatRelativeDate(dateStr: string): string {
   const diffDays = Math.floor(diffMs / 86400000)
 
   if (diffMin < 1) return 'Ahora'
-  if (diffMin < 60) return `${diffMin}m`
-  if (diffHr < 24) return `${diffHr}h`
-  if (diffDays < 7) return `${diffDays}d`
+  if (diffMin < 60) return `Hace ${diffMin} min`
+  if (diffHr < 24) return `Hace ${diffHr} h`
+  if (diffDays === 1) return 'Ayer'
+  if (diffDays < 7) return `Hace ${diffDays} días`
   return date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
 }
 
@@ -115,6 +120,8 @@ export function ConversationPanel({
   onDeleteConversation,
   onExportConversation,
   searchInputRef,
+  cwd = null,
+  onSelectFolder,
 }: ConversationPanelProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -199,7 +206,7 @@ export function ConversationPanel({
 
   if (collapsed) {
     return (
-      <div className="w-12 border-r border-sidebar-border bg-sidebar flex flex-col items-center py-3 gap-2 shrink-0">
+      <div className="w-12 border-r border-zinc-300 bg-[#f5f5f6] flex flex-col items-center py-3 gap-2 shrink-0">
         <button
           onClick={onToggleCollapse}
           className="p-1.5 rounded-lg hover:bg-black/5 transition-colors text-slate-500"
@@ -219,57 +226,57 @@ export function ConversationPanel({
   }
 
   return (
-    <div className="relative border-r border-sidebar-border bg-sidebar flex flex-col shrink-0" style={{ width }}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-sidebar-border">
-        <span className="text-[11px] font-semibold text-slate-600 tracking-[0.04em] uppercase">Conversaciones</span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onNewConversation}
-            className="p-1 rounded hover:bg-black/5 transition-colors text-slate-500"
-            title="Nueva conversación"
-          >
-            <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-          </button>
+    <div className="relative border-r border-zinc-300 bg-[#f5f5f6] flex flex-col shrink-0" style={{ width }}>
+      <div className="flex flex-col gap-3 px-3 pt-4">
+        <button
+          type="button"
+          onClick={onNewConversation}
+          className="flex h-[38px] items-center gap-2 rounded-xl border border-composer-border bg-white px-3 text-[13px] font-semibold text-brand-black shadow-[0_1px_2px_rgba(16,24,40,0.05)] outline-none transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-brand-orange/40"
+        >
+          <Plus className="size-[15px]" strokeWidth={2.2} aria-hidden="true" />
+          Nueva conversación
+        </button>
+
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" strokeWidth={2} aria-hidden="true" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar"
+            aria-label="Buscar conversaciones"
+            className="h-[34px] w-full rounded-[10px] border border-zinc-200 bg-white pl-8 pr-7 text-[13px] text-brand-black placeholder:text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Limpiar búsqueda"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="size-3" strokeWidth={2} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between pl-1">
+          <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">RECIENTES</span>
           <button
             onClick={onToggleCollapse}
-            className="p-1 rounded hover:bg-black/5 transition-colors text-slate-500"
-            title="Ocultar"
+            className="rounded p-1 text-slate-500 transition-colors hover:bg-black/5"
+            title="Ocultar conversaciones"
+            aria-label="Ocultar conversaciones"
           >
             <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      {/* Search */}
-      {conversations.length > 0 && (
-        <div className="px-2 py-1.5 border-b border-sidebar-border">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-slate-400" strokeWidth={2} aria-hidden="true" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar..."
-              className="w-full pl-6 pr-2 py-1 text-[13px] bg-white border border-sidebar-border rounded-md text-slate-700 placeholder:text-slate-400 outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="size-3" strokeWidth={2} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Conversation list */}
       {/* El espaciado vertical vive en cada wrapper de grupo (space-y interno +
           mt-2 entre grupos) — un space-y acá pelearía con ese mt-2 por el margen. */}
-      <div className="flex-1 overflow-y-auto cerp-scroll p-1.5">
+      <div className="flex-1 overflow-y-auto cerp-scroll px-3 py-1">
         {loading && conversations.length === 0 && (
           <p className="text-[11px] text-slate-400 text-center py-4">Cargando…</p>
         )}
@@ -352,9 +359,10 @@ export function ConversationPanel({
                   >
                     <div className="flex items-start gap-2">
                       <AgentIconGlyph icon={getAgentIcon(conv.agentName)} className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
-                      <div className="min-w-0 flex-1">
+                      {/* Con el ratón encima, el texto deja lugar a los botones de exportar/eliminar */}
+                      <div className={`min-w-0 flex-1 ${isHovered ? 'pr-[58px]' : ''}`}>
                         <div className="flex items-center gap-1.5">
-                          <p className={`text-[13px] font-medium truncate ${isActive ? 'text-slate-800' : 'text-slate-600'}`}>
+                          <p className={`text-[13px] truncate text-brand-black ${isActive ? 'font-medium' : ''}`}>
                             {conv.title}
                           </p>
                           {isWorking && (
@@ -365,24 +373,26 @@ export function ConversationPanel({
                             />
                           )}
                         </div>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[11px] text-slate-400">{formatRelativeDate(conv.updatedAt)}</span>
-                          <span className="text-[11px] text-slate-300">{conv.messageCount} msg</span>
-                        </div>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          {formatRelativeDate(conv.updatedAt)}
+                          {/* El listado del core no siempre trae `messageCount` (pese al tipo): sin número, solo la fecha. */}
+                          {typeof conv.messageCount === 'number' && ` · ${conv.messageCount === 1 ? '1 mensaje' : `${conv.messageCount} mensajes`}`}
+                        </p>
                       </div>
                       {/* Exportar + eliminar (hover) — botones HERMANOS del contenedor, no anidados */}
                       {isHovered && (
-                        <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
+                        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 shadow-sm">
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
                               onExportConversation(conv._id)
                             }}
-                            className="p-0.5 rounded text-slate-400 hover:text-brand-orange hover:bg-orange-50 transition-colors"
+                            className="inline-flex size-6 items-center justify-center rounded-md text-slate-500 hover:text-primary-600 hover:bg-orange-50 transition-colors"
                             title="Exportar a Markdown"
+                            aria-label="Exportar a Markdown"
                           >
-                            <Download className="size-3" strokeWidth={2} aria-hidden="true" />
+                            <Download className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                           <button
                             type="button"
@@ -390,10 +400,11 @@ export function ConversationPanel({
                               e.stopPropagation()
                               onDeleteConversation(conv._id)
                             }}
-                            className="p-0.5 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="inline-flex size-6 items-center justify-center rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors"
                             title="Eliminar"
+                            aria-label="Eliminar conversación"
                           >
-                            <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
+                            <Trash2 className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                         </div>
                       )}
@@ -405,6 +416,25 @@ export function ConversationPanel({
           )
         })}
       </div>
+
+      {/* Carpeta de la conversación abierta (o del borrador de la pantalla nueva).
+          Es la misma que se elige desde el «+» del composer. */}
+      {onSelectFolder && (
+        <div className="mx-3 mb-4 mt-2 flex flex-col gap-2 rounded-xl border border-composer-border bg-white p-3">
+          <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">CARPETA DE ESTA CONVERSACIÓN</span>
+          <span className="truncate text-[13px] text-[#3f3f46]" title={cwd ?? undefined}>
+            {cwd ? folderLabel(cwd) : 'Ninguna seleccionada'}
+          </span>
+          <button
+            type="button"
+            onClick={onSelectFolder}
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-[9px] border border-composer-border bg-sidebar text-[12.5px] font-medium text-brand-black outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-brand-orange/40"
+          >
+            <Folder className="size-3.5" strokeWidth={2} aria-hidden="true" />
+            {cwd ? 'Cambiar carpeta' : 'Elegir carpeta'}
+          </button>
+        </div>
+      )}
 
       {/* Drag handle — redimensiona el panel (200–360px), persistido en localStorage */}
       <div

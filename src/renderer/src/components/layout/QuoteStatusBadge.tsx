@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ApiErrorCode } from '../../../../preload/index'
+import { CreditsPill } from './CreditsPill'
 
 type Eligibility = {
   canQuote: boolean
@@ -59,54 +60,35 @@ export function QuoteStatusBadge() {
   }, [load])
 
   if (loading) {
-    return (
-      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-400 text-xs">
-        <span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse" />
-        Cotización…
-      </div>
-    )
+    return <CreditsPill label="Cotización…" tone="loading" action={null} />
   }
 
   if (error === 'network') {
     return (
-      <button
+      <CreditsPill
+        label="Error · Reintentar"
+        tone="danger"
         onClick={load}
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 hover:bg-red-100 text-xs transition-colors"
         title="No se pudo consultar el estado de cotizaciones. Haz clic para reintentar."
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-        Error · Reintentar
-      </button>
+        action={null}
+      />
     )
   }
 
-  // error === 'auth' (modal global ya visible) o sin datos todavía.
   if (!eligibility) return null
 
   if (eligibility.unlimited) {
-    return (
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 text-xs"
-        title="Tu empresa tiene CERP IA Ilimitado — generacion de cotizaciones sin limite"
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-        Ilimitado
-      </div>
-    )
+    return <CreditsPill label="Ilimitado" title="Tu empresa tiene CERP IA Ilimitado — generacion de cotizaciones sin limite" action={null} />
   }
 
   if (eligibility.blockedReason) {
     return (
-      <a
-        href="https://app.cerp.es/billing"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-700 text-xs hover:bg-amber-100 transition-colors"
-        title="Tu plan no está activo. Click para gestionar."
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-        Activá tu plan
-      </a>
+      <CreditsPill
+        label="Plan inactivo"
+        tone="warning"
+        title="Tu plan no está activo."
+        action={{ label: 'Activa tu plan', href: 'https://app.cerp.es/billing' }}
+      />
     )
   }
 
@@ -115,17 +97,13 @@ export function QuoteStatusBadge() {
 
   if (hasFree || credits > 0) {
     const parts: string[] = []
-    if (hasFree) parts.push('1 gratis')
+    if (hasFree) parts.push('1 cotización gratis')
     if (credits > 0) parts.push(credits === 1 ? '1 disponible' : `${credits} disponibles`)
-    const label = parts.join(' + ')
     return (
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs"
+      <CreditsPill
+        label={parts.join(' + ')}
         title={hasFree && credits > 0 ? 'Tienes la cotización gratis del mes y créditos comprados disponibles' : hasFree ? 'Tienes tu cotización gratis del mes' : 'Cotizaciones compradas disponibles'}
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-        {label}
-      </div>
+      />
     )
   }
 
@@ -133,15 +111,9 @@ export function QuoteStatusBadge() {
   // créditos de IA del plan, como cualquier otra acción del agente. El badge lo
   // dice en vez de empujar a una compra que ya no existe.
   return (
-    <a
-      href="https://app.cerp.es/settings/subscription"
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs transition-colors"
-      title="Cotizar consume créditos de IA de tu plan, como el resto de CERP IA. Click para ver tu saldo."
-    >
-      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-      Con créditos
-    </a>
+    <CreditsPill
+      label="Con créditos"
+      title="Cotizar consume créditos de IA de tu plan, como el resto de CERP IA."
+    />
   )
 }

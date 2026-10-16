@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { QuoteStatusBadge } from './QuoteStatusBadge'
+import { CreditsPill, SUBSCRIPTION_URL } from './CreditsPill'
 
 /**
  * Balance de créditos de IA de la empresa (Modelo CERP).
@@ -63,15 +64,7 @@ export function CreditBalanceBadge() {
   }
 
   if (balance.unlimited) {
-    return (
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 text-xs"
-        title="Tu empresa tiene CERP IA Ilimitado — sin límite de créditos"
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-        Ilimitado
-      </div>
-    )
+    return <CreditsPill label="Ilimitado" title="Tu empresa tiene CERP IA Ilimitado — sin límite de créditos" action={null} />
   }
 
   const available = balance.availableHundredths
@@ -79,30 +72,22 @@ export function CreditBalanceBadge() {
 
   if (available <= 0) {
     return (
-      <a
-        href="https://app.cerp.es/settings/subscription"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-50 text-red-700 hover:bg-red-100 text-xs transition-colors"
-        title="Tu empresa no tiene créditos de IA disponibles. Click para recargar."
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-        Sin créditos
-      </a>
+      <CreditsPill
+        label="Sin créditos"
+        tone="danger"
+        title="Tu empresa no tiene créditos de IA disponibles"
+        action={{ label: 'Recargar', href: SUBSCRIPTION_URL }}
+      />
     )
   }
 
   const isLow = monthly > 0 && available / monthly < LOW_BALANCE_RATIO
 
   return (
-    <div
-      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs ${
-        isLow ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
-      }`}
+    <CreditsPill
+      label={`${formatCredits(available)} créditos`}
+      tone={isLow ? 'warning' : 'neutral'}
       title={isLow ? 'Te quedan pocos créditos de IA este mes' : 'Créditos de IA disponibles'}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${isLow ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-      {formatCredits(available)} créditos
-    </div>
+    />
   )
 }

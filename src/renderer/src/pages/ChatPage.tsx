@@ -16,14 +16,18 @@ import type { CustomAgent, CustomContext } from '../../../preload/index'
 
 interface ChatPageProps {
   userName?: string
+  userEmail?: string
   onLogout: () => void
 }
 
-export function ChatPage({ userName, onLogout }: ChatPageProps) {
+export function ChatPage({ userName, userEmail, onLogout }: ChatPageProps) {
   // Whether the agent session is actively working — surfaced as a badge in
   // the top bar so the user always knows if the AI is thinking or idle.
   const [sessionActive, setSessionActive] = useState(false)
   const [convPanelCollapsed, setConvPanelCollapsed] = useState(false)
+  // Carpeta de la conversación visible (o del borrador de la pantalla nueva):
+  // ChatContainer la informa y el bloque «Carpeta» de la barra lateral la muestra.
+  const [currentCwd, setCurrentCwd] = useState<string | null>(null)
   const [activeContextId, setActiveContextId] = useState<string | null>(null)
 
   // Custom agents/contexts
@@ -71,6 +75,12 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
     const path = await window.cerpAPI.selectFolder()
     if (path) setCwdRef.current?.(path)
     return path
+  }, [])
+
+  // «Elegir carpeta» de la barra lateral: mismo camino que el wizard (setCwdRef).
+  const handleSelectFolderFromSidebar = useCallback(async () => {
+    const path = await window.cerpAPI.selectFolder()
+    if (path) setCwdRef.current?.(path)
   }, [])
 
   const handleUsePromptFromWizard = useCallback((text: string) => {
@@ -194,6 +204,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
   return (
     <AppLayout
       userName={userName}
+      userEmail={userEmail}
       onLogout={onLogout}
       sessionActive={sessionActive}
       onShowOnboarding={() => setShowOnboarding(true)}
@@ -212,6 +223,8 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           onDeleteConversation={handleDeleteConversation}
           onExportConversation={handleExportConversation}
           searchInputRef={searchInputRef}
+          cwd={currentCwd}
+          onSelectFolder={handleSelectFolderFromSidebar}
         />
         <ChatContainer
           userName={userName}
@@ -221,6 +234,7 @@ export function ChatPage({ userName, onLogout }: ChatPageProps) {
           onNewConversation={handleNewConversation}
           searchInputRef={searchInputRef}
           onSessionActiveChange={setSessionActive}
+          onCwdChange={setCurrentCwd}
           setCwdRef={setCwdRef}
           setInputRef={setInputRef}
         />
