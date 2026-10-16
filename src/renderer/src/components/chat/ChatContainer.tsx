@@ -390,7 +390,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       {/* Messages area — autoscroll "stick to bottom" (Ola 2, MessageList) */}
       <MessageList deps={[messages, activeTool, pendingQuestions]} busy={isStreaming} className="px-6">
         {isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full gap-8 py-16">
+          <div className="flex flex-col items-center justify-center min-h-full gap-8 py-16">
             <div className="text-center">
               <h2 className="text-2xl font-semibold text-brand-black mb-2">
                 Hola{userName ? ` ${userName.split(' ')[0]}` : ''}, soy CERP AI
