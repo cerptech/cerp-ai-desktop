@@ -98,12 +98,9 @@ function renderCallbackPage(opts: { success: boolean; title: string; message: st
 <title>CERP AI · ${escapeHtml(opts.title)}</title>
 </head>
 <body style="margin:0;min-height:100vh;box-sizing:border-box;padding:28px 32px;display:flex;flex-direction:column;background:#f8fafc;color:#1e1e1e;font-family:Inter,'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;">
-  <header style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      ${logo ? `<img src="${logo}" alt="CERP" width="28" height="28" style="object-fit:contain;" />` : ''}
-      <span style="font-size:15px;font-weight:600;">CERP AI</span>
-    </div>
-    <span style="font-size:11px;font-weight:600;letter-spacing:0.1em;color:#64748b;">PASO 2 DE 2 · ACCESO</span>
+  <header style="display:flex;align-items:center;gap:10px;">
+    ${logo ? `<img src="${logo}" alt="CERP" width="28" height="28" style="object-fit:contain;" />` : ''}
+    <span style="font-size:15px;font-weight:600;">CERP AI</span>
   </header>
   <main style="flex-grow:1;display:flex;align-items:center;justify-content:center;padding:32px 0;">
     <div style="width:100%;max-width:420px;box-sizing:border-box;background:#ffffff;border:1px solid #e4e7ec;border-radius:24px;box-shadow:0 8px 28px rgba(16,24,40,0.08);padding:36px 36px 28px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;">
