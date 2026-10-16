@@ -47,9 +47,18 @@ interface ChatContainerProps {
   setCwdRef?: MutableRefObject<((path: string) => void) | null>
   /** Exposes a setter so the onboarding wizard can inject a pre-armed prompt. */
   setInputRef?: MutableRefObject<((text: string) => void) | null>
+  /** Informa la carpeta de la conversación visible (bloque «Carpeta» de la barra lateral). */
+  onCwdChange?: (cwd: string | null) => void
 }
 
-export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef }: ChatContainerProps) {
+/** «VIERNES 16 OCT»: la fecha del día para el saludo del inicio. */
+function todayLabel(date = new Date()): string {
+  const weekday = date.toLocaleDateString('es-ES', { weekday: 'long' })
+  const month = date.toLocaleDateString('es-ES', { month: 'short' }).replace('.', '')
+  return `${weekday} ${date.getDate()} ${month}`.toUpperCase()
+}
+
+export function ChatContainer({ userName, activeContextId, activeConversationId, ensureConversation, onNewConversation, searchInputRef, onSessionActiveChange, setCwdRef, setInputRef, onCwdChange }: ChatContainerProps) {
   // La hook selecciona el runtime de la conversación activa; las demás siguen
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
   const runtimeId = activeConversationId ?? '__default__'
@@ -147,6 +156,10 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la
   // restauración/limpieza de runtimes las maneja agentRuntimeStore — ya no viven
   // acá. Esta vista solo lee el runtime de la conversación activa.
+
+  useEffect(() => {
+    onCwdChange?.(cwd ?? null)
+  }, [cwd, onCwdChange])
 
   // Notify parent when the session goes active/idle — drives the header badge.
   useEffect(() => {
@@ -390,19 +403,17 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       {/* Messages area — autoscroll "stick to bottom" (Ola 2, MessageList) */}
       <MessageList deps={[messages, activeTool, pendingQuestions]} busy={isStreaming} className="px-6">
         {isEmpty ? (
-          <div className="flex flex-col items-center justify-center min-h-full gap-8 py-16">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-brand-black mb-2">
-                Hola{userName ? ` ${userName.split(' ')[0]}` : ''}, soy CERP AI
+          <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col gap-6 pb-6 pt-11">
+            <div className="flex flex-col gap-2">
+              <p className="text-[11px] font-semibold tracking-[0.1em] text-primary-700">{todayLabel()}</p>
+              <h2 className="text-[30px] font-bold leading-[38px] tracking-[-0.01em] text-brand-black">
+                Hola{userName ? `, ${userName.split(' ')[0]}` : ''}. ¿Qué cotizamos hoy?
               </h2>
-              <p className="text-slate-500 text-sm max-w-md">
-                Tu asistente para cotizaciones y licitaciones de obra. Arrastra tus archivos o selecciona una carpeta para empezar.
+              <p className="text-sm leading-[22px] text-brand-gray-dark">
+                Sube pliegos, planos o presupuestos y CERP AI los convierte en cotizaciones listas para revisar.
               </p>
             </div>
             <PromptLibrary families={promptLibrary.families} onSelect={handleSelectLibraryPrompt} disabled={isStreaming} toolsSetup={toolsSetup} />
-            <p className="text-xs text-slate-400 mt-2">
-              Arrastra archivos al chat o selecciona una carpeta de trabajo
-            </p>
           </div>
         ) : (
           <div className="mx-auto flex w-full max-w-[780px] flex-col gap-5 py-6">
@@ -522,7 +533,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
             onChange={setInput}
             onSubmit={handleSubmit}
             disabled={isStreaming || !!pendingQuestions}
-            placeholder={cwd ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…` : 'Pregunta lo que necesites…'}
+            placeholder={cwd ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…` : 'Pregunta lo que necesites o arrastra tus archivos…'}
             streaming={isStreaming}
             onStop={abort}
             attachments={attachments}
@@ -544,29 +555,19 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
             textareaRef={inputRef}
           />
 
-          <div className="mt-2 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[11px] text-slate-300">v{appVersion}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              {messages.length > 0 && (
-                <button
-                  onClick={toggleShowThoughts}
-                  className={`text-xs transition-colors ${showThoughts ? 'text-brand-orange' : 'text-slate-400 hover:text-slate-600'}`}
-                  title={showThoughts ? 'Ocultar ejecuciones' : 'Mostrar ejecuciones'}
-                >
-                  {showThoughts ? 'Ocultar ejecuciones' : 'Ver ejecuciones'}
-                </button>
-              )}
-              {messages.length > 0 && (
-                <button
-                  onClick={handleNewConversation}
-                  className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  + Nueva conversación
-                </button>
-              )}
-            </div>
+          {/* Pie: versión + aviso, centrado. «Nueva conversación» vive en la barra
+              lateral; acá solo queda el interruptor de ejecuciones dentro de un chat. */}
+          <div className="relative mt-2 flex items-center justify-center">
+            <span className="text-[11px] text-slate-500">v{appVersion} · Revisa siempre las cifras antes de enviar una cotización</span>
+            {messages.length > 0 && (
+              <button
+                onClick={toggleShowThoughts}
+                className={`absolute right-0 text-xs transition-colors ${showThoughts ? 'text-brand-orange' : 'text-slate-400 hover:text-slate-600'}`}
+                title={showThoughts ? 'Ocultar ejecuciones' : 'Mostrar ejecuciones'}
+              >
+                {showThoughts ? 'Ocultar ejecuciones' : 'Ver ejecuciones'}
+              </button>
+            )}
           </div>
         </div>
       </div>

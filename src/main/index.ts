@@ -90,9 +90,9 @@ function createWindow(): void {
       ? {}
       : {
           titleBarOverlay: {
-            color: '#fafafa',
+            color: '#ffffff',
             symbolColor: '#1e1e1e',
-            height: 40,
+            height: 48,
           },
         }),
     webPreferences: {

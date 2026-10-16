@@ -280,6 +280,8 @@ export function Composer({
             <ClipboardCheck className="size-4" strokeWidth={2} aria-hidden="true" />
             Modo plan
           </button>
+          {/* Formatos que más se usan (la lista completa: ALLOWED_ATTACHMENT_EXTENSIONS) */}
+          <span className="ml-1 truncate text-[11.5px] text-slate-500">PDF · XLSX · DWG</span>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">

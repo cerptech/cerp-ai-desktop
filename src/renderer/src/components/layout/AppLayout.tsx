@@ -1,14 +1,16 @@
 import { ReactNode, useState } from 'react'
-import { Plug } from 'lucide-react'
+import { CircleHelp, Plug } from 'lucide-react'
 import cerpLogo from '@/assets/images/cerp-logo.png'
 import { CreditBalanceBadge } from './CreditBalanceBadge'
 import { CreditHistoryPanel } from './CreditHistoryPanel'
 import { SessionStatusBadge } from './SessionStatusBadge'
+import { AccountMenu } from './AccountMenu'
 import { ConnectedAppsPanel } from '../integrations/ConnectedAppsPanel'
 
 interface AppLayoutProps {
   children: ReactNode
   userName?: string
+  userEmail?: string
   onLogout?: () => void
   /** Whether the agent session is actively working (streaming or pending). */
   sessionActive?: boolean
@@ -16,7 +18,9 @@ interface AppLayoutProps {
   onShowOnboarding?: () => void
 }
 
-export function AppLayout({ children, userName, onLogout, sessionActive = false, onShowOnboarding }: AppLayoutProps) {
+const NO_DRAG = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
+
+export function AppLayout({ children, userName, userEmail, onLogout, sessionActive = false, onShowOnboarding }: AppLayoutProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [showApps, setShowApps] = useState(false)
   // Ventana única (Ola 2): sin barra de título nativa — este header ES la barra
@@ -26,62 +30,46 @@ export function AppLayout({ children, userName, onLogout, sessionActive = false,
   const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
   return (
     <div className="flex flex-col h-screen bg-sidebar">
-      {/* Title bar — altura fija de 40px, igual al `height` del titleBarOverlay */}
+      {/* Title bar — 48px, igual al `height` del titleBarOverlay (main/index.ts) */}
       <header
-        className={`flex h-10 items-center justify-between border-b border-sidebar-border bg-sidebar shrink-0 gap-3 ${isMac ? 'pl-20 pr-4' : 'pl-4 pr-[140px]'}`}
+        className={`flex h-12 items-center gap-3 border-b border-sidebar-border bg-white shrink-0 ${isMac ? 'pl-20 pr-4' : 'pl-4 pr-[150px]'}`}
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <div className="flex items-center gap-2.5 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="flex items-center gap-2 shrink-0" style={NO_DRAG}>
           <img src={cerpLogo} alt="CERP" className="w-6 h-6 object-contain" />
           <span className="font-semibold text-brand-black text-[13px]">CERP AI</span>
         </div>
 
-        {/* Session activity indicator in center */}
-        <div className="flex-1 flex justify-center min-w-0 mx-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="shrink-0" style={NO_DRAG}>
           <SessionStatusBadge active={sessionActive} />
         </div>
 
+        <div className="flex-1" />
+
         {userName && (
-          <div className="flex items-center gap-3 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            {onShowOnboarding && (
-              <button
-                onClick={onShowOnboarding}
-                className="flex items-center gap-1 text-xs text-slate-400 hover:text-brand-orange transition-colors"
-                title="Ver el tutorial guiado para empezar"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                  <path d="M12 17h.01" />
-                </svg>
-                Cómo empezar
-              </button>
-            )}
+          <div className="flex items-center gap-2 shrink-0" style={NO_DRAG}>
             <button
+              type="button"
               onClick={() => setShowApps(true)}
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-brand-orange transition-colors"
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-composer-border bg-white px-3 text-xs font-medium text-[#3f3f46] outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-brand-orange/40"
               title="Conectar Gmail, Calendar, Drive y otras apps para que CERP AI pueda usarlas"
             >
               <Plug className="size-3.5" strokeWidth={2} aria-hidden="true" />
               Apps
             </button>
             <CreditBalanceBadge />
-            <button
-              onClick={() => setShowHistory(true)}
-              className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
-              title="Ver historial de cotizaciones y consumo de créditos"
-            >
-              Historial
-            </button>
-            <span className="text-xs text-slate-500">{userName}</span>
-            {onLogout && (
+            {onShowOnboarding && (
               <button
-                onClick={onLogout}
-                className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                type="button"
+                onClick={onShowOnboarding}
+                aria-label="Cómo empezar"
+                title="Cómo empezar"
+                className="inline-flex size-[30px] items-center justify-center rounded-full border border-composer-border bg-white text-[#52525b] outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-brand-orange/40"
               >
-                Cerrar sesión
+                <CircleHelp className="size-[15px]" strokeWidth={2} aria-hidden="true" />
               </button>
             )}
+            <AccountMenu userName={userName} userEmail={userEmail} onShowHistory={() => setShowHistory(true)} onLogout={onLogout} />
           </div>
         )}
       </header>
