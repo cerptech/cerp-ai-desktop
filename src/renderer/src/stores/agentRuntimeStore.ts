@@ -267,6 +267,35 @@ function updateLastAssistant(
   return [...messages, updater(newMsg)]
 }
 
+const sameTool = (a: ToolExecution, b: ToolExecution): boolean =>
+  a.toolUseId ? a.toolUseId === b.toolUseId : !b.toolUseId && a.name === b.name && a.startTime === b.startTime
+
+/**
+ * Copia el estado de `tools` (la lista del turno) a la burbuja que tiene cada tool.
+ * Una pregunta respondida en medio del turno lo parte en dos burbujas (lo de antes y
+ * lo de después de la respuesta), pero el turno sigue siendo UNO: la tool que
+ * preguntó termina después de la respuesta y su resultado tiene que llegar a la
+ * burbuja de antes. Antes cada evento copiaba la lista entera a la última burbuja:
+ * la de después repetía los pasos de antes y la de antes quedaba girando para siempre.
+ */
+function syncToolsToBubbles(messages: ChatMessage[], tools: ToolExecution[]): ChatMessage[] {
+  let changed = false
+  const next = messages.map((m) => {
+    if (m.role !== 'assistant' || !m.tools?.length) return m
+    let touched = false
+    const synced = m.tools.map((t) => {
+      const fresh = tools.find((x) => sameTool(x, t))
+      if (!fresh || fresh === t) return t
+      touched = true
+      return fresh
+    })
+    if (!touched) return m
+    changed = true
+    return { ...m, tools: synced }
+  })
+  return changed ? next : messages
+}
+
 function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): ConversationRuntime {
   const now = Date.now()
 
@@ -302,11 +331,12 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       const textAccumulator: TextAccumulator = { blockIndex: event.index, committed, buffer }
       const fullText = committed + buffer
 
+      // `tools` NO se vacía al abrir la burbuja de después de una respuesta: es la
+      // lista del turno, y la tool que preguntó todavía puede estar corriendo.
       if (r.needsNewAssistant) {
         return {
           ...r,
           needsNewAssistant: false,
-          tools: [],
           textAccumulator,
           messages: [...r.messages, {
             role: 'assistant',
@@ -323,7 +353,6 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
           ...msg,
           content: fullText,
-          tools: [...r.tools],
           agentContext: r.currentDelegation || msg.agentContext,
         })),
       }
@@ -343,7 +372,6 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         return {
           ...r,
           needsNewAssistant: false,
-          tools: [],
           textAccumulator,
           messages: [...r.messages, {
             role: 'assistant',
@@ -360,7 +388,6 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({
           ...msg,
           content: committed,
-          tools: [...r.tools],
           agentContext: r.currentDelegation || msg.agentContext,
         })),
       }
@@ -377,11 +404,28 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         ...(isAgentTool ? { subagentSteps: [] } : {}),
       }
       const tools = [...r.tools, tool]
+      // Después de una respuesta, la primera tool abre la burbuja nueva (igual que
+      // el texto): si no, los pasos y el texto de después quedaban en dos burbujas.
+      if (r.needsNewAssistant) {
+        return {
+          ...r,
+          tools,
+          activeTool: event.name,
+          needsNewAssistant: false,
+          messages: [...r.messages, {
+            role: 'assistant',
+            content: '',
+            timestamp: now,
+            tools: [tool],
+            agentContext: r.currentDelegation || undefined,
+          }],
+        }
+      }
       return {
         ...r,
         tools,
         activeTool: event.name,
-        messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })),
+        messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...(msg.tools ?? []), tool] })),
       }
     }
     case 'tool_done': {
@@ -407,7 +451,7 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         activeTool: stillRunning?.name || null,
         currentDelegation: isAgentTool ? null : r.currentDelegation,
         activeAgentDelegation: isAgentTool ? null : r.activeAgentDelegation,
-        messages: updateLastAssistant(r.messages, isAgentTool ? null : r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })),
+        messages: syncToolsToBubbles(r.messages, tools),
       }
     }
     case 'agent_delegation': {
@@ -418,7 +462,7 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         currentDelegation: d.agentName,
         activeAgentDelegation: { agentName: d.agentName, task: d.task },
         tools,
-        messages: updateLastAssistant(r.messages, d.agentName, (msg) => ({ ...msg, tools: [...tools] })),
+        messages: syncToolsToBubbles(r.messages, tools),
       }
     }
     case 'subagent_tool_start': {
@@ -427,7 +471,7 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       const tools = r.tools.map((t) =>
         t.toolUseId === ev.parentToolUseId ? { ...t, subagentSteps: [...(t.subagentSteps ?? []), newStep] } : t,
       )
-      return { ...r, tools, messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })) }
+      return { ...r, tools, messages: syncToolsToBubbles(r.messages, tools) }
     }
     case 'subagent_tool_done': {
       const ev = event
@@ -442,12 +486,12 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
           ),
         }
       })
-      return { ...r, tools, messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })) }
+      return { ...r, tools, messages: syncToolsToBubbles(r.messages, tools) }
     }
     case 'subagent_text': {
       const ev = event
       const tools = r.tools.map((t) => (t.toolUseId === ev.parentToolUseId ? { ...t, subagentText: ev.text } : t))
-      return { ...r, tools, messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })) }
+      return { ...r, tools, messages: syncToolsToBubbles(r.messages, tools) }
     }
     case 'html_canvas': {
       // Lienzo HTML de la tool show_html. Igual que text/text_delta: si
@@ -460,7 +504,6 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         return {
           ...r,
           needsNewAssistant: false,
-          tools: [],
           messages: [...r.messages, {
             role: 'assistant',
             content: '',
@@ -513,7 +556,7 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         activeAgentDelegation: null,
         currentDelegation: null,
         tools,
-        messages: updateLastAssistant(r.messages, r.currentDelegation, (msg) => ({ ...msg, tools: [...tools] })),
+        messages: syncToolsToBubbles(r.messages, tools),
       }
     }
     default:
@@ -523,6 +566,17 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
 
 // ── Manejo de eventos done / ask_user_question ───────────────────────────────
 
+/**
+ * Las tools que corren mientras hay una pregunta abierta están esperando al usuario,
+ * no trabajando: la UI muestra «Esperando tu respuesta» en vez del contador.
+ */
+function markAwaitingUser(rt: ConversationRuntime, awaiting: boolean): ConversationRuntime {
+  const tools = rt.tools.map((t) =>
+    t.status === 'running' && !!t.awaitingUser !== awaiting ? { ...t, awaitingUser: awaiting || undefined } : t,
+  )
+  return { ...rt, tools, messages: syncToolsToBubbles(rt.messages, tools) }
+}
+
 function handleDone(conversationId: string): void {
   update(conversationId, (rt) => {
     // Bug #4: si el usuario acaba de responder ask_user_question y el agente aún
@@ -530,13 +584,7 @@ function handleDone(conversationId: string): void {
     if (rt.waitingAfterAnswer) return rt
     const now = Date.now()
     const tools = settleRunningTools(rt.tools, 'done', now)
-    const messages = (() => {
-      const last = rt.messages[rt.messages.length - 1]
-      if (last?.role === 'assistant' && tools.length > 0) {
-        return [...rt.messages.slice(0, -1), { ...last, tools: [...tools] }]
-      }
-      return rt.messages
-    })()
+    const messages = syncToolsToBubbles(rt.messages, tools)
     return { ...rt, isStreaming: false, isPending: false, activeTool: null, activeAgentDelegation: null, currentDelegation: null, tools, messages }
   })
   persistNewMessages(conversationId, getRuntime(conversationId))
@@ -585,12 +633,19 @@ function ensureIpcWired(): void {
     // Lista vacía = el main canceló la pregunta (se cerró la sesión que la hizo): se
     // saca el widget, nadie espera ya esa respuesta.
     if (!questions?.length) {
-      update(id, (rt) => ({ ...rt, pendingQuestions: null, isSubmittingAnswers: false }))
+      update(id, (rt) => ({ ...markAwaitingUser(rt, false), pendingQuestions: null, isSubmittingAnswers: false }))
       return
     }
-    // El agente arranca un turno NUEVO al recibir la respuesta → marcar que el
-    // próximo text debe ser un mensaje assistant nuevo (no pisar el contexto previo).
-    update(id, (rt) => ({ ...rt, pendingQuestions: questions, needsNewAssistant: true }))
+    // Lo que venga después de la respuesta va a una burbuja nueva (no pisar lo de
+    // antes). Ojo: NO es un turno nuevo — la tool que preguntó sigue abierta y el
+    // agente continúa el MISMO turno (no llega stream_start). Por eso el acumulador
+    // de texto se vacía acá: si no, la burbuja nueva repetía el texto de antes.
+    update(id, (rt) => ({
+      ...markAwaitingUser(rt, true),
+      pendingQuestions: questions,
+      needsNewAssistant: true,
+      textAccumulator: EMPTY_TEXT_ACCUMULATOR,
+    }))
   })
 
   // Timer de inactividad (fallback). Con un turno en curso el main late cada 5 s y su
@@ -607,10 +662,7 @@ function ensureIpcWired(): void {
       if (stalledMs <= (rt.isPending ? STALL_PENDING_MS : STALL_STREAMING_MS)) continue
       update(id, (r) => {
         const tools = settleRunningTools(r.tools, 'error', now)
-        const last = r.messages[r.messages.length - 1]
-        const messages = last?.role === 'assistant' && tools.length > 0
-          ? [...r.messages.slice(0, -1), { ...last, tools: [...tools] }]
-          : r.messages
+        const messages = syncToolsToBubbles(r.messages, tools)
         return {
           ...r,
           isStreaming: false,
@@ -741,15 +793,18 @@ export async function submitAnswers(
     return `- ${q.question} → ${Array.isArray(ans) ? ans.join(', ') : (ans ?? '(sin respuesta)')}`
   }).join('\n')
 
-  update(conversationId, (rt) => ({
-    ...rt,
-    messages: [...rt.messages, { role: 'user', content: echoContent, timestamp: Date.now() }],
-    isSubmittingAnswers: true,
-    waitingAfterAnswer: true,
-    isPending: true,
-    isStreaming: true,
-    lastEvent: Date.now(),
-  }))
+  update(conversationId, (prev) => {
+    const rt = markAwaitingUser(prev, false)
+    return {
+      ...rt,
+      messages: [...rt.messages, { role: 'user', content: echoContent, timestamp: Date.now() }],
+      isSubmittingAnswers: true,
+      waitingAfterAnswer: true,
+      isPending: true,
+      isStreaming: true,
+      lastEvent: Date.now(),
+    }
+  })
   persistNewMessages(conversationId, getRuntime(conversationId))
 
   let delivered = true
@@ -769,7 +824,11 @@ export async function submitAnswers(
 export function restoreMessages(conversationId: string, messages: ChatMessage[], cwd?: string | null): void {
   ensureIpcWired()
   seedPersisted(conversationId, messages)
-  update(conversationId, () => ({ ...freshRuntime(), messages, cwd: cwd ?? null }))
+  // Orden por hora: el eco «Respuesta: …» se guarda al responder y la burbuja que
+  // preguntó recién al cerrar el turno, así que en la DB quedan al revés.
+  // `sort` es estable: con la misma hora se respeta el orden guardado.
+  const ordered = [...messages].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+  update(conversationId, () => ({ ...freshRuntime(), messages: ordered, cwd: cwd ?? null }))
 }
 
 /** Fija la carpeta de trabajo de UNA conversación (per-conversación, no global). */
