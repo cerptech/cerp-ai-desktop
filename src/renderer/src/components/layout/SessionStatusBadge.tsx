@@ -10,17 +10,17 @@ interface SessionStatusBadgeProps {
  */
 export function SessionStatusBadge({ active }: SessionStatusBadgeProps) {
   return (
-    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-50 border border-slate-200">
+    <div
+      className={[
+        'inline-flex h-6 items-center gap-1.5 px-2.5 rounded-full border text-xs font-medium',
+        active ? 'bg-primary-50 border-primary-200 text-primary-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700',
+      ].join(' ')}
+    >
       <span
-        className={[
-          'inline-block w-2 h-2 rounded-full transition-colors',
-          active ? 'bg-brand-orange animate-pulse' : 'bg-slate-300',
-        ].join(' ')}
+        className={['inline-block size-1.5 rounded-full', active ? 'bg-brand-orange animate-pulse' : 'bg-success'].join(' ')}
         aria-hidden="true"
       />
-      <span className={['text-xs font-medium', active ? 'text-brand-orange' : 'text-slate-500'].join(' ')}>
-        {active ? 'IA trabajando' : 'IA inactiva'}
-      </span>
+      {active ? 'IA trabajando' : 'IA lista'}
     </div>
   )
 }
