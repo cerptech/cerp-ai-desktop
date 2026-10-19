@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { toolSchemas } from './toolDefinitions'
+import { toolSchemas, clampLimitArgs } from './toolDefinitions'
 import { createItemBankTools } from './itemBankTools'
 import { createCatalogTools } from './catalogTools'
 import { createCreditsTools } from './creditsTools'
@@ -426,7 +426,9 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
           // simple renombre (ids planos -> array de subdocumentos, campo plano ->
           // subdocumento anidado). Corre ANTES de buildRequest para que el resultado
           // pase por el mismo armado de URL y fieldMap que el resto.
-          const apiArgs = def.transformArgs ? def.transformArgs(args) : args
+          // Los limites de paginacion se recortan aca (el schema ya no los rechaza).
+          const safeArgs = clampLimitArgs(def.schema, args)
+          const apiArgs = def.transformArgs ? def.transformArgs(safeArgs) : safeArgs
           const { url, body } = buildRequest(def.endpoint, def.method, apiArgs, def.fieldMap)
           logger.info(`MCP ${def.method} ${name} → ${url}`)
 
