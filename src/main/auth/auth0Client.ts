@@ -1,6 +1,8 @@
-import { shell } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import { randomBytes, createHash } from 'crypto'
+import { readFileSync } from 'fs'
 import { createServer, Server } from 'http'
+import cerpLogoPath from '../../../resources/cerp-logo.png?asset'
 import { tokenStore } from './tokenStore'
 import { clearApiKey } from './apiKeyManager'
 import { logger } from '../utils/logger'
@@ -22,31 +24,107 @@ function getAuth0Config() {
 const CALLBACK_PORT = 18973 // Fixed port for local callback server
 const LOCAL_REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
 
+/** La cuenta que acaba de iniciar sesión, para mostrarla en la página de éxito. */
+interface CallbackAccount {
+  name: string
+  email: string
+  verified: boolean
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string)
+}
+
+/** Iniciales del avatar: nombre + primer apellido (con 4 palabras, nombre compuesto). */
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  const surname = parts.length >= 4 ? parts[2] : parts[1]
+  return ((parts[0]?.[0] ?? '') + (surname?.[0] ?? '') || '?').toUpperCase()
+}
+
+/** Logo en data URI: la página la sirve el servidor local, sin acceso a los assets del renderer. */
+let logoDataUri: string | null = null
+function getLogoDataUri(): string {
+  if (logoDataUri === null) {
+    try {
+      logoDataUri = `data:image/png;base64,${readFileSync(cerpLogoPath).toString('base64')}`
+    } catch {
+      logoDataUri = ''
+    }
+  }
+  return logoDataUri
+}
+
+/** Trae la ventana de la app al frente al terminar el login (Windows puede solo hacer parpadear la barra de tareas). */
+function focusAppWindow(): void {
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+const ICON = (paths: string, size: number, stroke: string, width = 2): string =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
+
 /**
- * Página HTML de la ventana de callback (Ola 2) — sigue siendo inline (no hay
- * bundler para esta ruta, el servidor HTTP local la sirve tal cual) pero
- * converge con el resto de la UI: tarjeta centrada rounded-2xl, círculo con
- * ícono SVG, tipografía del sistema, tildes correctas.
+ * Página que ve el navegador al volver de Auth0. Inline (el servidor HTTP local
+ * la sirve tal cual), con el diseño del Desktop: cabecera con logo y paso,
+ * tarjeta central, la cuenta que entró y qué hacer ahora.
  */
-function renderCallbackPage(opts: { success: boolean; title: string; message: string }): string {
-  const circleColor = opts.success ? '#FE700B' : '#ef4444'
-  const iconPath = opts.success
-    ? '<path d="M20 6 9 17l-5-5" />'
-    : '<path d="M18 6 6 18" /><path d="M6 6l12 12" />'
+function renderCallbackPage(opts: { success: boolean; title: string; message: string; account?: CallbackAccount | null }): string {
+  const logo = getLogoDataUri()
+  const ring = opts.success ? '#fff4e6' : '#fef2f2'
+  const circle = opts.success ? '#fe700b' : '#dc2626'
+  const mark = opts.success ? '<path d="M20 6 9 17l-5-5"/>' : '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+  const account = opts.success && opts.account && (opts.account.name || opts.account.email)
+    ? `<div style="width:100%;box-sizing:border-box;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #ececec;border-radius:14px;background:#fafafa;text-align:left;">
+        <span style="width:38px;height:38px;flex-shrink:0;border-radius:999px;background:#ffe4cc;color:#b32f00;font-size:13px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;">${escapeHtml(initialsOf(opts.account.name || opts.account.email))}</span>
+        <div style="flex-grow:1;min-width:0;">
+          ${opts.account.name ? `<div style="font-size:14px;font-weight:600;">${escapeHtml(opts.account.name)}</div>` : ''}
+          ${opts.account.email ? `<div style="font-size:12.5px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(opts.account.email)}</div>` : ''}
+        </div>
+        ${opts.account.verified ? `<span style="display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:11.5px;font-weight:600;">${ICON('<path d="M20 6 9 17l-5-5"/>', 12, 'currentColor', 3)}Verificada</span>` : ''}
+      </div>`
+    : ''
+  const next = opts.success
+    ? { icon: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>', title: 'CERP AI ya está abierta en tu escritorio', text: 'Puedes cerrar esta pestaña. Si no ves la aplicación, búscala en la barra de tareas.' }
+    : { icon: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>', title: 'Vuelve a CERP AI e inténtalo de nuevo', text: 'Pulsa «Iniciar sesión» en la aplicación. Puedes cerrar esta pestaña.' }
   return `<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<title>CERP AI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CERP AI · ${escapeHtml(opts.title)}</title>
 </head>
-<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(to bottom,#f8fafc,#ffffff);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <div style="text-align:center;background:#ffffff;border:1px solid #e4e7ec;border-radius:24px;padding:40px 48px;box-shadow:0 4px 18px rgba(16,24,40,0.08);max-width:360px;">
-    <div style="width:56px;height:56px;border-radius:9999px;background:${circleColor};display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${iconPath}</svg>
+<body style="margin:0;min-height:100vh;box-sizing:border-box;padding:28px 32px;display:flex;flex-direction:column;background:#f8fafc;color:#1e1e1e;font-family:Inter,'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,sans-serif;">
+  <header style="display:flex;align-items:center;gap:10px;">
+    ${logo ? `<img src="${logo}" alt="CERP" width="28" height="28" style="object-fit:contain;" />` : ''}
+    <span style="font-size:15px;font-weight:600;">CERP AI</span>
+  </header>
+  <main style="flex-grow:1;display:flex;align-items:center;justify-content:center;padding:32px 0;">
+    <div style="width:100%;max-width:420px;box-sizing:border-box;background:#ffffff;border:1px solid #e4e7ec;border-radius:24px;box-shadow:0 8px 28px rgba(16,24,40,0.08);padding:36px 36px 28px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;">
+      <span style="width:64px;height:64px;border-radius:999px;background:${ring};display:inline-flex;align-items:center;justify-content:center;">
+        <span style="width:44px;height:44px;border-radius:999px;background:${circle};display:inline-flex;align-items:center;justify-content:center;">${ICON(mark, 22, '#ffffff', 2.6)}</span>
+      </span>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <h1 style="margin:0;font-size:22px;font-weight:700;">${escapeHtml(opts.title)}</h1>
+        <p style="margin:0;font-size:14px;line-height:21px;color:#5a5a5a;">${escapeHtml(opts.message)}</p>
+      </div>
+      ${account}
+      <div style="width:100%;box-sizing:border-box;display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:14px;background:#f1f5f9;text-align:left;">
+        <span style="color:#334155;display:inline-flex;margin-top:1px;">${ICON(next.icon, 16, 'currentColor')}</span>
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <span style="font-size:13.5px;font-weight:600;">${next.title}</span>
+          <span style="font-size:12.5px;line-height:18px;color:#475569;">${next.text}</span>
+        </div>
+      </div>
     </div>
-    <h2 style="color:#1e1e1e;margin:0 0 8px;font-size:18px;font-weight:600;">${opts.title}</h2>
-    <p style="color:#747474;margin:0;font-size:14px;line-height:1.5;">${opts.message}</p>
-  </div>
+  </main>
+  <footer style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11.5px;color:#64748b;">
+    ${ICON('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', 12, 'currentColor')}
+    Conexión segura · CERP Tech
+  </footer>
 </body>
 </html>`
 }
@@ -113,7 +191,7 @@ export async function login(): Promise<string> {
         res.end(renderCallbackPage({
           success: false,
           title: 'No se pudo iniciar sesión',
-          message: 'Ocurrió un error al autenticar. Ya puedes cerrar esta ventana y volver a intentarlo.',
+          message: 'Ocurrió un error al autenticar.',
         }))
         cleanup()
         reject(new Error(`Auth0 error: ${desc}`))
@@ -125,7 +203,7 @@ export async function login(): Promise<string> {
         res.end(renderCallbackPage({
           success: false,
           title: 'No se pudo iniciar sesión',
-          message: 'No se recibió el código de autorización. Ya puedes cerrar esta ventana.',
+          message: 'No se recibió el código de autorización.',
         }))
         cleanup()
         reject(new Error('Missing authorization code'))
@@ -152,7 +230,7 @@ export async function login(): Promise<string> {
           res.end(renderCallbackPage({
             success: false,
             title: 'No se pudo iniciar sesión',
-            message: 'No se pudo completar el inicio de sesión. Ya puedes cerrar esta ventana.',
+            message: 'No se pudo completar el inicio de sesión.',
           }))
           cleanup()
           reject(new Error(`Token exchange failed: ${body}`))
@@ -170,6 +248,7 @@ export async function login(): Promise<string> {
           headers: { Authorization: `Bearer ${access_token}` },
         })
 
+        let account: CallbackAccount | null = null
         if (userInfoRes.ok) {
           const userInfo = (await userInfoRes.json()) as Record<string, string>
           tokenStore.setUser({
@@ -179,6 +258,12 @@ export async function login(): Promise<string> {
             companyId: '',
             companyName: '',
           })
+          // `email_verified` llega como booleano aunque el resto sea texto.
+          account = {
+            name: userInfo.name || userInfo.nickname || '',
+            email: userInfo.email || '',
+            verified: (userInfo as Record<string, unknown>).email_verified === true,
+          }
         }
 
         tokenStore.setSession({
@@ -195,9 +280,11 @@ export async function login(): Promise<string> {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         res.end(renderCallbackPage({
           success: true,
-          title: 'Sesión iniciada correctamente',
-          message: 'Ya puedes volver a la aplicación.',
+          title: 'Sesión iniciada',
+          message: 'Tu cuenta quedó vinculada a CERP AI.',
+          account,
         }))
+        focusAppWindow()
 
         logger.info('Auth0 login successful')
         cleanup()
@@ -207,7 +294,7 @@ export async function login(): Promise<string> {
         res.end(renderCallbackPage({
           success: false,
           title: 'No se pudo iniciar sesión',
-          message: 'Ocurrió un error inesperado. Ya puedes cerrar esta ventana.',
+          message: 'Ocurrió un error inesperado.',
         }))
         cleanup()
         reject(err instanceof Error ? err : new Error(String(err)))
