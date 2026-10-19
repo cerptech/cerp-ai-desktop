@@ -39,6 +39,8 @@ export interface ToolExecution {
   subagentSteps?: SubagentStep[]
   /** Latest text/reasoning streamed from the subagent (forwardSubagentText, Fase 2) */
   subagentText?: string
+  /** Corre pero está parada esperando la respuesta del usuario a una pregunta o confirmación. */
+  awaitingUser?: boolean
 }
 
 export interface ChatMessage {

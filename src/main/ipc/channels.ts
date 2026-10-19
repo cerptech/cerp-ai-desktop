@@ -88,6 +88,14 @@ export const IPC_CHANNELS = {
   // pedido desde el main (timeout 3 s, cache por sesión). null = usar el respaldo local.
   PROMPT_LIBRARY_GET: 'prompt-library:get',
 
+  // Apps conectadas (Composio) — pantalla «Apps». El renderer no tiene el token:
+  // el main llama a /api/integrations/* con el Bearer del usuario.
+  INTEGRATIONS_CATALOG: 'integrations:catalog',
+  INTEGRATIONS_STATUS: 'integrations:status',
+  INTEGRATIONS_CONNECT: 'integrations:connect',
+  INTEGRATIONS_DISCONNECT: 'integrations:disconnect',
+  INTEGRATIONS_RECONCILE: 'integrations:reconcile',
+
   // App
   APP_GET_VERSION: 'app:get-version',
 
