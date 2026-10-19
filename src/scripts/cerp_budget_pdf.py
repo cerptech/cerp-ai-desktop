@@ -71,6 +71,7 @@ PDF_LABELS = {
     'lines.code':          {'es': 'Código', 'en': 'Code'},
     'lines.qty':           {'es': 'Cant.', 'en': 'Qty'},
     'lines.unit':          {'es': 'Ud.', 'en': 'Unit'},
+    'lines.unitPrice':     {'es': 'P. unitario', 'en': 'Unit price'},
     'lines.material':      {'es': 'Material', 'en': 'Material'},
     'lines.labor':         {'es': 'Mano de Obra', 'en': 'Labor'},
     'lines.equipment':     {'es': 'Equipos', 'en': 'Equipment'},
@@ -220,6 +221,7 @@ COL_DEFS = [
     ('code',          'lines.code',          13),
     ('qty',           'lines.qty',           10),
     ('unit',          'lines.unit',          8),
+    ('unitPrice',     'lines.unitPrice',     19),
     ('material',      'lines.material',      19),
     ('labor',         'lines.labor',         19),
     ('equipment',     'lines.equipment',     17),
@@ -229,6 +231,19 @@ COL_DEFS = [
 ]
 # Right-aligned monetary columns (used across chapter/item rows).
 VALUE_KEYS = {'material', 'labor', 'equipment', 'subcontracted', 'overhead', 'total'}
+
+# Columnas agregadas al catálogo después de que existieran plantillas guardadas
+# (RQM-130): un config que no las menciona las OCULTA, en vez de mostrarlas como
+# al resto de campos ausentes. Espejo de HIDDEN_WHEN_ABSENT_LINE_FIELDS del ERP.
+HIDDEN_WHEN_ABSENT_LINE_FIELDS = {'lines.unitPrice'}
+
+# Ancho de la tabla de líneas (Σ de las 11 columnas originales); 'desc' se queda con el resto.
+LINES_TABLE_MM = 180
+MIN_DESC_MM = 15
+
+# Decimales del precio unitario (config.options.unitPriceDecimals de la plantilla).
+UNIT_PRICE_DECIMALS_OPTIONS = (2, 3, 4)
+DEFAULT_UNIT_PRICE_DECIMALS = 2
 
 HEADER_CLIENT_FIELD_IDS = ['header.clientName', 'header.clientAddress', 'header.clientCity', 'header.clientCountry']
 HEADER_BUDGET_FIELD_IDS = ['header.budgetNumber', 'header.budgetRevision', 'header.issueDate', 'header.expiryDate']
@@ -270,11 +285,16 @@ def _config_from_new_template(tpl):
     footer_text = footer.get('text') if isinstance(footer, dict) else None
     if not footer_text:
         footer_text = DEFAULT_BUDGET_FOOTER_TEMPLATE
+    options = tpl.get('options') if isinstance(tpl.get('options'), dict) else {}
+    unit_decimals = options.get('unitPriceDecimals')
+    if unit_decimals not in UNIT_PRICE_DECIMALS_OPTIONS:
+        unit_decimals = DEFAULT_UNIT_PRICE_DECIMALS
     return {
         'header_visible': header_visible, 'header_order': header_order,
         'lines_visible': lines_visible, 'lines_order': lines_order,
         'show_indirect': sections_visible.get('section.indirectCosts', True),
         'footer_text': footer_text,
+        'unit_price_decimals': unit_decimals,
     }
 
 
@@ -293,6 +313,7 @@ def _config_from_legacy(ps):
         'lines_visible': lines_visible, 'lines_order': {},
         'show_indirect': ps.get('showIndirectCosts', True),
         'footer_text': None,  # signal: compute the legacy dynamic footer composition
+        'unit_price_decimals': DEFAULT_UNIT_PRICE_DECIMALS,
     }
 
 
@@ -302,6 +323,7 @@ def _config_show_all():
         'lines_visible': {}, 'lines_order': {},
         'show_indirect': True,
         'footer_text': None,
+        'unit_price_decimals': DEFAULT_UNIT_PRICE_DECIMALS,
     }
 
 
@@ -342,17 +364,19 @@ def resolve_template_config(data):
     return _config_show_all()
 
 
+def is_line_visible(lines_visible, field_id):
+    return lines_visible.get(field_id, field_id not in HIDDEN_WHEN_ABSENT_LINE_FIELDS)
+
+
 def build_active_cols(lines_visible, lines_order, locale):
-    """Filter+reorder the 11 fixed line columns per config, redistributing the
-    width freed by hidden columns to 'Descripcion' so the table keeps its
-    180mm total. Each column keeps its original `idx` into COL_DEFS (see the
-    module-level comment on COL_DEFS) — that's what makes reordering safe
-    without touching row-building code."""
-    freed = 0.0
+    """Filter+reorder the fixed line columns per config; 'Descripcion' takes the
+    width the other visible columns leave so the table keeps its 180mm total.
+    Each column keeps its original `idx` into COL_DEFS (see the module-level
+    comment on COL_DEFS) — that's what makes reordering safe without touching
+    row-building code."""
     active = []
     for idx, (key, field_id, mmw) in enumerate(COL_DEFS):
-        if not lines_visible.get(field_id, True):
-            freed += mmw
+        if not is_line_visible(lines_visible, field_id):
             continue
         active.append({
             'key': key,
@@ -364,16 +388,12 @@ def build_active_cols(lines_visible, lines_order, locale):
         })
     active.sort(key=lambda col: col['order'])
 
-    for col in active:
-        if col['key'] == 'desc':
-            col['mm'] += freed
-            break
-    else:
-        # 'desc' itself hidden (shouldn't happen — mandatory in the catalog,
-        # but grandfathered data is tolerated) — dump the freed width on the
-        # first visible column so nothing is silently lost.
-        if active:
-            active[0]['mm'] += freed
+    # 'desc' itself hidden (shouldn't happen — mandatory in the catalog, but
+    # grandfathered data is tolerated) → the first visible column flexes instead.
+    flex = next((col for col in active if col['key'] == 'desc'), active[0] if active else None)
+    if flex is not None:
+        others = sum(col['mm'] for col in active if col is not flex)
+        flex['mm'] = max(LINES_TABLE_MM - others, MIN_DESC_MM)
 
     for col in active:
         col['w'] = col['mm'] * mm
@@ -398,13 +418,13 @@ def fmt_date(s):
     except Exception:
         return str(s)[:10]
 
-def fmt_money(n, sym='$'):
+def fmt_money(n, sym='$', decimals=2):
     try:
         v = float(n or 0)
-        s = f"{v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        s = f"{v:,.{decimals}f}".replace(',', 'X').replace('.', ',').replace('X', '.')
         return f"{sym} {s}"
     except Exception:
-        return f"{sym} 0,00"
+        return f"{sym} 0,{'0' * decimals}"
 
 def fmt_qty(n):
     try:
@@ -414,6 +434,13 @@ def fmt_qty(n):
         return f"{v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     except Exception:
         return '0'
+
+def fit_font_size(c, text, font, max_size, max_w, min_size=4.5):
+    """Mayor tamaño (≤ max_size, ≥ min_size) con el que `text` entra en max_w pts."""
+    size = max_size
+    while size > min_size and c.stringWidth(text, font, size) > max_w:
+        size -= 0.25
+    return size
 
 def clip(c, text, font, size, max_w):
     """Truncate text to fit max_w pts."""
@@ -623,28 +650,146 @@ def compute_taxes(budget, subtotal3):
                       'amount': -amount if withholding else amount})
     return lines, total_taxes, total_withholding
 
+# ── Importes verificables (RQM-130, espejo de budgetDocumentAmounts.ts) ───────
+#
+# Solo con la columna de precio unitario visible. El PDF tiene que cuadrar con
+# una calculadora: unitario redondeado a `unit_decimals`, importe de la partida
+# desde ese unitario, componentes con el residuo de céntimos en el mayor,
+# capítulos y Costes Directos sumando lo impreso, sección K e impuestos desde
+# los Costes Directos impresos. Aritmética en céntimos enteros.
+AMOUNT_COMPONENT_KEYS = ('materials', 'labor', 'equipment', 'subcontracted', 'overhead')
+_PCT_COST_TYPES = ('calculated', 'variable')
+
+
+def to_units(x, decimals=2):
+    """Half-up simétrico a `decimals`, en unidades enteras (Number.toPrecision(15) del ERP)."""
+    try:
+        v = float(x or 0)
+    except Exception:
+        return 0
+    if not math.isfinite(v):
+        return 0
+    units = int(math.floor(float(f"{abs(v) * 10 ** decimals:.15g}") + 0.5))
+    return -units if v < 0 else units
+
+
+def round_to(x, decimals):
+    return to_units(x, decimals) / 10 ** decimals
+
+
+def item_components(item):
+    """Componentes del unitario SIN repartir los gastos generales: Σ = unitario."""
+    snap = item.get('productSnapshot') or {}
+    bd   = snap.get('costBreakdown') or {}
+    comps = {k: float(bd.get(k) or 0) for k in ('materials', 'labor', 'equipment', 'subcontracted')}
+    oh = float(item.get('overheadOverride') or snap.get('overheadPercentage') or 0)
+    comps['overhead'] = sum(comps.values()) * oh / 100
+    return comps
+
+
+def compute_document_amounts(tree, items_by_id, budget, unit_decimals):
+    lines, chapters = {}, {}
+
+    def walk(node):
+        item_doc = items_by_id.get(node.get('_id', '')) or node
+        if node.get('type', 'item') == 'chapter':
+            acc = {k: 0 for k in AMOUNT_COMPONENT_KEYS + ('total',)}
+            for child in node.get('children') or []:
+                row = walk(child)
+                for k in acc:
+                    acc[k] += row[k]
+            chapters[node.get('_id')] = {k: v / 100 for k, v in acc.items()}
+            return acc
+
+        comps = item_components(item_doc)
+        qty = float(item_doc.get('quantity') or 0)
+        unit_price = round_to(sum(comps.values()), unit_decimals)
+        row = {k: to_units(comps[k] * qty) for k in AMOUNT_COMPONENT_KEYS}
+        row['total'] = to_units(unit_price * qty)
+        residue = row['total'] - sum(row[k] for k in AMOUNT_COMPONENT_KEYS)
+        if residue:
+            target = max(AMOUNT_COMPONENT_KEYS, key=lambda k: abs(row[k]))
+            row[target] += residue
+        lines[node.get('_id')] = dict({k: v / 100 for k, v in row.items()}, unitPrice=unit_price)
+        return row
+
+    direct = {k: 0 for k in AMOUNT_COMPONENT_KEYS + ('total',)}
+    for root in tree:
+        row = walk(root)
+        for k in direct:
+            direct[k] += row[k]
+
+    # Sección K desde los Costes Directos impresos.
+    cost_items = sorted(budget.get('costItems') or [], key=lambda x: x.get('order', 0))
+    ci_amounts = [0] * len(cost_items)
+    subtotals = [0, 0, 0]
+    base = running = direct['total']
+    for g in (1, 2, 3):
+        for i, ci in enumerate(cost_items):
+            if ci.get('group') != g:
+                continue
+            if ci.get('costType') in _PCT_COST_TYPES and ci.get('percentage'):
+                amount = to_units(base / 100 * float(ci['percentage']) / 100)
+            elif ci.get('costType') == 'fixed':
+                amount = to_units(ci.get('fixedAmount') or 0)
+            else:
+                amount = 0
+            ci_amounts[i] = amount
+            running += amount
+        subtotals[g - 1] = running
+        base = running
+
+    tax_lines, total_taxes, total_withholding = [], 0, 0
+    for tax in budget.get('budgetTaxes') or []:
+        rate = float(tax.get('rate') or 0)
+        amount = to_units(subtotals[2] / 100 * rate / 100)
+        withholding = bool(tax.get('withholding'))
+        if withholding:
+            total_withholding += amount
+        else:
+            total_taxes += amount
+        tax_lines.append({'name': tax.get('name', ''), 'rate': rate, 'withholding': withholding,
+                          'amount': (-amount if withholding else amount) / 100})
+
+    return {
+        'lines': lines,
+        'chapters': chapters,
+        'direct': {k: v / 100 for k, v in direct.items()},
+        'cost_items': cost_items,
+        'cost_item_amounts': [u / 100 for u in ci_amounts],
+        'subtotals': [u / 100 for u in subtotals],
+        'tax_lines': tax_lines,
+        'total_taxes': total_taxes / 100,
+        'total_withholding': total_withholding / 100,
+        'net': (subtotals[2] + total_taxes - total_withholding) / 100,
+    }
+
+
 # ── Tree flattening (mirrors ERP's flattenTree) ───────────────────────────────
-def flatten_tree(tree, items_by_id, sym, depth=0):
+def flatten_tree(tree, items_by_id, sym, depth=0, amounts=None, unit_decimals=DEFAULT_UNIT_PRICE_DECIMALS):
     rows = []
     for node in tree:
         ntype = node.get('type', 'item')
         item_doc = items_by_id.get(node.get('_id', '')) or node
 
         if ntype == 'chapter':
-            leaves = collect_leaves(node, items_by_id)
-            agg = {'materials': 0, 'labor': 0, 'equipment': 0, 'subcontracted': 0, 'overhead': 0, 'total': 0}
-            for lf in leaves:
-                up, bd = item_unit_price(lf)
-                qty = float(lf.get('quantity') or 0)
-                for k in agg:
-                    agg[k] += (bd[k] if k != 'total' else up) * qty
+            if amounts is not None:
+                agg = amounts['chapters'].get(node.get('_id')) or {}
+            else:
+                leaves = collect_leaves(node, items_by_id)
+                agg = {'materials': 0, 'labor': 0, 'equipment': 0, 'subcontracted': 0, 'overhead': 0, 'total': 0}
+                for lf in leaves:
+                    up, bd = item_unit_price(lf)
+                    qty = float(lf.get('quantity') or 0)
+                    for k in agg:
+                        agg[k] += (bd[k] if k != 'total' else up) * qty
 
             hn   = node.get('hierarchyNumber') or item_doc.get('hierarchyNumber', '')
             name = node.get('name') or item_doc.get('name', '')
             rows.append({
                 'rtype': 'chapter', 'depth': depth,
                 'cells': [
-                    hn, name, '', '', '',
+                    hn, name, '', '', '', '',
                     fmt_money(agg['materials'], sym),
                     fmt_money(agg['labor'], sym),
                     fmt_money(agg['equipment'], sym),
@@ -659,7 +804,7 @@ def flatten_tree(tree, items_by_id, sym, depth=0):
             if desc:
                 rows.append({'rtype': 'desc', 'depth': depth, 'cells': [], 'raw': desc})
 
-            rows.extend(flatten_tree(node.get('children') or [], items_by_id, sym, depth + 1))
+            rows.extend(flatten_tree(node.get('children') or [], items_by_id, sym, depth + 1, amounts, unit_decimals))
 
         else:  # item
             up, bd = item_unit_price(item_doc)
@@ -667,6 +812,17 @@ def flatten_tree(tree, items_by_id, sym, depth=0):
             snap = item_doc.get('productSnapshot') or {}
             hn   = node.get('hierarchyNumber', '')
             name = node.get('name') or item_doc.get('name', '')
+            line = amounts['lines'].get(node.get('_id')) if amounts is not None else None
+            if line is None:
+                line = {
+                    'materials': bd['materials'] * qty,
+                    'labor': bd['labor'] * qty,
+                    'equipment': bd['equipment'] * qty,
+                    'subcontracted': bd['subcontracted'] * qty,
+                    'overhead': bd['overhead'] * qty,
+                    'total': up * qty,
+                    'unitPrice': up,
+                }
             rows.append({
                 'rtype': 'item', 'depth': depth,
                 'cells': [
@@ -674,12 +830,13 @@ def flatten_tree(tree, items_by_id, sym, depth=0):
                     snap.get('code', ''),
                     fmt_qty(qty) if qty else '-',
                     snap.get('unit', '-'),
-                    fmt_money(bd['materials'] * qty, sym),
-                    fmt_money(bd['labor'] * qty, sym),
-                    fmt_money(bd['equipment'] * qty, sym),
-                    fmt_money(bd['subcontracted'] * qty, sym),
-                    fmt_money(bd['overhead'] * qty, sym),
-                    fmt_money(up * qty, sym),
+                    fmt_money(line['unitPrice'], sym, unit_decimals),
+                    fmt_money(line['materials'], sym),
+                    fmt_money(line['labor'], sym),
+                    fmt_money(line['equipment'], sym),
+                    fmt_money(line['subcontracted'], sym),
+                    fmt_money(line['overhead'], sym),
+                    fmt_money(line['total'], sym),
                 ],
                 'raw': '',
             })
@@ -950,6 +1107,12 @@ def draw_item_row(c, cells, depth, item_idx, y):
         elif key == 'code':
             txt = clip(c, cell, 'Helvetica', 5.5, w - 3 * mm)
             text_mid(c, cx + 1.5 * mm, y, ROW_H_ITEM, txt, 'Helvetica', 5.5, C_GRAY)
+        elif key == 'unitPrice':
+            # Un unitario de millones con 4 decimales no entra: se achica la letra
+            # antes que recortar el importe.
+            size = fit_font_size(c, cell, 'Helvetica', 6, w - 3 * mm)
+            txt = clip(c, cell, 'Helvetica', size, w - 3 * mm)
+            text_mid(c, cx, y, ROW_H_ITEM, txt, 'Helvetica', size, C_DARK, align='right', x2=cx + w - 1.5 * mm)
         else:  # qty, unit and monetary columns → right aligned
             txt = clip(c, cell, 'Helvetica', 6, w - 3 * mm)
             text_mid(c, cx, y, ROW_H_ITEM, txt, 'Helvetica', 6, C_DARK, align='right', x2=cx + w - 1.5 * mm)
@@ -992,10 +1155,25 @@ class BudgetPDFGen:
 
         self.items_by_id  = {it['_id']: it for it in self.items if it.get('_id')}
         self.leaves       = [i for i in self.items if i.get('type') == 'item']
-        self.direct, self.s1, self.s2, self.grand = compute_totals(self.budget, self.leaves)
-        self.tax_lines, self.total_taxes, self.total_withholding = compute_taxes(self.budget, self.grand)
-        self.net = self.grand + self.total_taxes - self.total_withholding  # Presupuesto total = neto a cobrar
-        self.flat_rows    = flatten_tree(self.tree, self.items_by_id, self.sym)
+        self.unit_decimals = self.tpl.get('unit_price_decimals', DEFAULT_UNIT_PRICE_DECIMALS)
+        # RQM-130: con precio unitario visible todo el documento parte de lo impreso.
+        self.amounts = (
+            compute_document_amounts(self.tree, self.items_by_id, self.budget, self.unit_decimals)
+            if is_line_visible(self.tpl['lines_visible'], 'lines.unitPrice') else None
+        )
+        if self.amounts is not None:
+            self.direct = self.amounts['direct']['total']
+            self.s1, self.s2, self.grand = self.amounts['subtotals']
+            self.tax_lines = self.amounts['tax_lines']
+            self.total_taxes = self.amounts['total_taxes']
+            self.total_withholding = self.amounts['total_withholding']
+            self.net = self.amounts['net']
+        else:
+            self.direct, self.s1, self.s2, self.grand = compute_totals(self.budget, self.leaves)
+            self.tax_lines, self.total_taxes, self.total_withholding = compute_taxes(self.budget, self.grand)
+            self.net = self.grand + self.total_taxes - self.total_withholding  # Presupuesto total = neto a cobrar
+        self.flat_rows    = flatten_tree(self.tree, self.items_by_id, self.sym,
+                                         amounts=self.amounts, unit_decimals=self.unit_decimals)
 
         self.c            = rl_canvas.Canvas(dest, pagesize=A4)
         self.page_num     = 0
@@ -1060,8 +1238,11 @@ class BudgetPDFGen:
             bg = C_LIGHT if i % 2 == 0 else C_WHITE
             fill_rect(self.c, ML, y, CW, ROW_H, bg)
 
-            leaves = collect_leaves(node, self.items_by_id)
-            ch_tot = sum(item_unit_price(lf)[0] * float(lf.get('quantity') or 0) for lf in leaves)
+            if self.amounts is not None:
+                ch_tot = (self.amounts['chapters'].get(node.get('_id')) or {}).get('total', 0)
+            else:
+                leaves = collect_leaves(node, self.items_by_id)
+                ch_tot = sum(item_unit_price(lf)[0] * float(lf.get('quantity') or 0) for lf in leaves)
             total_direct += ch_tot
 
             hn   = node.get('hierarchyNumber', '')
@@ -1174,9 +1355,12 @@ class BudgetPDFGen:
                          get_label('variable', self.locale) if ct in ('variable', 'calculated') else get_label('fixed', self.locale),
                          'Helvetica', 7, C_GRAY)
 
-                amount = (base * float(pct) / 100
-                          if ct in ('variable', 'calculated') and pct
-                          else float(ci.get('fixedAmount') or 0))
+                if self.amounts is not None:
+                    amount = self.amounts['cost_item_amounts'][cost_items.index(ci)]
+                else:
+                    amount = (base * float(pct) / 100
+                              if ct in ('variable', 'calculated') and pct
+                              else float(ci.get('fixedAmount') or 0))
                 text_mid(self.c, ML, y, ROW_H, fmt_money(amount, self.sym),
                          'Helvetica', 8, C_DARK, align='right', x2=ML + CW - 2 * mm)
                 y += ROW_H
