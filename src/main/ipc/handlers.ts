@@ -4,10 +4,10 @@ import { basename, extname, join } from 'path'
 import { IPC_CHANNELS } from './channels'
 import { login, logout, ensureFreshToken, refreshAccessToken } from '../auth/auth0Client'
 import { tokenStore } from '../auth/tokenStore'
-import { DesktopAccessDeniedError, fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, DesktopUpdateRequiredError, fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, setCompanySwitchObserver } from '../auth/apiKeyManager'
 import { createSessionGuard } from '../auth/sessionGuard'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
-import { quitAndInstallUpdate } from '../updater'
+import { checkForUpdatesNow, quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
 import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
@@ -157,6 +157,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         // Sin empresa o sesión revocada: el guard de sesión ya cierra la sesión
         // con SU mensaje; no se abre además el modal de sesión expirada.
         if (err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) throw err
+        // El token se renovó bien: lo que falta es actualizar la app (426). fetchApiKey
+        // ya borró la key y el próximo envío muestra el aviso; no es una sesión expirada.
+        if (err instanceof DesktopUpdateRequiredError) {
+          checkForUpdatesNow('el core exige una versión más nueva (renovación de sesión)')
+          return
+        }
         logger.warn('No se pudo renovar la sesión — limpiando credenciales:', err)
         tokenStore.clearAll()
         clearApiKey()
@@ -181,6 +187,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         // Cuenta sin empresas (403 NO_ACTIVE_COMPANY): el guard de sesión ya cerró
         // la sesión y avisó al renderer; devolver "autenticado" la reabriría vacía.
         if (apiKeyErr instanceof NoActiveCompanyError) return { isAuthenticated: false }
+        // Versión mínima (F0.2 (b)): la sesión vale; el primer envío muestra el aviso.
+        if (apiKeyErr instanceof DesktopUpdateRequiredError) checkForUpdatesNow('el core exige una versión más nueva (login)')
         logger.warn('Could not fetch API key (will retry later):', apiKeyErr)
       }
 
@@ -245,6 +253,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             if (err instanceof DesktopAccessDeniedError) {
               return { started: false, error: err.message, code: err.code }
             }
+            // El core exige una versión más nueva (F0.2 (b)): tampoco se sigue con la
+            // key cacheada; se pide el chequeo de actualización.
+            if (err instanceof DesktopUpdateRequiredError) {
+              checkForUpdatesNow('el core exige una versión más nueva')
+              return { started: false, error: err.message, code: err.code }
+            }
             // La cuenta se quedó sin empresas: el guard ya cerró la sesión.
             if (err instanceof NoActiveCompanyError) {
               return { started: false, error: NO_ACTIVE_COMPANY_MESSAGE, code: 'NO_ACTIVE_COMPANY' }
@@ -276,6 +290,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
           // 403 FORBIDDEN / SUBSCRIPTION_BLOCKED: el mensaje dice qué habilitar,
           // en vez del genérico de red (HOT FIX Camacho 06-10-2026).
           if (err instanceof DesktopAccessDeniedError) {
+            return { started: false, error: err.message, code: err.code }
+          }
+          if (err instanceof DesktopUpdateRequiredError) {
+            checkForUpdatesNow('el core exige una versión más nueva')
             return { started: false, error: err.message, code: err.code }
           }
           if (err instanceof NoActiveCompanyError) {

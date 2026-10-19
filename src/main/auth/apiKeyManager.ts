@@ -53,6 +53,29 @@ export class DesktopAccessDeniedError extends Error {
 }
 
 /**
+ * Texto del aviso de versión mínima. Lo arma el cliente a partir del código, no lo
+ * copia del servidor: el body de un error no es un texto de confianza para la UI.
+ */
+export const DESKTOP_UPDATE_REQUIRED_MESSAGE = 'Actualiza CERP IA Desktop a la última versión para seguir usándolo.'
+
+/**
+ * El core exige una versión más nueva del Desktop para entregar la config (F0.2 (b)
+ * del plan CERP IA Q4-2026): 426 `DESKTOP_UPDATE_REQUIRED` en `/desktop/api-key`.
+ * Es una negativa definitiva hasta actualizar, no un fallo de red: no se sigue con
+ * la key cacheada.
+ */
+export class DesktopUpdateRequiredError extends Error {
+  readonly code = 'DESKTOP_UPDATE_REQUIRED' as const
+  readonly minVersion: string | null
+
+  constructor(minVersion: string | null) {
+    super(DESKTOP_UPDATE_REQUIRED_MESSAGE)
+    this.name = 'DesktopUpdateRequiredError'
+    this.minVersion = minVersion
+  }
+}
+
+/**
  * Allowlist cerrada, como en cerp-ai-service: una política malformada (p.ej.
  * sin `maxTier` por un bug de serialización) se descarta ENTERA. Si se
  * aceptara a medias, `resolveModel` bloquearía "Potente" para todas las
@@ -172,6 +195,18 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
     logger.info('API key fetched and stored successfully')
     return config
   } catch (err) {
+    // Versión mínima (F0.2 (b)): se decide por el código, no por el status, para que
+    // un cambio de status del lado del core no reabra el «se usa la cacheada».
+    if (err instanceof HttpError) {
+      const body = err.body as { code?: string; minVersion?: unknown; error?: { code?: string } } | undefined
+      if ((body?.code ?? body?.error?.code) === 'DESKTOP_UPDATE_REQUIRED') {
+        const minVersion = typeof body?.minVersion === 'string' ? body.minVersion : null
+        logger.warn(`fetchApiKey: el core exige actualizar el Desktop (${err.status} DESKTOP_UPDATE_REQUIRED, mínima ${minVersion ?? '-'})`)
+        // Una versión que el core ya no acepta no conserva la key en disco.
+        clearApiKey()
+        throw new DesktopUpdateRequiredError(minVersion)
+      }
+    }
     if (err instanceof HttpError && err.status === 402) {
       // El endpoint /desktop/api-key responde el shape PLANO { message, code }
       // (convención de ese archivo); se acepta también el anidado { error: { code } }

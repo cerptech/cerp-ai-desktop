@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import {
   classifySessionError,
   COMPANY_CHANGED_TOOL_ERROR,
@@ -8,6 +9,32 @@ import {
 
 function getApiBaseUrl(): string {
   return process.env.CERP_API_BASE_URL || 'https://production-cerp-server-1060273677691.europe-west1.run.app/api'
+}
+
+/**
+ * Cabecera con la versión de la app (F0.2 (b) del plan CERP IA Q4-2026). El core la
+ * usa para exigir una versión mínima antes de entregar la config de
+ * `/desktop/api-key` (426 `DESKTOP_UPDATE_REQUIRED`). Hasta la 1.0.41 el Desktop no
+ * la mandaba (solo `X-CERP-Desktop: 1`), así que el core no podía distinguir versiones.
+ */
+export const DESKTOP_VERSION_HEADER = 'X-CERP-Desktop-Version'
+
+let cachedAppVersion: string | null = null
+function appVersion(): string {
+  if (cachedAppVersion === null) {
+    try {
+      cachedAppVersion = app.getVersion()
+    } catch {
+      cachedAppVersion = ''
+    }
+  }
+  return cachedAppVersion
+}
+
+/** Cabeceras que identifican al Desktop en cada llamada al core. */
+function desktopHeaders(): Record<string, string> {
+  const version = appVersion()
+  return version ? { 'X-CERP-Desktop': '1', [DESKTOP_VERSION_HEADER]: version } : { 'X-CERP-Desktop': '1' }
 }
 
 /**
@@ -225,7 +252,7 @@ export class HttpClient {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        'X-CERP-Desktop': '1',
+        ...desktopHeaders(),
         // Do NOT set Content-Type — fetch sets it automatically with the multipart boundary
       },
       body: formData,
@@ -252,7 +279,7 @@ export class HttpClient {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
-        'X-CERP-Desktop': '1',
+        ...desktopHeaders(),
       },
     })
 
@@ -293,7 +320,7 @@ export class HttpClient {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'X-CERP-Desktop': '1',
+        ...desktopHeaders(),
       },
       body: data ? JSON.stringify(data) : undefined,
     })
