@@ -10,7 +10,7 @@ import { getLoadContext } from './loadContext'
 import { buildRetryPrompt, classifyResult, describeTurnFailure, resultErrorDetail, type TurnFailureCode } from './turnOutcome'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { DesktopAccessDeniedError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, NoCreditsError } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, getSpanishVariant, NoCreditsError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -1110,6 +1110,19 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   }
 
   context += `\nUsa estos datos cuando generes reportes, documentos o necesites informacion de la empresa. Formatea montos segun la moneda y formato regional configurado.\n`
+
+  // RQM-188: el core dice en qué español habla CERP IA (misma línea que el bloque
+  // de sesión de cerp-ai-service). Solo `es` agrega texto: `es-419` es como ya
+  // hablaba. Hace falta porque el prompt mezcla tuteo y voseo, y el «Locale: es-AR»
+  // por defecto de una empresa española empujaba al rioplatense.
+  if (getSpanishVariant() === 'es') {
+    context +=
+      '\n### Idioma\n' +
+      '- Responde siempre en español de España: trata a la persona de tú (tú, tienes, dime; vosotros en plural) ' +
+      'y usa vocabulario de España (ordenador, móvil, coche). Nunca uses voseo (sos, tenés, decime, fijate) ' +
+      'ni expresiones rioplatenses (che, dale, laburo, bárbaro), aunque el resto de estas instrucciones esté escrito con voseo. ' +
+      'Vale también para lo que redactes en su nombre (emails, mensajes, descripciones) y para los agentes especializados que invoques.\n'
+  }
 
   cachedContextPrompt = context
   cachedContextCompanyId = companyId
