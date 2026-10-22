@@ -161,6 +161,11 @@ export interface DesktopConfig {
    * antiguo Modo Turbo) para no requerir un cambio de contrato ahí.
    */
   maxBudgetUsdTurbo?: number
+  /**
+   * En qué español habla CERP IA (RQM-188): `es` = España (tú), `es-419` =
+   * Latinoamérica (voseo). Lo resuelve el core; ausente en un backend anterior.
+   */
+  spanishVariant?: 'es' | 'es-419'
 }
 
 // ── ask_user_question tool types ──

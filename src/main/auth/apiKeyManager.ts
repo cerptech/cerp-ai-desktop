@@ -132,6 +132,7 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
       modelPolicy?: AiModelPolicy
       maxBudgetUsd?: number
       maxBudgetUsdTurbo?: number
+      spanishVariant?: unknown
     }>('POST', '/desktop/api-key', undefined, opts?.skipAuthRetry === true)
 
     logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}`)
@@ -156,6 +157,9 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
       modelPolicy: parseModelPolicy(response.modelPolicy),
       maxBudgetUsd: response.maxBudgetUsd,
       maxBudgetUsdTurbo: response.maxBudgetUsdTurbo,
+      // Allowlist cerrada: un valor raro (o un backend viejo) queda sin variante.
+      spanishVariant:
+        response.spanishVariant === 'es' || response.spanishVariant === 'es-419' ? response.spanishVariant : undefined,
     }
     cachedConfigAt = Date.now()
 
@@ -227,6 +231,11 @@ export function getConfiguredModels(): { fast?: string; powerful?: string } | un
 /** Política de modelo de la empresa (ADR 016), si el backend la informó. */
 export function getModelPolicy(): AiModelPolicy | null {
   return cachedConfig?.modelPolicy ?? null
+}
+
+/** En qué español habla CERP IA (RQM-188), si el backend lo informó. */
+export function getSpanishVariant(): DesktopConfig['spanishVariant'] {
+  return cachedConfig?.spanishVariant
 }
 
 /** true si no hay config o pasó el TTL: hay que volver a pedirla al backend. */
