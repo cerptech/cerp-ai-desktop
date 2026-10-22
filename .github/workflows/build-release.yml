@@ -30,6 +30,11 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
+    env:
+      # Firma de Windows (SSL.com eSigner): solo en builds de tag y solo cuando los
+      # secrets existen. Mientras no estén cargados, el release sigue saliendo sin firmar.
+      WIN_SIGNING: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.ES_CREDENTIAL_ID != '' }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -59,19 +64,58 @@ jobs:
       # La descarga del zip de Electron desde los releases de GitHub falla de forma
       # intermitente (EOF) en los runners — visto el 2026-08-12, 4 intentos seguidos.
       # Reintentar el paso completo con backoff resuelve el caso sin cambiar de CDN.
+      # CodeSignTool de SSL.com, versión fija y verificada por checksum.
+      - name: Install CodeSignTool (Windows)
+        if: matrix.platform == 'win' && env.WIN_SIGNING == 'true'
+        shell: bash
+        run: |
+          curl -sSL --retry 5 -o "$RUNNER_TEMP/cst.zip" \
+            https://github.com/SSLcom/CodeSignTool/releases/download/v1.3.2/CodeSignTool-v1.3.2-windows.zip
+          echo "4afc32e8b7f79bbe1de7e4e7049aaad4e0f754357613b9bbec0e3052f06fd36b  $RUNNER_TEMP/cst.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/cst.zip" -d "$RUNNER_TEMP/CodeSignTool"
+          echo "CODESIGNTOOL_DIR=$(cygpath -w "$RUNNER_TEMP/CodeSignTool")" >> "$GITHUB_ENV"
+
+      # Con firma, cada reintento vuelve a consumir firmas del plan de eSigner:
+      # 3 intentos en vez de 5.
       - name: Build installer (Windows)
         if: matrix.platform == 'win'
         shell: bash
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3; do
             npx electron-builder --win --config && exit 0
-            echo "electron-builder falló (intento $i/5) — reintento en 90s"
+            echo "electron-builder falló (intento $i/3) — reintento en 90s"
             sleep 90
           done
           exit 1
         env:
+          # El certificado vive en eSigner, no en el runner: que electron-builder no
+          # busque uno local. La firma la hace build/sign-esigner.js.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          ES_USERNAME: ${{ env.WIN_SIGNING == 'true' && secrets.ES_USERNAME || '' }}
+          ES_PASSWORD: ${{ env.WIN_SIGNING == 'true' && secrets.ES_PASSWORD || '' }}
+          ES_CREDENTIAL_ID: ${{ env.WIN_SIGNING == 'true' && secrets.ES_CREDENTIAL_ID || '' }}
+          ES_TOTP_SECRET: ${{ env.WIN_SIGNING == 'true' && secrets.ES_TOTP_SECRET || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Gate: si la firma está activa, no se publica un .exe sin firma válida.
+      # electron-builder solo avisa (warning) cuando falla la firma de un archivo
+      # de la app, así que esta verificación es la que frena el release.
+      - name: Verify signature (Windows)
+        if: matrix.platform == 'win' && env.WIN_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem dist/*-Setup.exe) + @(Get-Item "dist/win-unpacked/CERP AI.exe")
+          $failed = $false
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            $subject = $sig.SignerCertificate.Subject
+            Write-Host "$($f.Name): $($sig.Status) | $subject | timestamp: $($null -ne $sig.TimeStamperCertificate)"
+            if ($sig.Status -ne 'Valid' -or $subject -notmatch 'CERP' -or $null -eq $sig.TimeStamperCertificate) {
+              Write-Host "::error file=$($f.Name)::firma inválida, de otro editor o sin timestamp"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
 
       - name: Build installer (macOS)
         if: matrix.platform == 'mac'
