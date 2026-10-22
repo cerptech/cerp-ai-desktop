@@ -76,6 +76,29 @@ export class DesktopUpdateRequiredError extends Error {
 }
 
 /**
+ * Texto del aviso de empresa sin método de pago. Local, por código, como el de versión
+ * mínima: el body del 402 no es un texto de confianza para la UI.
+ */
+export const PAYMENT_METHOD_REQUIRED_MESSAGE = 'Para usar CERP IA Desktop, tu empresa tiene que añadir un método de pago en app.cerp.es.'
+
+/**
+ * La empresa se dio de alta sin método de pago: el core responde 402
+ * `PAYMENT_METHOD_REQUIRED` en `/desktop/api-key`. Hasta la 1.0.42 caía en el
+ * «se sigue con la key cacheada». Ahora para igual que `NO_CREDITS`: no se sigue con
+ * la cacheada y, como ante `NO_CREDITS`, la key no se borra del disco (a diferencia
+ * de los 403). Al añadir el método de pago, el siguiente refresco de la config
+ * vuelve a funcionar sin volver a iniciar sesión.
+ */
+export class PaymentMethodRequiredError extends Error {
+  readonly code = 'PAYMENT_METHOD_REQUIRED' as const
+
+  constructor() {
+    super(PAYMENT_METHOD_REQUIRED_MESSAGE)
+    this.name = 'PaymentMethodRequiredError'
+  }
+}
+
+/**
  * Allowlist cerrada, como en cerp-ai-service: una política malformada (p.ej.
  * sin `maxTier` por un bug de serialización) se descarta ENTERA. Si se
  * aceptara a medias, `resolveModel` bloquearía "Potente" para todas las
@@ -195,16 +218,25 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
     logger.info('API key fetched and stored successfully')
     return config
   } catch (err) {
-    // Versión mínima (F0.2 (b)): se decide por el código, no por el status, para que
-    // un cambio de status del lado del core no reabra el «se usa la cacheada».
+    // Versión mínima (F0.2 (b)) y empresa sin método de pago: se deciden por el código,
+    // no por el status, para que un cambio de status del lado del core no reabra el
+    // «se usa la cacheada».
     if (err instanceof HttpError) {
       const body = err.body as { code?: string; minVersion?: unknown; error?: { code?: string } } | undefined
-      if ((body?.code ?? body?.error?.code) === 'DESKTOP_UPDATE_REQUIRED') {
+      const code = body?.code ?? body?.error?.code
+      if (code === 'DESKTOP_UPDATE_REQUIRED') {
         const minVersion = typeof body?.minVersion === 'string' ? body.minVersion : null
         logger.warn(`fetchApiKey: el core exige actualizar el Desktop (${err.status} DESKTOP_UPDATE_REQUIRED, mínima ${minVersion ?? '-'})`)
         // Una versión que el core ya no acepta no conserva la key en disco.
         clearApiKey()
         throw new DesktopUpdateRequiredError(minVersion)
+      }
+      if (code === 'PAYMENT_METHOD_REQUIRED') {
+        logger.warn(`fetchApiKey: la empresa no tiene método de pago (${err.status} PAYMENT_METHOD_REQUIRED)`)
+        // Como NO_CREDITS: para, sin borrar la key del disco. La config queda vieja para
+        // que el próximo envío vuelva a preguntar en vez de seguir con la cacheada.
+        cachedConfigAt = 0
+        throw new PaymentMethodRequiredError()
       }
     }
     if (err instanceof HttpError && err.status === 402) {

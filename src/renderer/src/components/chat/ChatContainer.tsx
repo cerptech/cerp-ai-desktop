@@ -33,6 +33,9 @@ export interface ChatStateSnapshot {
 /** Aviso de versión mínima (código `DESKTOP_UPDATE_REQUIRED`), el mismo texto que arma el main. */
 const DESKTOP_UPDATE_REQUIRED_TEXT = 'Actualiza CERP IA Desktop a la última versión para seguir usándolo.'
 
+/** Aviso de empresa sin método de pago (código `PAYMENT_METHOD_REQUIRED`), el mismo texto que arma el main. */
+const PAYMENT_METHOD_REQUIRED_TEXT = 'Para usar CERP IA Desktop, tu empresa tiene que añadir un método de pago en app.cerp.es.'
+
 interface ChatContainerProps {
   userName?: string
   activeContextId?: string | null
@@ -158,7 +161,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // de abajo queda para recordar que el mensaje no se envió.
   // Un turno cortado con Reintentar (RQM-166) tampoco: su caja de error persistente ya
   // lo dice con el botón, y el toast repetía el mismo texto largo.
-  // DESKTOP_UPDATE_REQUIRED tampoco: tiene su aviso persistente abajo.
+  // DESKTOP_UPDATE_REQUIRED y PAYMENT_METHOD_REQUIRED tampoco: tienen su aviso persistente abajo.
   useEffect(() => {
     if (retryPrompt) return
     if (
@@ -167,7 +170,8 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       errorCode !== 'AUTH_EXPIRED' &&
       errorCode !== 'NO_ACTIVE_COMPANY' &&
       errorCode !== 'COMPANY_CHANGED' &&
-      errorCode !== 'DESKTOP_UPDATE_REQUIRED'
+      errorCode !== 'DESKTOP_UPDATE_REQUIRED' &&
+      errorCode !== 'PAYMENT_METHOD_REQUIRED'
     ) {
       addToast('error', error)
     }
@@ -543,8 +547,25 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
+      {/* Empresa sin método de pago (402 PAYMENT_METHOD_REQUIRED): el mismo corte que
+          NO_CREDITS, con texto local por código. app.cerp.es lleva al paso de pago, o
+          muestra su aviso a quien no puede añadirlo. */}
+      {error && errorCode === 'PAYMENT_METHOD_REQUIRED' && (
+        <div role="alert" className="mx-6 mb-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-800 flex items-center justify-between gap-3">
+          <span>{PAYMENT_METHOD_REQUIRED_TEXT}</span>
+          <a
+            href="https://app.cerp.es"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 font-medium text-red-700 hover:text-red-900 underline transition-colors"
+          >
+            Abrir app.cerp.es
+          </a>
+        </div>
+      )}
+
       {/* Error display — AUTH_EXPIRED se omite: el SessionExpiredModal global ya cubre ese caso */}
-      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && errorCode !== 'DESKTOP_UPDATE_REQUIRED' && (
+      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && errorCode !== 'DESKTOP_UPDATE_REQUIRED' && errorCode !== 'PAYMENT_METHOD_REQUIRED' && (
         <div role="alert" className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700 flex items-start justify-between gap-3">
           <span>{error}</span>
           {/* Un turno cortado por un fallo (watchdog, límite de la ejecución, error del

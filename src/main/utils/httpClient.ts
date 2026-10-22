@@ -14,7 +14,7 @@ function getApiBaseUrl(): string {
 /**
  * Cabecera con la versión de la app (F0.2 (b) del plan CERP IA Q4-2026). El core la
  * usa para exigir una versión mínima antes de entregar la config de
- * `/desktop/api-key` (426 `DESKTOP_UPDATE_REQUIRED`). Hasta la 1.0.41 el Desktop no
+ * `/desktop/api-key` (426 `DESKTOP_UPDATE_REQUIRED`). Hasta la 1.0.42 el Desktop no
  * la mandaba (solo `X-CERP-Desktop: 1`), así que el core no podía distinguir versiones.
  */
 export const DESKTOP_VERSION_HEADER = 'X-CERP-Desktop-Version'
