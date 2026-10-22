@@ -12,6 +12,7 @@ files:
   - '!electron.vite.config.*'
   - '!{.env,.env.*,.gitignore}'
   - '!{tsconfig.json,tsconfig.*.json}'
+  - '!build/**' # recursos del empaquetado (entitlements, NSIS, hook de firma): no van dentro de la app
 
 # Claude Agent SDK 0.3.x spawns a NATIVE per-platform binary (claude.exe / claude),
 # shipped in the separate package @anthropic-ai/claude-agent-sdk-<platform>-<arch>.
@@ -37,6 +38,19 @@ win:
       arch: [x64]
   icon: resources/icon.ico
   artifactName: 'CERP-AI-Desktop-${version}-Setup.${ext}'
+  # Firma con SSL.com eSigner (build/sign-esigner.js). Sin credenciales no firma,
+  # así que los builds locales y los de PRs siguen funcionando igual.
+  # Solo se firman .exe: CERP AI.exe, elevate.exe, el desinstalador y Setup.exe
+  # (4 firmas por release). El claude.exe del Agent SDK ya viene firmado por
+  # Anthropic y el hook lo deja como está.
+  signtoolOptions:
+    sign: ./build/sign-esigner.js
+    signingHashAlgorithms: ['sha256'] # sha1 duplicaría las firmas sin aportar nada
+    # publisherName: ['CERP Tech, SL']
+    # ↑ Activarlo en el MISMO release que el primer instalador firmado, con el CN
+    # exacto del certificado. electron-updater verifica cada update contra este
+    # nombre: si no coincide carácter por carácter, los clientes dejan de actualizar.
+    # Al renovar el certificado, AGREGAR el nombre nuevo a la lista, nunca reemplazarlo.
 
 nsis:
   oneClick: false
@@ -88,9 +102,10 @@ linux:
     - target: deb
       arch: [x64]
   desktop:
-    Name: CERP AI
-    Comment: Asistente IA para cotizaciones y licitaciones de obra
-    Categories: Office;ProjectManagement;
+    entry: # electron-builder 26: las claves del .desktop van bajo `entry`
+      Name: CERP AI
+      Comment: Asistente IA para cotizaciones y licitaciones de obra
+      Categories: Office;ProjectManagement;
 
 deb:
   depends:
