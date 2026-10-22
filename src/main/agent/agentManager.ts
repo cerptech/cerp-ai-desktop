@@ -500,14 +500,14 @@ async function startSession(
   const builtInAgents = CONSTRUCTION_AGENTS.map((a) => ({
     name: a.name,
     description: a.description,
-    instructions: a.prompt,
+    instructions: a.prompt + spanishVariantBlock(),
     ...(a.model && a.model !== 'inherit' ? { model: clampSubagentModel(a.model) } : {}),
   }))
   const customAgentDefs = customAgentStore.getAgents()
   const customSdkAgents = customAgentDefs.map((a) => ({
     name: a.name,
     description: a.description,
-    instructions: a.systemPrompt,
+    instructions: a.systemPrompt + spanishVariantBlock(),
   }))
 
   // SDK 0.3.x no longer ships a bundled `cli.js`. It spawns a NATIVE Claude Code binary
@@ -1049,10 +1049,15 @@ let cachedContextPrompt: string | null = null
 // por defecto cambió, el cacheado no se reusa aunque nadie lo haya tirado, y uno
 // armado mientras la empresa cambiaba no queda como válido para la nueva.
 let cachedContextCompanyId: string | null = null
+let cachedContextVariant: ReturnType<typeof getSpanishVariant> = undefined
 
 async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   const companyId = getCompanyId()
-  if (cachedContextPrompt && cachedContextCompanyId === companyId) return cachedContextPrompt
+  // La variante también es parte de la clave: si el primer armado fue sin config
+  // (o la persona cambió de idioma), no queda pegado el contexto sin la línea.
+  if (cachedContextPrompt && cachedContextCompanyId === companyId && cachedContextVariant === getSpanishVariant()) {
+    return cachedContextPrompt
+  }
 
   let context = '\n\n## Contexto de la empresa y usuario actual\n'
 
@@ -1111,22 +1116,33 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
 
   context += `\nUsa estos datos cuando generes reportes, documentos o necesites informacion de la empresa. Formatea montos segun la moneda y formato regional configurado.\n`
 
-  // RQM-188: el core dice en qué español habla CERP IA (misma línea que el bloque
-  // de sesión de cerp-ai-service). Solo `es` agrega texto: `es-419` es como ya
-  // hablaba. Hace falta porque el prompt mezcla tuteo y voseo, y el «Locale: es-AR»
-  // por defecto de una empresa española empujaba al rioplatense.
-  if (getSpanishVariant() === 'es') {
-    context +=
-      '\n### Idioma\n' +
-      '- Responde siempre en español de España: trata a la persona de tú (tú, tienes, dime; vosotros en plural) ' +
-      'y usa vocabulario de España (ordenador, móvil, coche). Nunca uses voseo (sos, tenés, decime, fijate) ' +
-      'ni expresiones rioplatenses (che, dale, laburo, bárbaro), aunque el resto de estas instrucciones esté escrito con voseo. ' +
-      'Vale también para lo que redactes en su nombre (emails, mensajes, descripciones) y para los agentes especializados que invoques.\n'
-  }
+  context += spanishVariantBlock()
 
   cachedContextPrompt = context
   cachedContextCompanyId = companyId
+  cachedContextVariant = getSpanishVariant()
   return context
+}
+
+/**
+ * RQM-188: el core dice en qué español habla CERP IA. Solo `es` agrega texto:
+ * `es-419` es como ya hablaba. Hace falta porque los prompts mezclan tuteo y
+ * voseo, y el «Locale: es-AR» por defecto de una empresa española empujaba al
+ * rioplatense. Va al prompt principal y al de cada subagente (report-generator
+ * redacta lo que ve el cliente).
+ *
+ * Mismo texto que `renderSpanishVariant` en cerp-ai-service
+ * (lib/agents/context.ts): si cambia uno, cambiar el otro.
+ */
+function spanishVariantBlock(): string {
+  if (getSpanishVariant() !== 'es') return ''
+  return (
+    '\n\n### Idioma\n' +
+    '- Responde siempre en español de España: trata a la persona de tú (tú, tienes, dime; vosotros en plural) ' +
+    'y usa vocabulario de España (ordenador, móvil, coche). Nunca uses voseo (sos, tenés, decime, fijate) ' +
+    'ni expresiones rioplatenses (che, dale, laburo, bárbaro), aunque el resto de estas instrucciones esté escrito con voseo. ' +
+    'Vale también para lo que redactes en su nombre (emails, mensajes, descripciones, informes).\n'
+  )
 }
 
 export function resetContextCache(): void {
