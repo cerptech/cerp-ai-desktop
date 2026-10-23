@@ -10,7 +10,7 @@ import { getLoadContext } from './loadContext'
 import { buildRetryPrompt, classifyResult, describeTurnFailure, resultErrorDetail, type TurnFailureCode } from './turnOutcome'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { DesktopAccessDeniedError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, getSpanishVariant, NoCreditsError } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, DesktopUpdateRequiredError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, getSpanishVariant, NoCreditsError, PaymentMethodRequiredError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -444,8 +444,20 @@ async function startSession(
         emitStartAborted(mainWindow, conversationId, err.message, 'NO_CREDITS')
         return
       }
+      // Empresa sin método de pago: el mismo corte que NO_CREDITS.
+      if (err instanceof PaymentMethodRequiredError) {
+        logger.warn(`startSession aborted (${conversationId}): payment method required`)
+        emitStartAborted(mainWindow, conversationId, err.message, err.code)
+        return
+      }
       if (err instanceof DesktopAccessDeniedError) {
         logger.warn(`startSession aborted (${conversationId}): access denied (${err.reason})`)
+        emitStartAborted(mainWindow, conversationId, err.message, err.code)
+        return
+      }
+      // Versión mínima (F0.2 (b)): sin config no se arranca con la key cacheada.
+      if (err instanceof DesktopUpdateRequiredError) {
+        logger.warn(`startSession aborted (${conversationId}): update required (min ${err.minVersion ?? '-'})`)
         emitStartAborted(mainWindow, conversationId, err.message, err.code)
         return
       }

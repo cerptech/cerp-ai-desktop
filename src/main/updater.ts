@@ -88,6 +88,27 @@ export function initAutoUpdate(getMainWindow: () => BrowserWindow | null): void 
   })
 }
 
+const FORCED_CHECK_MIN_INTERVAL_MS = 10 * 60_000
+let lastForcedCheckAt = 0
+
+/**
+ * Chequeo a pedido, cuando el core exige una versión más nueva (426
+ * `DESKTOP_UPDATE_REQUIRED`, F0.2 (b)): baja la actualización en segundo plano y el
+ * aviso "Reiniciar para actualizar" de siempre aparece al terminar. Como mucho uno
+ * cada 10 min (cada envío de un prompt puede volver a pedirlo). Sin efecto donde el
+ * auto-update está apagado (dev, macOS sin firma).
+ */
+export function checkForUpdatesNow(reason: string): void {
+  if (!wired || !app.isPackaged || process.platform === 'darwin') return
+  const now = Date.now()
+  if (now - lastForcedCheckAt < FORCED_CHECK_MIN_INTERVAL_MS) return
+  lastForcedCheckAt = now
+  logger.info(`[updater] Chequeo a pedido: ${reason}`)
+  autoUpdater.checkForUpdates().catch((err) => {
+    logger.error(`[updater] checkForUpdates falló: ${err instanceof Error ? err.message : String(err)}`)
+  })
+}
+
 /**
  * Reinicia la app e instala la actualización ya descargada.
  * Lo invoca el renderer cuando el usuario toca "Reiniciar para actualizar".

@@ -30,6 +30,12 @@ export interface ChatStateSnapshot {
   abort: () => Promise<void>
 }
 
+/** Aviso de versión mínima (código `DESKTOP_UPDATE_REQUIRED`), el mismo texto que arma el main. */
+const DESKTOP_UPDATE_REQUIRED_TEXT = 'Actualiza CERP IA Desktop a la última versión para seguir usándolo.'
+
+/** Aviso de empresa sin método de pago (código `PAYMENT_METHOD_REQUIRED`), el mismo texto que arma el main. */
+const PAYMENT_METHOD_REQUIRED_TEXT = 'Para usar CERP IA Desktop, tu empresa tiene que añadir un método de pago en app.cerp.es.'
+
 interface ChatContainerProps {
   userName?: string
   activeContextId?: string | null
@@ -155,9 +161,20 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // de abajo queda para recordar que el mensaje no se envió.
   // Un turno cortado con Reintentar (RQM-166) tampoco: su caja de error persistente ya
   // lo dice con el botón, y el toast repetía el mismo texto largo.
+  // DESKTOP_UPDATE_REQUIRED y PAYMENT_METHOD_REQUIRED tampoco: tienen su aviso persistente abajo.
   useEffect(() => {
     if (retryPrompt) return
-    if (error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && errorCode !== 'COMPANY_CHANGED') addToast('error', error)
+    if (
+      error &&
+      errorCode !== 'NO_CREDITS' &&
+      errorCode !== 'AUTH_EXPIRED' &&
+      errorCode !== 'NO_ACTIVE_COMPANY' &&
+      errorCode !== 'COMPANY_CHANGED' &&
+      errorCode !== 'DESKTOP_UPDATE_REQUIRED' &&
+      errorCode !== 'PAYMENT_METHOD_REQUIRED'
+    ) {
+      addToast('error', error)
+    }
   }, [error, errorCode, retryPrompt, addToast])
 
   // Nota: la persistencia de mensajes (incl. conversaciones de fondo) y la
@@ -521,8 +538,34 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
+      {/* Versión mínima (F0.2 (b)): el core ya no entrega la config a esta versión. El
+          texto sale del código, no del servidor. Donde hay auto-update, el main ya pidió
+          el chequeo y el aviso "Reiniciar para actualizar" aparece al terminar la descarga. */}
+      {error && errorCode === 'DESKTOP_UPDATE_REQUIRED' && (
+        <div role="alert" className="mx-6 mb-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800">
+          {DESKTOP_UPDATE_REQUIRED_TEXT}
+        </div>
+      )}
+
+      {/* Empresa sin método de pago (402 PAYMENT_METHOD_REQUIRED): el mismo corte que
+          NO_CREDITS, con texto local por código. app.cerp.es lleva al paso de pago, o
+          muestra su aviso a quien no puede añadirlo. */}
+      {error && errorCode === 'PAYMENT_METHOD_REQUIRED' && (
+        <div role="alert" className="mx-6 mb-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-800 flex items-center justify-between gap-3">
+          <span>{PAYMENT_METHOD_REQUIRED_TEXT}</span>
+          <a
+            href="https://app.cerp.es"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 font-medium text-red-700 hover:text-red-900 underline transition-colors"
+          >
+            Abrir app.cerp.es
+          </a>
+        </div>
+      )}
+
       {/* Error display — AUTH_EXPIRED se omite: el SessionExpiredModal global ya cubre ese caso */}
-      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && (
+      {error && errorCode !== 'NO_CREDITS' && errorCode !== 'AUTH_EXPIRED' && errorCode !== 'NO_ACTIVE_COMPANY' && errorCode !== 'DESKTOP_UPDATE_REQUIRED' && errorCode !== 'PAYMENT_METHOD_REQUIRED' && (
         <div role="alert" className="mx-6 mb-2 px-4 py-2 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700 flex items-start justify-between gap-3">
           <span>{error}</span>
           {/* Un turno cortado por un fallo (watchdog, límite de la ejecución, error del
