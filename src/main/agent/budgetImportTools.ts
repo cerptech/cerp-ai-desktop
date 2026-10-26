@@ -525,7 +525,8 @@ export function createBudgetImportTools(httpClient: HttpClient, conversationId: 
         const outcome = await confirmWithUser(conversationId, question, `import_budget_rows[${input.budgetId}]`)
         if (!outcome.confirmed) return textResult({ imported: false, reason: outcome.reason, mensaje: outcome.mensaje })
 
-        const res = (await httpClient.post(url, body(false))) as ImportRowsResponse
+        // `approved`: la persona confirmó en la tarjeta. El core lo registra (ADR 021, modo shadow).
+        const res = (await httpClient.post(url, { ...body(false), approved: true })) as ImportRowsResponse
         const failed = res.failed?.length ?? 0
         const already = res.alreadyImported ?? 0
         logger.info(`import_budget_rows OK: budget ${input.budgetId}, ${res.structure?.items ?? '?'} partidas, ${failed} fallidas, ${already} ya importadas`)
