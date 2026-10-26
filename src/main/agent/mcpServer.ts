@@ -9,6 +9,7 @@ import { createDocumentIntakeTools } from './documentIntakeTools'
 import { createScheduleTools } from './scheduleTools'
 import { createAppTools } from './appTools'
 import { createProjectDocumentTools } from './projectDocumentTools'
+import { createBudgetImportTools } from './budgetImportTools'
 import { HttpClient, CompanyChangedError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
@@ -583,6 +584,9 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       // guardar sube el archivo local por la ruta REST de Documentos, sin budgetId,
       // y pide "Guardar" al usuario en esta conversación antes de subir.
       ...createProjectDocumentTools(httpClient, conversationId),
+      // Importar un presupuesto tal cual (RQM-150): POST /budgets/:id/import-rows con las
+      // filas del archivo; vista previa por defecto.
+      ...createBudgetImportTools(httpClient, conversationId),
     ],
   })
 }

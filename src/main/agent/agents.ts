@@ -68,6 +68,16 @@ Cuando generes un Excel de cotizacion/presupuesto, las celdas calculadas DEBEN t
 
 Esto permite que el cliente del constructor edite cantidades y se recalcule todo. Usa openpyxl con \`cell.value = "=FORMULA(...)"\` para escribir formulas. Verifica con un script de lectura que las formulas quedaron como \`f.value.startswith('=')\`.
 
+## CRITICO al pasar un presupuesto a filas para IMPORTARLO
+Si te piden pasar un presupuesto existente a filas para \`import_budget_rows\`, el trabajo es COPIAR, no analizar:
+- Un script que recorra TODAS las filas de la hoja, en orden, y escriba el JSON con el formato que te pasan (index = numero de fila del Excel, type, level, code, name, unit, description, quantity, unitPrice, amount, bom) y ninguna otra clave. Si el presupuesto ocupa varias hojas: index = hoja × 100000 + fila.
+- Nombres, codigos, unidades y descripciones tal cual estan en la celda: sin resumir, traducir, corregir, agrupar ni renombrar. Un codigo numerico va como el texto que se ve («01», «1.10»): aplica el formato de numero de la celda, no escribas 1 ni 1.1.
+- Una celda vacia es \`null\`, no 0 ni un valor estimado. Lee los VALORES de las celdas (\`data_only=True\`); si una formula no tiene valor calculado, avisalo en vez de inventarlo.
+- Los porcentajes (gg, bi, ci, iva, overheadPercent) van en %: una celda «13 %» se lee como 0.13 y se escribe 13.
+- Una fila de total de capitulo lleva el \`level\` del capitulo que cierra. El total general no es una fila: en \`declaredTotal\` va el total de las partidas (ejecucion material, sin GG, BI ni IVA); los totales con GG, BI o IVA no se mandan.
+- Escribi el JSON en UTF-8 y en una ruta absoluta: \`open(ruta, "w", encoding="utf-8")\` y \`json.dump(..., ensure_ascii=False)\`.
+- Al terminar, reporta cuantas filas de cada tipo escribiste y el total de los importes, para cuadrarlo con el del archivo.
+
 Reglas:
 - Instala paquetes necesarios sin preguntar (pip install openpyxl pandas xlsxwriter)
 - Siempre muestra un resumen de lo que encontraste
