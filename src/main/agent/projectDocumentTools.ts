@@ -1,3 +1,5 @@
+import { readFileSync, statSync } from 'fs'
+import { basename, isAbsolute } from 'path'
 import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { HttpClient, HttpError } from '../utils/httpClient'
@@ -220,6 +222,9 @@ export function mimeTypeFor(fileName: string): string {
 const SAVE_OPTION = 'Guardar'
 const CANCEL_OPTION = 'Cancelar'
 const MAX_QUESTION_CHARS = 1500
+/** Lo que se ve de la descripción del modelo en la tarjeta. La subida lleva el texto completo (hasta 500). */
+const CARD_DESCRIPTION_MAX_CHARS = 120
+const DESCRIPTION_LABEL = 'Descripción (propuesta de CERP IA)'
 
 interface SaveCard {
   fileName: string
@@ -229,12 +234,25 @@ interface SaveCard {
   description?: string
 }
 
+/**
+ * La descripción es lo único de la tarjeta que redacta el modelo: va aparte,
+ * rotulada como propuesta de CERP IA, en una sola línea y cortada, para que no
+ * se haga pasar por un dato del archivo o del proyecto (p. ej. «· Archivo: …»).
+ */
+export function cardDescription(description: string): string {
+  const oneLine = description.replace(/\s+/g, ' ').trim()
+  return oneLine.length > CARD_DESCRIPTION_MAX_CHARS ? `${oneLine.slice(0, CARD_DESCRIPTION_MAX_CHARS - 1)}…` : oneLine
+}
+
 /** La tarjeta sale del disco (nombre, ruta, tamaño) y del core (proyecto); solo la descripción viene del modelo. */
 export function saveQuestion(card: SaveCard): AskUserQuestionItem {
+  const size = formatBytes(card.size)
+  const description = card.description ? cardDescription(card.description) : ''
+  // `question` es el texto plano (historial, logs y fallback del widget); la ficha va en `card`.
   const parts = [
-    `¿Guardar «${card.fileName}» (${formatBytes(card.size)}) en los documentos del proyecto «${card.projectName}»?`,
+    `¿Guardar «${card.fileName}» (${size}) en los documentos del proyecto «${card.projectName}»?`,
     `Archivo: ${card.filePath}`,
-    ...(card.description ? [`Descripcion: ${card.description}`] : []),
+    ...(description ? [`Descripción propuesta por CERP IA: «${description}»`] : []),
   ]
   const question = parts.join(' · ')
   return {
@@ -245,6 +263,16 @@ export function saveQuestion(card: SaveCard): AskUserQuestionItem {
       { label: SAVE_OPTION, description: 'Lo sube a la pestaña Documentos del proyecto en CERP.' },
       { label: CANCEL_OPTION, description: 'No se sube nada.' },
     ],
+    card: {
+      title: '¿Guardar este archivo en los documentos del proyecto?',
+      fields: [
+        { label: 'Proyecto', value: card.projectName },
+        { label: 'Archivo', value: card.fileName },
+        { label: 'Tamaño', value: size },
+        { label: 'Ruta', value: card.filePath },
+        ...(description ? [{ label: DESCRIPTION_LABEL, value: description }] : []),
+      ],
+    },
   }
 }
 
@@ -406,12 +434,10 @@ function createSaveTool(httpClient: HttpClient, conversationId: string) {
       const input = parsed.data
       if (!hasTarget(input)) return errorResult({ error: MISSING_TARGET })
 
-      const fs = require('fs') as typeof import('fs')
-      const path = require('path') as typeof import('path')
-      if (!path.isAbsolute(input.filePath)) return errorResult({ error: `La ruta tiene que ser absoluta: ${input.filePath}` })
+      if (!isAbsolute(input.filePath)) return errorResult({ error: `La ruta tiene que ser absoluta: ${input.filePath}` })
       let size: number
       try {
-        const stat = fs.statSync(input.filePath)
+        const stat = statSync(input.filePath)
         if (!stat.isFile()) return errorResult({ error: `No es un archivo: ${input.filePath}` })
         size = stat.size
       } catch {
@@ -421,7 +447,7 @@ function createSaveTool(httpClient: HttpClient, conversationId: string) {
       if (size > MAX_UPLOAD_BYTES) {
         return errorResult({ error: `El archivo pesa ${formatBytes(size)}: el maximo de un documento del proyecto es ${formatBytes(MAX_UPLOAD_BYTES)}.` })
       }
-      const fileName = path.basename(input.filePath)
+      const fileName = basename(input.filePath)
       const description = input.description?.trim() || undefined
       const logTag = `save_project_document[${fileName}]`
 
@@ -465,8 +491,31 @@ function createSaveTool(httpClient: HttpClient, conversationId: string) {
           : textResult(JSON.stringify({ guardado: false, reason: outcome.reason, mensaje: outcome.mensaje }))
       }
 
+      // TOCTOU: la tarjeta mostró el tamaño de statSync. Si el archivo cambió entre la
+      // confirmación y la lectura, no se sube algo distinto de lo que el usuario aprobó.
+      let buffer: Buffer
       try {
-        const buffer = fs.readFileSync(input.filePath)
+        buffer = readFileSync(input.filePath)
+      } catch {
+        logger.warn(`${logTag}: no se pudo leer después de confirmar — no se sube`)
+        return errorResult({
+          guardado: false,
+          reason: 'file_unreadable',
+          error: `No se pudo leer «${fileName}» después de la confirmación (¿se movió o se borró?). No se subió nada.`,
+        })
+      }
+      if (buffer.length !== size) {
+        logger.warn(`${logTag}: cambió después de confirmar (${size} → ${buffer.length} bytes) — no se sube`)
+        return errorResult({
+          guardado: false,
+          reason: 'file_changed',
+          error:
+            `«${fileName}» cambió en el equipo después de la confirmación (${size} → ${buffer.length} bytes). ` +
+            'No se subió nada: avisale al usuario y, si quiere guardar la versión nueva, llamá otra vez a save_project_document (se le vuelve a pedir confirmación).',
+        })
+      }
+
+      try {
         const formData = new FormData()
         formData.append('file', new Blob([buffer], { type: mimeTypeFor(fileName) }), fileName)
         // Sin budgetId a propósito: documento del proyecto, nunca archivo adicional de un presupuesto.
