@@ -30,6 +30,53 @@ export interface ToolDef {
 }
 
 // ============================================================
+// Limites de paginacion tolerantes.
+//
+// El SDK de MCP valida los args contra el schema ANTES de llamar al handler: con
+// `.max(50)` en el schema, un `limit: 500` del modelo terminaba en «MCP error
+// -32602: Too big: expected number to be <=50» y la tool no corria (SAXUM,
+// 14-10-2026: search_materials). El tope se dice en la descripcion y se aplica
+// recortando en `clampLimitArgs`, que corre en el handler. Lo usan estas
+// `toolSchemas` y las `schedule_*` de scheduleTools.ts.
+//
+// OJO: el tope se asocia a la INSTANCIA que devuelve `limitParam`. No le encadenes
+// `.describe()`/`.default()` (crean otra instancia y el recorte se pierde sin aviso):
+// pasá la descripcion como segundo argumento. Y solo sirve en el primer nivel del
+// `z.object` (clampLimitArgs no entra en objetos anidados).
+// ============================================================
+const LIMIT_MAX = new WeakMap<z.ZodType, number>()
+
+export function limitParam(max: number, description?: string) {
+  const schema = z
+    .number()
+    .optional()
+    .describe(`${description ? `${description}. ` : ''}Maximo ${max}: si pedis mas se devuelven ${max}.`)
+  LIMIT_MAX.set(schema, max)
+  return schema
+}
+
+/**
+ * Recorta los parametros de paginacion (`limitParam`) a su tope y a un minimo de 1.
+ * Devuelve un objeto nuevo; los demas args quedan igual.
+ */
+export function clampLimitArgs(schema: z.ZodType, args: Record<string, unknown>): Record<string, unknown> {
+  const shape = (schema as unknown as { shape?: Record<string, z.ZodType> }).shape
+  if (!shape) return args
+  let out: Record<string, unknown> | null = null
+  for (const [key, field] of Object.entries(shape)) {
+    const max = LIMIT_MAX.get(field)
+    const value = args[key]
+    if (max === undefined || typeof value !== 'number' || !Number.isFinite(value)) continue
+    const clamped = Math.min(max, Math.max(1, Math.floor(value)))
+    if (clamped !== value) {
+      out = out ?? { ...args }
+      out[key] = clamped
+    }
+  }
+  return out ?? args
+}
+
+// ============================================================
 // "PDF editables con IA" — catalogo de fieldIds de plantillas de documento.
 // Mirror de cerp-server/src/constants/documentTemplateCatalog.ts (BUDGET_FIELDS).
 // Mantener en sync a mano: agregar/quitar un campo del catalogo del backend
@@ -71,7 +118,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     description: 'Lista los proyectos de construccion de la empresa con estado, fechas, costo y avance.',
     schema: z.object({
       status: z.enum(['budget', 'planning', 'execution', 'monitoring', 'closed']).optional(),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/projects',
@@ -122,12 +169,24 @@ export const toolSchemas: Record<string, ToolDef> = {
   get_construction_sites: {
     description: 'Lista las obras (frentes de trabajo). Nombre, estado, ubicacion, presupuesto y centro de costes.',
     schema: z.object({
-      status: z.enum(['planning', 'execution', 'paused', 'completed', 'cancelled']).optional(),
+      // 'active'/'inactive' son lo que el modelo pide con naturalidad («las obras
+      // activas»): antes el enum lo rechazaba con -32602 (SAXUM, 14-10-2026). Se
+      // mandan como `activity`, que el core entiende (activa = ni completada ni
+      // cancelada); un core sin ese filtro lo ignora y devuelve todas.
+      status: z
+        .enum(['planning', 'execution', 'paused', 'completed', 'cancelled', 'active', 'inactive'])
+        .optional()
+        .describe('Estado exacto, o "active" (ni completada ni cancelada) / "inactive".'),
       projectId: z.string().optional(),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/construction-sites',
+    transformArgs: (args) => {
+      if (args.status !== 'active' && args.status !== 'inactive') return args
+      const { status, ...rest } = args
+      return { ...rest, activity: status }
+    },
   },
   get_site_cost_summary: {
     description: 'Resumen de costos de todas las obras de un proyecto.',
@@ -170,7 +229,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     schema: z.object({
       status: z.enum(['planning', 'pending', 'execution', 'paused', 'completed', 'cancelled']).optional(),
       constructionSiteId: z.string().optional(),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/construction-orders',
@@ -219,7 +278,7 @@ export const toolSchemas: Record<string, ToolDef> = {
       status: z.enum(['draft', 'pending', 'approved', 'ordered', 'received', 'partial_received', 'cancelled']).optional(),
       supplierId: z.string().optional().describe('Filtrar por proveedor (ID de contacto)'),
       constructionSiteId: z.string().optional().describe('Filtrar por obra'),
-      limit: z.number().min(1).max(50).optional().describe('Cuantas devolver (default 10 del backend)'),
+      limit: limitParam(50, 'Cuantas devolver (default 10 del backend)'),
     }),
     method: 'GET',
     endpoint: '/purchases',
@@ -301,7 +360,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     description: 'Lista proyectos/presupuestos de la empresa (en CERP los presupuestos son proyectos con status "budget"). Devuelve el projectId de cada uno. Para obtener el Budget document ID (necesario para items/chapters), usar get_budget_by_project(projectId) con el projectId devuelto aqui.',
     schema: z.object({
       status: z.enum(['budget', 'planning', 'execution', 'monitoring', 'closed']).optional().describe('Filtrar por estado. Para presupuestos en borrador usar "budget"'),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/projects',
@@ -622,7 +681,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     description: 'Lista los productos/materiales del catalogo de la empresa con su desglose de costos (materiales, mano de obra, equipos, subcontratado). Util para buscar productos existentes antes de agregar items al presupuesto.',
     schema: z.object({
       search: z.string().optional().describe('Texto de busqueda por nombre o codigo'),
-      limit: z.number().min(1).max(100).optional().describe('Limite de resultados (default 50)'),
+      limit: limitParam(100, 'Limite de resultados (default 50)'),
     }),
     method: 'GET',
     endpoint: '/budgets/products',
@@ -753,7 +812,7 @@ export const toolSchemas: Record<string, ToolDef> = {
       constructionSiteId: z.string().optional(),
       startDate: z.string().optional(),
       endDate: z.string().optional(),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/expenses',
@@ -807,7 +866,7 @@ export const toolSchemas: Record<string, ToolDef> = {
       lowStock: z.boolean().optional().describe('Solo articulos por debajo del stock minimo'),
       forPurchase: z.boolean().optional().describe('Solo lo que se puede comprar en una orden de compra: materiales + subcontratados 100% (excluye los de mano de obra subcontratada)'),
       nature: z.enum(['material', 'item']).optional().describe('Filtrar por tipo: "material" (insumos; incluye los articulos viejos sin nature) o "item" (partidas). Sin este campo devuelve los dos.'),
-      limit: z.number().min(1).max(50).optional().describe('Cuantos devolver (default 50 cuando hay searchTerm)'),
+      limit: limitParam(50, 'Cuantos devolver (default 50 cuando hay searchTerm)'),
     }),
     method: 'GET',
     endpoint: '/items',
@@ -821,7 +880,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     schema: z.object({
       searchTerm: z.string().min(1).describe('Texto de busqueda por nombre o codigo del recurso. OBLIGATORIO: usar al menos una palabra clave del nombre del recurso buscado para evitar listar todo el catalogo.'),
       type: z.enum(['labor', 'tools_machinery']).optional().describe('Filtrar por tipo de recurso: "labor" para mano de obra, "tools_machinery" para maquinaria/herramientas'),
-      limit: z.number().min(1).max(50).optional().describe('Limite de resultados (default 20)'),
+      limit: limitParam(50, 'Limite de resultados (default 20)'),
     }),
     method: 'GET',
     endpoint: '/resources',
@@ -872,7 +931,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     schema: z.object({
       warehouseId: z.string().optional(),
       lowStock: z.boolean().optional(),
-      limit: z.number().min(1).max(100).optional(),
+      limit: limitParam(100),
     }),
     method: 'GET',
     endpoint: '/warehouses',
@@ -905,7 +964,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     description: 'Lista albaranes de entrega (notas de recepcion).',
     schema: z.object({
       purchaseOrderId: z.string().optional(),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/delivery-notes',
@@ -919,7 +978,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     schema: z.object({
       type: z.enum(['labor', 'tools_machinery']).optional(),
       status: z.enum(['available', 'occupied', 'maintenance', 'retired']).optional(),
-      limit: z.number().min(1).max(50).optional(),
+      limit: limitParam(50),
     }),
     method: 'GET',
     endpoint: '/resources',
@@ -1285,7 +1344,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     description: 'Lista las cotizaciones generadas por la empresa, paginado. Útil para mostrar historial.',
     schema: z.object({
       page: z.number().min(1).optional(),
-      pageSize: z.number().min(1).max(100).optional(),
+      pageSize: limitParam(100),
       source: z.enum(['trial_free', 'monthly_free', 'paid_extra']).optional(),
     }),
     method: 'GET',

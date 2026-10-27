@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { HttpClient, HttpError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
+import { limitParam, clampLimitArgs } from './toolDefinitions'
 import type { AskUserQuestionItem } from '../ipc/types'
 
 /**
@@ -125,7 +126,7 @@ const FindActivitiesSchema = z.object({
   projectId: ProjectId,
   query: z.string().min(1).max(120).describe('Nombre o parte del nombre/codigo de la actividad tal como lo dijo el usuario.'),
   kind: ActivityKind.optional().describe('Restringe a un tipo: tarea, orden de construccion o partida del presupuesto.'),
-  limit: z.number().int().min(1).max(15).optional().describe('Candidatos a devolver (default 8, max 15).'),
+  limit: limitParam(15, 'Candidatos a devolver (default 8)'),
 })
 
 const ListActivitiesSchema = z.object({
@@ -145,7 +146,7 @@ const ListActivitiesSchema = z.object({
     })
     .optional(),
   sort: z.enum(['earlyStart', 'earlyFinish', 'totalFloat']).optional().describe('Orden (default earlyStart).'),
-  limit: z.number().int().min(1).max(50).optional().describe('Filas por pagina (default 25, max 50).'),
+  limit: limitParam(50, 'Filas por pagina (default 25)'),
   offset: z.number().int().min(0).optional().describe('Desplazamiento para paginar.'),
 })
 
@@ -160,13 +161,13 @@ const GetLookaheadSchema = z.object({
   projectId: ProjectId,
   weeks: z.number().int().min(1).max(12).optional().describe('Semanas de la ventana (default 3).'),
   onlyBlocked: z.boolean().optional().describe('Solo actividades con restricciones abiertas que bloquean.'),
-  limit: z.number().int().min(1).max(40).optional().describe('Max actividades (default 25, max 40).'),
+  limit: limitParam(40, 'Actividades a devolver (default 25)'),
 })
 
 const GetBaselineDeviationSchema = z.object({
   projectId: ProjectId,
   baselineId: ObjectId.optional().describe('Linea base a comparar (de schedule_list_baselines). Sin ella: la mas reciente.'),
-  top: z.number().int().min(1).max(20).optional().describe('Cuantas actividades mas atrasadas listar (default 10, max 20).'),
+  top: limitParam(20, 'Cuantas actividades mas atrasadas listar (default 10)'),
 })
 
 const GetResourceConflictsSchema = z.object({
@@ -178,7 +179,7 @@ const ListAnnotationsSchema = z.object({
   projectId: ProjectId,
   type: z.enum(['milestones', 'constraints', 'both']).describe('Hitos, restricciones (Last Planner) o ambos.'),
   status: z.enum(['open', 'released', 'blocked']).optional().describe('Estado de la restriccion.'),
-  limit: z.number().int().min(1).max(30).optional().describe('Max resultados (max 30).'),
+  limit: limitParam(30, 'Resultados a devolver (default 20)'),
 })
 
 const ListBaselinesSchema = z.object({ projectId: ProjectId })
@@ -851,7 +852,9 @@ export function createScheduleTools(httpClient: HttpClient, conversationId: stri
       async (args: Record<string, unknown>) => {
         const parsed = spec.schema.safeParse(args)
         if (!parsed.success) return errorResult({ error: describeZodError(parsed.error) })
-        const input = parsed.data as Record<string, unknown>
+        // `limit`/`top` no tienen tope en el schema (un `limit: 100` daba -32602 antes
+        // del handler): se recortan acá al tope del core, que vuelve a validar.
+        const input = clampLimitArgs(spec.schema, parsed.data as Record<string, unknown>)
         const invalid = spec.check?.(input)
         if (invalid) return errorResult({ error: invalid })
 
