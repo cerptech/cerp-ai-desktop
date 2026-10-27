@@ -36,15 +36,17 @@ export interface ToolDef {
 // `.max(50)` en el schema, un `limit: 500` del modelo terminaba en «MCP error
 // -32602: Too big: expected number to be <=50» y la tool no corria (SAXUM,
 // 14-10-2026: search_materials). El tope se dice en la descripcion y se aplica
-// recortando en `clampLimitArgs`, que corre en el handler.
+// recortando en `clampLimitArgs`, que corre en el handler. Lo usan estas
+// `toolSchemas` y las `schedule_*` de scheduleTools.ts.
 //
 // OJO: el tope se asocia a la INSTANCIA que devuelve `limitParam`. No le encadenes
 // `.describe()`/`.default()` (crean otra instancia y el recorte se pierde sin aviso):
-// pasá la descripcion como segundo argumento.
+// pasá la descripcion como segundo argumento. Y solo sirve en el primer nivel del
+// `z.object` (clampLimitArgs no entra en objetos anidados).
 // ============================================================
 const LIMIT_MAX = new WeakMap<z.ZodType, number>()
 
-function limitParam(max: number, description?: string) {
+export function limitParam(max: number, description?: string) {
   const schema = z
     .number()
     .optional()
