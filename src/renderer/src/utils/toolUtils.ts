@@ -108,6 +108,10 @@ const KNOWN_TOOL_LABELS: Record<string, string> = {
   get_app_tool_schema: 'Revisando la acción',
   run_app_tool: 'Ejecutando la acción en tu app',
   connect_app: 'Preparando la conexión de la app',
+  // Documentos del proyecto
+  list_project_documents: 'Viendo los documentos del proyecto',
+  read_project_document: 'Leyendo un documento del proyecto',
+  save_project_document: 'Guardando el documento en el proyecto',
 }
 
 /**

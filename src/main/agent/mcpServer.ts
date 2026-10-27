@@ -8,6 +8,7 @@ import { createCreditsTools } from './creditsTools'
 import { createDocumentIntakeTools } from './documentIntakeTools'
 import { createScheduleTools } from './scheduleTools'
 import { createAppTools } from './appTools'
+import { createProjectDocumentTools } from './projectDocumentTools'
 import { HttpClient, CompanyChangedError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
@@ -230,9 +231,14 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
   // ── attach_budget_pdf tool ────────────────────────────────────────────────
   // Reads a local PDF and uploads it to CERP via multipart. The PDF will appear
   // at the end of the printed cotización in both CERP IA and the ERP web app.
+  // F2.1: SOLO para el PDF que se anexa a la cotización. Guardar un documento en
+  // el proyecto (plano, pliego, contrato) es save_project_document
+  // (projectDocumentTools.ts), que sube sin budgetId.
   const attachBudgetPdfTool = tool(
     'attach_budget_pdf',
-    'Adjunta un PDF local como archivo adicional de un presupuesto CERP. El PDF aparecerá al final del PDF de cotización generado y también en la app web de CERP. Usar cuando el usuario quiere agregar un documento adicional (condiciones generales, plano, anexo) a una cotización.',
+    'Adjunta un PDF local como archivo adicional de un presupuesto CERP: se anexa al final del PDF de cotizacion que recibe el cliente y tambien se ve en la app web de CERP. ' +
+      'Usar SOLO cuando el usuario quiere que el PDF vaya dentro de la cotizacion (condiciones generales, anexo, plano para el cliente). ' +
+      'Para guardar un documento en el proyecto (plano, pliego, memoria, contrato, foto) usa save_project_document. Solo acepta archivos .pdf.',
     AttachBudgetPdfSchema as any,
     async (args: Record<string, unknown>) => {
       try {
@@ -242,6 +248,11 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
 
         if (!existsSync(parsed.filePath)) {
           throw new Error(`Archivo no encontrado: ${parsed.filePath}`)
+        }
+        // Se sube como application/pdf y se concatena a la cotización: otro tipo
+        // rompería el PDF final. Para otros archivos, save_project_document.
+        if (!/\.pdf$/i.test(parsed.filePath)) {
+          throw new Error(`attach_budget_pdf solo adjunta PDF a un presupuesto. Para guardar este archivo en el proyecto usa save_project_document: ${parsed.filePath}`)
         }
 
         const buffer = readFileSync(parsed.filePath)
@@ -567,6 +578,11 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       // Apps conectadas (Composio): POST /ai-tools/:name sin companyId, igual que el cronograma;
       // run_app_tool pide confirmación al usuario en esta conversación antes de escribir.
       ...createAppTools(httpClient, conversationId),
+      // Documentos de proyecto (F2.1), AL FINAL (ADR 009: el orden de tools es parte
+      // del prefijo cacheable): listar y leer por POST /ai-tools/:name sin companyId;
+      // guardar sube el archivo local por la ruta REST de Documentos, sin budgetId,
+      // y pide "Guardar" al usuario en esta conversación antes de subir.
+      ...createProjectDocumentTools(httpClient, conversationId),
     ],
   })
 }
