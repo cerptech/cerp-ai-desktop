@@ -1,7 +1,7 @@
 {
   "name": "cerp-ai-desktop",
-  "version": "1.0.42",
-  "description": "CERP AI Desktop - Asistente inteligente para empresas constructoras",
+  "version": "1.0.43",
+  "description": "CERP IA Desktop - Asistente inteligente para empresas del sector de la construcción",
   "main": "./out/main/index.js",
   "author": {
     "name": "CERP Tech",
