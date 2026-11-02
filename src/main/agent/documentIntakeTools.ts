@@ -227,9 +227,12 @@ const CreateSupplierInvoiceSchema = z.object({
   // con obligatorio, el agente metia esas facturas en una obra cualquiera.
   projectId: objectId('projectId').optional().describe('ID del proyecto al que se imputa la factura. Omitir si es un gasto general sin obra'),
   constructionSiteId: objectId('constructionSiteId').optional().describe('ID de la obra. Omitir si es un gasto general sin obra'),
-  constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra, si el usuario la indicó'),
+  constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra de TODA la factura, si el usuario la indicó: va a las líneas que no traen la suya'),
   itemResolutions: z.array(z.object({
     description: z.string().describe('Descripción de la línea, igual que en extractedData.items'),
+    // OC por línea (cerp-server, noviembre 2026): el coste de la factura se
+    // reparte entre las órdenes de sus líneas; sin orden, va al proyecto.
+    constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra de ESTA línea, si el usuario dijo que las líneas van a órdenes distintas'),
     itemId: objectId('itemId').optional().describe('Ítem existente que el usuario eligió reutilizar (de check_invoice_items_catalog)'),
     nature: z.enum(['material', 'item']).optional().describe('Si no hay itemId: "material" o "item" (ítem subcontratado 100%), según lo que eligió el usuario'),
   })).describe('Una entrada por cada línea, con lo que decidió el usuario. No lo decidas vos'),
@@ -445,6 +448,7 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
       'el que el usuario eligió reutilizar, uno con el mismo nombre si existe, o uno nuevo (material o subcontratado según itemResolutions). ' +
       'Si esa factura del mismo proveedor ya estaba cargada, no crea otra (duplicate:true). ' +
       'Sin projectId ni constructionSiteId queda como gasto general, sin imputar a ninguna obra (software, IT, oficina). ' +
+      'Cada línea puede ir a su propia orden de obra (itemResolutions[].constructionOrderId): el coste se reparte entre las órdenes de sus líneas. ' +
       'Solo llamar tras la confirmación explícita del usuario.',
     CreateSupplierInvoiceSchema as any,
     async (args: Record<string, unknown>) => {
@@ -508,7 +512,7 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
         const itemIdCache = new Map<string, string>()
         const createdItems: string[] = []
         const failedLines: Array<{ description: string; error: string }> = []
-        const invoiceItems: Array<{ itemId: string; quantity: number; unit: string; unitCost: number; totalCost: number; taxRate: number }> = []
+        const invoiceItems: Array<{ itemId: string; quantity: number; unit: string; unitCost: number; totalCost: number; taxRate: number; constructionOrderId?: string }> = []
 
         for (const line of data.items) {
           const rawName = line.description.trim()
@@ -577,6 +581,8 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
             unitCost,
             totalCost: round2(unitCost * quantity),
             taxRate: line.taxRate ?? 0,
+            // Sin la suya, el core le pone la de la factura (`constructionOrderId`).
+            ...(resolution?.constructionOrderId ? { constructionOrderId: resolution.constructionOrderId } : {}),
           })
         }
 
