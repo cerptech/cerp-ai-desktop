@@ -110,6 +110,47 @@ const BUDGET_LINE_FIELD_IDS = [
   'lines.total',
 ] as const
 
+// ============================================================
+// Partes de produccion y certificaciones.
+// ============================================================
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** Fecha de hoy en la zona del equipo, YYYY-MM-DD (toISOString daria la de UTC). */
+function localToday(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Destinatario y periodo de una certificacion: los mismos campos para la vista
+ * previa (`GET lines-preview`) y para crearla, asi el modelo llama a las dos igual.
+ */
+function certificationTargetShape() {
+  return {
+    constructionSiteId: z.string().describe('ID de la obra (get_construction_sites)'),
+    recipientType: z
+      .enum(['contact', 'general'])
+      .describe('"contact" para certificar a un cliente, proveedor o subcontratista concreto; "general" para la certificacion de la obra sin destinatario'),
+    recipientContactId: z
+      .string()
+      .optional()
+      .describe('ID del contacto (search_contacts). OBLIGATORIO si recipientType es "contact"'),
+    periodStartDate: z.string().regex(ISO_DATE_RE, 'Formato YYYY-MM-DD').describe('Primer dia del periodo, YYYY-MM-DD'),
+    periodEndDate: z.string().regex(ISO_DATE_RE, 'Formato YYYY-MM-DD').describe('Ultimo dia del periodo (incluido), YYYY-MM-DD'),
+    priceIndex: z.number().positive().optional().describe('Indice de revision de precios que multiplica los importes. Default 1 (sin revision).'),
+  }
+}
+
+function assertCertificationRecipient(args: Record<string, unknown>): Record<string, unknown> {
+  if (args.recipientType === 'contact' && !args.recipientContactId) {
+    throw new Error('Falta recipientContactId: con recipientType "contact" hay que indicar el contacto (search_contacts).')
+  }
+  if (typeof args.periodStartDate === 'string' && typeof args.periodEndDate === 'string' && args.periodStartDate > args.periodEndDate) {
+    throw new Error('El periodo no es valido: periodStartDate tiene que ser anterior o igual a periodEndDate.')
+  }
+  return args
+}
+
 export const toolSchemas: Record<string, ToolDef> = {
   // ============================================================
   // PROJECTS — Read & Write
@@ -1089,15 +1130,106 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/production-reports/site/:siteId',
   },
   create_production_report: {
-    description: 'Crea un reporte de produccion para una obra.',
+    description:
+      'Crea un parte de produccion (parte diario de obra) en BORRADOR: avance de las ordenes de construccion (OC), materiales consumidos y horas de recursos (mano de obra, equipos). ' +
+      'Se confirma despues desde la web; recien confirmado cuenta en el coste y en las certificaciones. ' +
+      'Antes: get_construction_orders para los IDs de las OC de la obra y get_construction_order_details de cada OC para sus materiales y recursos asignados (resources_assigned). Nunca inventes IDs. ' +
+      'Cada recurso va SIEMPRE con la OC en la que trabajo (relatedOrderId): si el parte tiene una sola OC en production se usa esa; con varias, preguntale al usuario en cual trabajo cada recurso. ' +
+      'Sin la OC esas horas no cuentan en el coste de la obra ni en la certificacion al proveedor del recurso. ' +
+      'Un parte de solo recursos o materiales tambien lleva la OC en production, con quantityExecuted 0.',
     schema: z.object({
-      constructionSiteId: z.string().describe('ID de la obra'),
-      constructionOrderId: z.string().optional().describe('ID de la orden'),
-      date: z.string().optional(),
-      notes: z.string().optional(),
+      constructionSiteId: z.string().describe('ID de la obra (get_construction_sites)'),
+      productionDate: z
+        .string()
+        .regex(ISO_DATE_RE, 'Formato YYYY-MM-DD')
+        .optional()
+        .describe('Fecha del trabajo (no la de carga), YYYY-MM-DD. Sin este campo se usa la fecha de hoy.'),
+      production: z
+        .array(
+          z.object({
+            constructionOrderId: z.string().describe('ID de la OC (get_construction_orders)'),
+            quantityExecuted: z.number().min(0).describe('Cantidad ejecutada en la jornada, en la unidad de la OC. 0 si solo hay recursos, materiales o una incidencia.'),
+            unit: z.string().optional().describe('Unidad de la OC. Si no la sabes, omitila: se toma de la OC.'),
+            incidentType: z.string().optional().describe('Key del tipo de incidencia, si el usuario reporta una sobre esta OC (ej: "missing_materials", "weather_conditions", "absenteeism"; la empresa puede tener tipos propios). Si no existe, el parte no se crea y el error lo dice.'),
+            incidentNotes: z.string().optional().describe('Descripcion de la incidencia con las palabras del usuario'),
+          }),
+        )
+        .optional()
+        .describe('Avance de las OC de la jornada. Incluí tambien las OC de los recursos y materiales del parte aunque no tengan avance (quantityExecuted 0).'),
+      materialsConsumed: z
+        .array(
+          z.object({
+            materialId: z.string().describe('ID del material (get_construction_order_details de la OC o search_materials)'),
+            quantity: z.number().min(0).describe('Cantidad consumida'),
+            unit: z.string().optional().describe('Unidad del material. Si no la sabes, omitila: se toma del material.'),
+            relatedOrderId: z.string().optional().describe('ID de la OC donde se consumio. Si el parte tiene una sola OC en production y lo omitis, se usa esa.'),
+          }),
+        )
+        .optional()
+        .describe('Materiales consumidos en la jornada'),
+      resourcesUsed: z
+        .array(
+          z.object({
+            resourceId: z.string().describe('ID del recurso: el resourceId de resources_assigned que devuelve get_construction_order_details de la OC indicada en relatedOrderId'),
+            quantity: z.number().min(0).describe('Recursos por hora: numero de personas o equipos (3 operarios → 3), NO horas. Recursos por dia, unidad, m² o m³: siempre 1.'),
+            executedHours: z
+              .number()
+              .min(0)
+              .describe(
+                'Cantidad ejecutada por cada unidad del recurso. Por hora: horas (3 peones × 8 h → quantity 3, executedHours 8; "20 h de peon" → quantity 1, executedHours 20). ' +
+                  'Por dia: dias × horas por dia del recurso. Por unidad, m² o m³: unidades, m² o m³ ejecutados (50 u. → quantity 1, executedHours 50).',
+              ),
+            unit: z.string().optional().describe('Unidad del recurso (hours, days, unit...). Si no la sabes, omitila: se toma del recurso.'),
+            relatedOrderId: z
+              .string()
+              .optional()
+              .describe('ID de la OC en la que trabajo el recurso. OBLIGATORIO salvo que el parte tenga una sola OC en production (entonces se usa esa).'),
+          }),
+        )
+        .optional()
+        .describe('Recursos usados en la jornada: mano de obra y equipos'),
+      generalNotes: z.string().optional().describe('Notas generales del parte'),
     }),
     method: 'POST',
     endpoint: '/production-reports',
+    // El API exige `productionDate` y las tres listas con su OC. Antes la tool mandaba
+    // `date`/`constructionOrderId`/`notes` sueltos: el parte fallaba por falta de fecha
+    // o quedaba vacio. Ademas cierra la regla del canal de WhatsApp: un recurso sin OC
+    // no suma al coste ni a la certificacion al proveedor, asi que con una sola OC en
+    // el parte se completa con esa y con varias se corta y se le pide al modelo que pregunte.
+    transformArgs: (args) => {
+      const {
+        productionDate,
+        production = [],
+        materialsConsumed = [],
+        resourcesUsed = [],
+        ...rest
+      } = args as {
+        productionDate?: string
+        production?: Array<{ constructionOrderId: string }>
+        materialsConsumed?: Array<{ relatedOrderId?: string }>
+        resourcesUsed?: Array<{ resourceId: string; relatedOrderId?: string }>
+      }
+      const orderIds = [...new Set(production.map((p) => p.constructionOrderId))]
+      const onlyOrder = orderIds.length === 1 ? orderIds[0] : undefined
+
+      const missing = resourcesUsed.filter((r) => !r.relatedOrderId).map((r) => r.resourceId)
+      if (missing.length > 0 && !onlyOrder) {
+        throw new Error(
+          `Los recursos ${missing.join(', ')} no tienen relatedOrderId y el parte tiene ${orderIds.length} OC en production. ` +
+            'Preguntale al usuario en que orden trabajo cada uno y volve a llamar con relatedOrderId: sin la OC esas horas no cuentan en el coste ni en la certificacion al proveedor.',
+        )
+      }
+
+      return {
+        ...rest,
+        productionDate: productionDate ?? localToday(),
+        source: 'api',
+        production,
+        materialsConsumed: materialsConsumed.map((m) => ({ ...m, relatedOrderId: m.relatedOrderId ?? onlyOrder })),
+        resourcesUsed: resourcesUsed.map((r) => ({ ...r, relatedOrderId: r.relatedOrderId ?? onlyOrder })),
+      }
+    },
   },
 
   // ============================================================
@@ -1111,15 +1243,36 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/work-certifications',
   },
+  get_work_certification_preview: {
+    description:
+      'Vista previa de una certificacion de obra SIN crearla: las lineas que armaria CERP con los partes de produccion CONFIRMADOS del periodo y los avisos. Llamarla SIEMPRE antes de create_work_certification, con los mismos parametros, y mostrarle al usuario las lineas y los avisos. ' +
+      'En meta: overlappingCertification = ya hay una certificacion de ese destinatario que se pisa con el periodo (create va a fallar: proponer otro periodo); ' +
+      'suggestedPeriodStart = el dia siguiente al fin de la ultima certificacion de ese destinatario (buen inicio de periodo); ' +
+      'unassignedLabor = horas reportadas de recursos del proveedor sin OC en el parte: NO se certifican hasta asignarles la OC en el parte desde la web.',
+    schema: z.object(certificationTargetShape()),
+    method: 'GET',
+    endpoint: '/work-certifications/lines-preview',
+    transformArgs: (args) => assertCertificationRecipient(args),
+  },
   create_work_certification: {
-    description: 'Crea una nueva certificacion de obra.',
+    description:
+      'Crea una certificacion de obra en borrador para un destinatario y un periodo. Las lineas NO se mandan: CERP las arma con los partes de produccion CONFIRMADOS del periodo ' +
+      '(a un proveedor, solo la mano de obra reportada de SUS recursos y las OC de su encabezado; a un cliente, a precio de venta). ' +
+      'Antes: get_work_certification_preview con los mismos parametros, mostrar las lineas y avisos, y crear solo con el OK del usuario. ' +
+      'Si responde 409 CERT_PERIOD_OVERLAP, el periodo se pisa con otra certificacion del mismo destinatario: proponer otro periodo, no reintentar igual. ' +
+      'Si responde CERT_LINE_OVER_CONTRACT, alguna linea supera lo contratado: explicar cuales y reintentar con allowOverProgress solo si el usuario lo autoriza expresamente.',
     schema: z.object({
-      constructionSiteId: z.string().describe('ID de la obra'),
-      name: z.string().optional(),
-      notes: z.string().optional(),
+      ...certificationTargetShape(),
+      allowOverProgress: z
+        .boolean()
+        .optional()
+        .describe('true SOLO si el usuario autorizo expresamente certificar por encima de lo contratado, despues de un error CERT_LINE_OVER_CONTRACT'),
     }),
     method: 'POST',
     endpoint: '/work-certifications',
+    // Antes la tool mandaba `name`/`notes`, que el API ignora, y ninguno de los
+    // campos obligatorios (destinatario y periodo): siempre respondia 400.
+    transformArgs: (args) => assertCertificationRecipient(args),
   },
 
   // ============================================================
