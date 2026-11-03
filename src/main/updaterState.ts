@@ -18,6 +18,38 @@ export type UpdaterEvent =
   | { type: 'error'; raw: string }
   /** checkForUpdates resolvió sin resultado (updater inactivo): el chequeo no ocurrió. */
   | { type: 'check-skipped' }
+  /** El watchdog de updater.ts vio el chequeo o la descarga sin ningún evento durante `stallTimeoutMs`. */
+  | { type: 'stalled' }
+
+/**
+ * Sin timeout HTTP propio: electron-updater hace las requests con `net.request` de
+ * Electron, cuyo ClientRequest no emite 'socket', y el timeout de builder-util-runtime
+ * (`addTimeOutHandler`) solo se arma en ese evento. Una conexión que se estanca sin
+ * cerrarse (proxy, wifi degradado, suspensión) no termina nunca en 'error' ni en
+ * rechazo, y `blocksNewCheck` dejaría el estado bloqueado para siempre. Estos plazos
+ * son la ausencia de CUALQUIER evento del updater, no la duración total: la consulta a
+ * GitHub tarda segundos y la descarga emite progreso cada segundo mientras avanza.
+ */
+export const CHECK_STALL_TIMEOUT_MS = 2 * 60_000
+export const DOWNLOAD_STALL_TIMEOUT_MS = 5 * 60_000
+
+/** Plazo sin eventos tras el cual el estado se da por trabado; null si el estado no espera nada del updater. */
+export function stallTimeoutMs(state: UpdateState): number | null {
+  if (state.status === 'checking') return CHECK_STALL_TIMEOUT_MS
+  if (state.status === 'available' || state.status === 'downloading') return DOWNLOAD_STALL_TIMEOUT_MS
+  return null
+}
+
+/**
+ * Texto de un paso trabado. Reintentar suele alcanzar en la descarga (se cancela y
+ * arranca limpia); en el chequeo no, porque electron-updater guarda la promesa colgada
+ * y la devuelve en cada checkForUpdates hasta reiniciar.
+ */
+export function stalledUpdateMessage(phase: UpdateErrorPhase): string {
+  return phase === 'check'
+    ? 'La búsqueda de actualizaciones no respondió. Cierra CERP IA Desktop y vuelve a abrirlo para volver a buscar.'
+    : 'La descarga de la actualización se detuvo. Reintenta; si vuelve a pasar, cierra CERP IA Desktop y vuelve a abrirlo.'
+}
 
 /**
  * true si NO hay que lanzar otro chequeo: ya hay uno en curso, la versión nueva se
@@ -34,8 +66,8 @@ export function blocksNewCheck(state: UpdateState): boolean {
   )
 }
 
-// Errores de red de Node/Electron (DNS, conexión rechazada o cortada, timeout del
-// socket de builder-util-runtime, errores net:: de Chromium).
+// Errores de red de Node/Electron (DNS, conexión rechazada o cortada, timeouts,
+// errores net:: de Chromium, que es quien hace las requests en Electron).
 const NETWORK_ERROR = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ECONNABORTED|ETIMEDOUT|ESOCKETTIMEDOUT|ENETUNREACH|EHOSTUNREACH|socket hang up|net::ERR_|getaddrinfo|timeout/i
 
 /** Texto para el usuario según el paso que falló. El mensaje crudo queda solo en el log. */
@@ -99,5 +131,13 @@ export function reduceUpdateState(state: UpdateState, event: UpdaterEvent): Upda
 
     case 'check-skipped':
       return state.status === 'checking' ? { status: 'idle' } : state
+
+    case 'stalled': {
+      // Desde `error` llega cuando el usuario reintenta sobre un paso que sigue colgado
+      // dentro de electron-updater: se conserva la fase y se vuelve a publicar.
+      if (state.status !== 'checking' && state.status !== 'available' && state.status !== 'downloading' && state.status !== 'error') return state
+      const phase: UpdateErrorPhase = state.status === 'checking' ? 'check' : state.status === 'error' ? state.phase : 'download'
+      return { status: 'error', phase, message: stalledUpdateMessage(phase) }
+    }
   }
 }

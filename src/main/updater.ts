@@ -1,8 +1,8 @@
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, type CancellationToken } from 'electron-updater'
 import { app, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from './ipc/channels'
 import type { UpdateState, UpdateUnsupportedReason, UpdaterSnapshot } from './ipc/types'
-import { blocksNewCheck, reduceUpdateState, type UpdaterEvent } from './updaterState'
+import { blocksNewCheck, reduceUpdateState, stallTimeoutMs, type UpdaterEvent } from './updaterState'
 import { logger } from './utils/logger'
 
 // ============================================================
@@ -25,9 +25,15 @@ import { logger } from './utils/logger'
 // Cuándo se busca: al arrancar, cada PERIODIC_CHECK_INTERVAL_MS mientras la app siga
 // abierta, a pedido del usuario y la primera vez que el core exige una versión más
 // nueva. Nunca dos a la vez: un chequeo en curso, una descarga en curso o una
-// versión ya lista bloquean el siguiente (`blocksNewCheck`). Ningún paso queda
-// colgado: las requests de electron-updater tienen el timeout de socket de
-// builder-util-runtime (60 s), que termina en el evento 'error'.
+// versión ya lista bloquean el siguiente (`blocksNewCheck`).
+//
+// Ningún paso queda colgado, pero NO gracias a electron-updater: sus requests van por
+// `net.request` de Electron, cuyo ClientRequest no emite 'socket', así que el timeout
+// de 60 s de builder-util-runtime (que se arma en ese evento) nunca actúa. Una conexión
+// estancada no daba ni 'error' ni rechazo, y con `blocksNewCheck` el estado quedaba en
+// «Buscando…» o «Descargando 37 %» para siempre (y la pantalla obligatoria del chat sin
+// salida). Lo cierra el watchdog de inactividad (`armWatchdog`, plazos en
+// `stallTimeoutMs`): cancela la descarga con su CancellationToken y pasa a `error`.
 //
 // Plataformas del MVP: Windows (.exe NSIS) y Linux (AppImage). macOS queda
 // bloqueado hasta firma + notarización (Gatekeeper rechaza updates sin firmar).
@@ -45,6 +51,12 @@ let periodicTimer: ReturnType<typeof setInterval> | null = null
 let state: UpdateState | null = null
 let required = false
 let seq = 0
+let watchdog: ReturnType<typeof setTimeout> | null = null
+/** Hay un checkForUpdates sin resolver. electron-updater lo guarda y lo devuelve en cada llamada hasta que se resuelva. */
+let checkInFlight = false
+/** Descarga en curso: su token (para cancelarla) y su promesa (electron-updater la devuelve mientras no termine). */
+let downloadToken: CancellationToken | null = null
+let downloadInFlight: Promise<unknown> | null = null
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -79,9 +91,33 @@ function publish(): void {
   if (win && !win.isDestroyed()) win.webContents.send(IPC_CHANNELS.UPDATE_STATE, getUpdaterSnapshot())
 }
 
+/**
+ * Reprograma el watchdog con el estado resultante. Cualquier evento cuenta como
+ * actividad, aunque no cambie el estado (un progreso que redondea al mismo %).
+ */
+function armWatchdog(s: UpdateState): void {
+  if (watchdog) clearTimeout(watchdog)
+  watchdog = null
+  const ms = stallTimeoutMs(s)
+  if (ms !== null) watchdog = setTimeout(onStall, ms)
+}
+
+function onStall(): void {
+  watchdog = null
+  const s = currentState()
+  logger.warn(`[updater] Sin eventos del updater en estado ${s.status}: se da por trabado`)
+  // Primero el estado: el rechazo por la cancelación llega después y ya no lo toca.
+  dispatch({ type: 'stalled' })
+  // En la descarga, cancelar rechaza su promesa y electron-updater la suelta (finally),
+  // así «Reintentar» arranca una limpia. En el chequeo no hay token propio: la promesa
+  // queda colgada dentro de electron-updater (ver runCheck).
+  if (s.status === 'available' || s.status === 'downloading') downloadToken?.cancel()
+}
+
 function dispatch(event: UpdaterEvent): void {
   const prev = currentState()
   const next = reduceUpdateState(prev, event)
+  armWatchdog(next)
   if (next === prev) return
   state = next
   publish()
@@ -94,11 +130,19 @@ function runCheck(reason: string): void {
     logger.info(`[updater] Chequeo omitido (${reason}): estado ${s.status}`)
     return
   }
+  if (checkInFlight) {
+    // Solo pasa tras el watchdog: checkForUpdates devolvería la misma promesa colgada.
+    logger.warn(`[updater] Chequeo omitido (${reason}): el anterior sigue sin responder`)
+    dispatch({ type: 'stalled' })
+    return
+  }
   logger.info(`[updater] Buscando actualizaciones (${reason})...`)
   // El renderer ve «Buscando…» ya, sin esperar el evento de electron-updater.
   dispatch({ type: 'checking' })
+  checkInFlight = true
   autoUpdater.checkForUpdates().then(
     (result) => {
+      checkInFlight = false
       // null = updater inactivo. No debería pasar (solo se llega empaquetado), pero
       // sin esto el estado quedaría en «Buscando…» para siempre.
       if (!result) {
@@ -109,12 +153,30 @@ function runCheck(reason: string): void {
       // evento 'error', salvo una cancelación (electron-updater no la emite): si la
       // descarga sigue abierta al rechazar, se cierra acá. Sin este catch, además, el
       // rechazo quedaba sin manejar en el main.
-      result.downloadPromise?.catch((err: unknown) => {
-        const status = currentState().status
-        if (status === 'available' || status === 'downloading') dispatch({ type: 'error', raw: errorMessage(err) })
-      })
+      const download = result.downloadPromise
+      if (!download) return
+      if (download === downloadInFlight) {
+        // La descarga que el watchdog canceló no se soltó (la diferencial no escucha la
+        // cancelación mientras no llegan datos): electron-updater devuelve la misma.
+        logger.warn('[updater] La descarga anterior sigue colgada dentro de electron-updater')
+        dispatch({ type: 'stalled' })
+        return
+      }
+      downloadInFlight = download
+      downloadToken = result.cancellationToken ?? null
+      download
+        .catch((err: unknown) => {
+          const status = currentState().status
+          if (status === 'available' || status === 'downloading') dispatch({ type: 'error', raw: errorMessage(err) })
+        })
+        .finally(() => {
+          if (downloadInFlight !== download) return
+          downloadInFlight = null
+          downloadToken = null
+        })
     },
     (err: unknown) => {
+      checkInFlight = false
       logger.error(`[updater] checkForUpdates falló: ${errorMessage(err)}`)
       // El evento 'error' ya movió el estado; esto solo cubre que no hubiera llegado.
       if (currentState().status === 'checking') dispatch({ type: 'error', raw: errorMessage(err) })

@@ -10,8 +10,10 @@ interface UpdateActionsProps {
   onCheck: () => void
   onInstall: () => void
   /**
-   * El core exige una versión más nueva (426): el botón inicial es «Actualizar ahora»
-   * y «sin novedades» no se presenta como «Tienes la última versión».
+   * El core exige una versión más nueva (426): el botón inicial es «Actualizar ahora»,
+   * «sin novedades» no se presenta como «Tienes la última versión» y la descarga
+   * manual queda a mano en todos los estados menos con la versión ya lista: la
+   * pantalla obligatoria del chat nunca se queda sin salida.
    */
   required?: boolean
 }
@@ -69,6 +71,7 @@ export function UpdateActions({ snapshot, onCheck, onInstall, required = false }
   const [restartSeq, setRestartSeq] = useState<number | null>(null)
   const restarting = restartSeq === snapshot.seq
   const { state } = snapshot
+  const manualDownload = required ? <DownloadLink /> : null
 
   const handleInstall = (): void => {
     setRestartSeq(snapshot.seq)
@@ -90,16 +93,22 @@ export function UpdateActions({ snapshot, onCheck, onInstall, required = false }
 
     case 'idle':
       return (
-        <Button size="sm" onClick={onCheck}>
-          {required ? 'Actualizar ahora' : 'Buscar actualizaciones'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={onCheck}>
+            {required ? 'Actualizar ahora' : 'Buscar actualizaciones'}
+          </Button>
+          {manualDownload}
+        </div>
       )
 
     case 'checking':
       return (
-        <div className="flex items-center gap-2 text-sm text-slate-600">
-          <LoadingSpinner size="sm" />
-          <span>Buscando…</span>
+        <div className="flex flex-col items-start gap-3">
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <LoadingSpinner size="sm" />
+            <span>Buscando…</span>
+          </div>
+          {manualDownload}
         </div>
       )
 
@@ -107,9 +116,12 @@ export function UpdateActions({ snapshot, onCheck, onInstall, required = false }
       return required ? (
         <div className="flex flex-col items-start gap-3">
           <p className="text-sm text-amber-700">Todavía no hay una versión más nueva para descargar. Vuelve a intentarlo en unos minutos.</p>
-          <Button size="sm" onClick={onCheck}>
-            Reintentar
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button size="sm" onClick={onCheck}>
+              Reintentar
+            </Button>
+            {manualDownload}
+          </div>
         </div>
       ) : (
         <div className="flex flex-col items-start gap-3">
@@ -135,6 +147,8 @@ export function UpdateActions({ snapshot, onCheck, onInstall, required = false }
             Descargando {percent} %{state.version ? <span className="text-slate-500"> · versión {state.version}</span> : null}
           </p>
           <UpdateProgressBar percent={percent} />
+          {/* Sin botón propio: si la descarga se traba, el watchdog del main la pasa a `error` con «Reintentar». */}
+          {manualDownload && <div className="mt-1">{manualDownload}</div>}
         </div>
       )
     }
@@ -158,7 +172,7 @@ export function UpdateActions({ snapshot, onCheck, onInstall, required = false }
               Reintentar
             </Button>
             {/* Si la actualización automática no llega, queda la descarga manual. */}
-            {required && <DownloadLink />}
+            {manualDownload}
           </div>
         </div>
       )
