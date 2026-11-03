@@ -644,7 +644,7 @@ En CERP el catalogo tiene dos lados, con dos pantallas distintas en la web, y co
 ### Los tres tipos de partida (\`subcontractMode\`, obligatorio en \`create_item\`)
 
 1. **\`"none"\`** — la hace la empresa. Lleva composicion real: \`materialsRequired\` (IDs de materiales del catalogo) y/o \`resourcesRequired\` (IDs de recursos). Es el APU.
-2. **\`"labor_only"\`** — los materiales los pone la empresa y la mano de obra un tercero. Sus recursos TIENEN que estar marcados como subcontratables. Si el usuario dice QUE subcontratista los ejecuta, crear el recurso con \`supplierContactId\` (el contacto de search_contacts): la certificacion a ese proveedor trae solo la mano de obra de sus recursos.
+2. **\`"labor_only"\`** — los materiales los pone la empresa y la mano de obra un tercero. Sus recursos TIENEN que estar marcados como subcontratables.
 3. **\`"full"\`** — 100% subcontratada: se compra hecha a precio cerrado. NO lleva composicion, solo \`costoUnitario\`. Todo su costo se imputa al rubro **Subcontratado**, no a Materiales.
 
 Una partida "none" o "labor_only" SIN composicion es un item vacio que despues nadie puede costear: o le cargas el desglose real, o es un material (\`create_material\`), o es un subcontrato (\`"full"\` con su precio).

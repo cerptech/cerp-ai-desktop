@@ -876,7 +876,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     fieldMap: { searchTerm: 'search' },
   },
   search_resources: {
-    description: 'Busca recursos productivos (mano de obra y maquinaria) en el catalogo de la empresa por nombre o codigo. Usar ANTES de crear un recurso nuevo, para evitar duplicados. Cada recurso trae su proveedor (supplierContactId, con el nombre) si lo ejecuta un subcontratista.',
+    description: 'Busca recursos productivos (mano de obra y maquinaria) en el catalogo de la empresa por nombre o codigo. Usar ANTES de crear un recurso nuevo, para evitar duplicados.',
     schema: z.object({
       searchTerm: z.string().min(1).describe('Texto de busqueda por nombre o codigo del recurso. OBLIGATORIO: usar al menos una palabra clave del nombre del recurso buscado para evitar listar todo el catalogo.'),
       type: z.enum(['labor', 'tools_machinery']).optional().describe('Filtrar por tipo de recurso: "labor" para mano de obra, "tools_machinery" para maquinaria/herramientas'),
@@ -974,13 +974,10 @@ export const toolSchemas: Record<string, ToolDef> = {
   // RESOURCES — Read & Write
   // ============================================================
   get_resources: {
-    description:
-      'Recursos productivos (mano de obra, maquinaria). Disponibilidad, costos, asignaciones y proveedor ' +
-      '(supplierContactId: el subcontratista que lo ejecuta). Con supplierContactId lista solo los recursos de ese proveedor.',
+    description: 'Recursos productivos (mano de obra, maquinaria). Disponibilidad, costos, asignaciones.',
     schema: z.object({
       type: z.enum(['labor', 'tools_machinery']).optional(),
       status: z.enum(['available', 'occupied', 'maintenance', 'retired']).optional(),
-      supplierContactId: z.string().optional().describe('ID del contacto proveedor o contratista (search_contacts): solo sus recursos.'),
       limit: limitParam(50),
     }),
     method: 'GET',
@@ -999,10 +996,6 @@ export const toolSchemas: Record<string, ToolDef> = {
       costRateType: z.enum(['hourly', 'daily', 'fixed', 'unit', 'm2', 'm3']).describe('Unidad de la tarifa: por hora, por dia, fija, por unidad producida, por m2 o por m3.'),
       hoursPerDay: z.number().min(0.5).max(24).optional().describe('Horas que representa un dia. Solo para costRateType "daily" (default 8).'),
       canBeSubcontracted: z.boolean().optional().describe('true si el recurso lo puede aportar un subcontratista. OBLIGATORIO en true para usarlo en una partida con subcontractMode "labor_only".'),
-      supplierContactId: z.string().optional().describe(
-        'Proveedor o contratista que ejecuta el recurso (ID de search_contacts). Opcional y solo con canBeSubcontracted en true. ' +
-        'La certificacion a ese proveedor trae solo la mano de obra reportada de sus recursos; sin proveedor se le certifica al de la orden.'
-      ),
       status: z.enum(['available', 'occupied', 'maintenance', 'retired']).optional().describe('Estado (default "available")'),
       description: z.string().optional(),
       currency: z.string().optional().describe('Moneda de la tarifa (default EUR)'),
