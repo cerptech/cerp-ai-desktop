@@ -20,8 +20,16 @@ const PANEL_WIDTH = 296
  */
 const autoOpened = new Set<string>()
 
-/** Nombres que el SDK usa para el agente genérico: se muestran como «Agente». */
-const GENERIC_AGENT_NAMES = new Set(['', 'agente', 'general-purpose'])
+/**
+ * Agente genérico y subagentes integrados del SDK (siguen habilitados junto a los
+ * propios): se muestran como «Agente», no con su nombre interno en inglés.
+ */
+const GENERIC_AGENT_NAMES = new Set(['', 'agente', 'general-purpose', 'explore', 'plan', 'statusline-setup', 'output-style-setup', 'claude-code-guide'])
+
+/** El panel es de agentes: un comando o una tarea sueltos en segundo plano no lo muestran. */
+function hasDelegations(entries: AgentEntry[]): boolean {
+  return entries.some((e) => e.kind === 'agent' || e.kind === 'workflow')
+}
 
 function entryIdentity(entry: AgentEntry): { label: string; icon: AgentIconType } {
   if (entry.kind === 'workflow') return { label: 'Flujo de trabajo', icon: Workflow }
@@ -176,7 +184,7 @@ export function AgentsPanel({ conversationId, open, overlay, onClose, onFirstDel
     onFirstDelegation(conversationId)
   }, [delegating, conversationId, onFirstDelegation])
 
-  if (!open || entries.length === 0) return null
+  if (!open || !hasDelegations(entries)) return null
 
   const toggle = (id: string): void => {
     setExpandedIds((prev) => {
@@ -242,7 +250,7 @@ interface AgentsPanelToggleProps {
 /** Botón del encabezado que abre/cierra el panel, con la cantidad de agentes en curso. Sin agentes no se muestra. */
 export function AgentsPanelToggle({ conversationId, open, onToggle }: AgentsPanelToggleProps) {
   const entries = useConversationAgents(conversationId)
-  if (entries.length === 0) return null
+  if (!hasDelegations(entries)) return null
   const runningCount = countRunningEntries(entries)
   return (
     <button

@@ -336,7 +336,10 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
   // También resetea el acumulador de texto por bloque: es el arranque de un turno
   // NUEVO (incluido el que sigue a un ask_user_question respondido), así que no debe
   // arrastrar el `committed`/`buffer` del turno anterior.
+  // Tras Detener, un stream_start tardío (el main lo emite en cada task_started) no
+  // vuelve a prender el loader: stopRequested se limpia recién con el próximo envío.
   if (event.type === 'stream_start') {
+    if (rt.stopRequested) return { ...rt, lastEvent: now }
     return { ...rt, isStreaming: true, isPending: false, lastEvent: now, textAccumulator: EMPTY_TEXT_ACCUMULATOR }
   }
 

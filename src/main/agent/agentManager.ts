@@ -177,12 +177,14 @@ function killCliTree(child: ChildProcess | null, reason: string, sync = false): 
   if (process.platform !== 'win32' || !child?.pid) return
   if (child.exitCode !== null || child.signalCode !== null) return
   const args = ['/PID', String(child.pid), '/T', '/F']
+  // Ruta absoluta: por nombre, Windows busca primero en el cwd del proceso.
+  const taskkill = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe')
   logger.warn(`Matando el árbol del CLI (pid ${child.pid}): ${reason}`)
   try {
     if (sync) {
-      spawnSync('taskkill', args, { windowsHide: true, stdio: 'ignore', timeout: 5_000 })
+      spawnSync(taskkill, args, { windowsHide: true, stdio: 'ignore', timeout: 5_000 })
     } else {
-      const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' })
+      const killer = spawn(taskkill, args, { windowsHide: true, stdio: 'ignore' })
       killer.on('error', (err) => logger.warn(`taskkill falló (pid ${child.pid}): ${err.message}`))
     }
   } catch (err) {
