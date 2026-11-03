@@ -899,6 +899,12 @@ export async function abort(conversationId: string): Promise<void> {
     waitingAfterAnswer: false,
     currentDelegation: null,
   }))
+  // El assistant detenido se guarda YA, con sus pasos en 'interrupted': si el usuario
+  // reenvía antes del `result` abortado, el main reinicia la sesión sin `done` viejo, y
+  // el turno nuevo pone isStreaming=true. Antes se guardaba recién al cerrar ese turno
+  // (el server hace $push, así que quedaba DESPUÉS del mensaje nuevo) o nunca, si la app
+  // se cerraba antes.
+  persistNewMessages(conversationId, getRuntime(conversationId))
   await window.cerpAPI.abortAgent(conversationId)
 }
 

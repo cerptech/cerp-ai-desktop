@@ -343,9 +343,30 @@ export async function interruptAgent(conversationId: string = DEFAULT_CONV): Pro
     await session.query.interrupt()
     logger.info(`Agent interrupted (${conversationId})`)
   } catch (err) {
-    logger.warn(`Interrupt failed, closing session (${conversationId}): ${err}`)
-    closeSession(conversationId)
+    // Si la sesión ya se cerró (Detener y reenviar: runAgent la reinicia y su close()
+    // rechaza este interrupt pendiente), bajo el mismo id ya puede estar la sesión NUEVA:
+    // cerrarla por id dejaba el mensaje nuevo sin respuesta y sin error.
+    if (!closeOwnSession(session)) {
+      logger.info(`Interrupt sin efecto, la sesión ya estaba cerrada (${conversationId}): ${err}`)
+      return
+    }
+    logger.warn(`Interrupt failed, session closed (${conversationId}): ${err}`)
   }
+}
+
+/**
+ * Cierra `session` solo si sigue siendo la sesión registrada de su conversación y no
+ * se está cerrando. Todo cierre diferido (catch de un await, timer, stream) pasa por
+ * acá y no por closeSession(id): entre medio, runAgent puede haber abierto otra sesión
+ * con el mismo id. Devuelve si cerró.
+ */
+function closeOwnSession(
+  session: AgentSession,
+  opts: { keepReservation?: boolean } = {},
+): boolean {
+  if (sessions.get(session.conversationId) !== session || session.closing) return false
+  closeSession(session.conversationId, opts)
+  return true
 }
 
 /**
@@ -810,8 +831,8 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
 
   // Heartbeat + watchdog. The for-await loop BLOCKS while awaiting the next SDK message,
   // so during a multi-minute pause (e.g. a background subagent generating with no parent
-  // stream_events) nothing is forwarded. Every 5s, WHILE a turn or a background task is
-  // in progress, this interval:
+  // stream_events) nothing is forwarded. Every 5s, WHILE a turn is in progress (a `done`
+  // held for background tasks keeps processingTurn on), this interval:
   //  - forwards a lightweight `heartbeat` so the renderer's stall timer knows the main
   //    process is alive and the agent is working;
   //  - checks the SDK is ALSO alive: with no SDK message for TURN_INACTIVITY_TIMEOUT_MS
@@ -820,7 +841,10 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
   //    user (ask_user_question / schedule confirmation) does not count as inactivity.
   session.heartbeat = setInterval(() => {
     if (!mainWindowRef || mainWindowRef.isDestroyed()) return
-    if (!(activeTaskCount > 0 || session.processingTurn) || session.closing) return
+    // Solo con un turno abierto. Antes también latía con tareas de fondo vivas y el turno
+    // ya cerrado (Detener con un Bash o un Agent de fondo corriendo): el renderer, que ya
+    // había recibido el `done`, volvía a prender «IA trabajando» con cada latido.
+    if (!session.processingTurn || session.closing) return
     if (hasPendingQuestion(conversationId)) {
       session.lastActivityAt = Date.now()
     } else if (Date.now() - session.lastActivityAt >= TURN_INACTIVITY_TIMEOUT_MS) {
@@ -829,7 +853,7 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
       // Una sesión colgada no se puede "interrumpir" con confianza (el SDK puede estar
       // esperando una tool que no vuelve): se cierra. El próximo mensaje (Reintentar)
       // abre una sesión nueva con el historial de la conversación.
-      closeSession(conversationId)
+      closeOwnSession(session)
       return
     }
     sendEvent({ type: 'heartbeat', idleMs: Date.now() - session.lastActivityAt })
@@ -983,7 +1007,7 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
               // query would fail again right away.
               failTurn(session, resultFailure, resultErrorDetail(msgObj))
               finishTurn(session, event)
-              closeSession(conversationId)
+              closeOwnSession(session)
               continue
             }
             if (activeTaskCount > 0 && !session.interruptRequested) {
@@ -998,6 +1022,17 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
             // Turn complete and no background tasks — unlock UI for next input
             // Session stays alive (MessageQueue keeps the query running)
             finishTurn(session, event)
+            if (activeTaskCount > 0) {
+              // Detenido con tareas de fondo vivas: interrumpir el turno no las corta (un
+              // Bash con run_in_background, un Agent de fondo o un Workflow siguen) y el
+              // renderer ya las marcó 'interrupted'. Si la sesión quedaba abierta, al
+              // notificar podían arrancar solas un turno que el usuario detuvo, o quedar
+              // sin ningún `done` hasta el stall timer. Se cierra (con su árbol de
+              // procesos) y el próximo mensaje abre una limpia con el historial. La
+              // conversación sigue: una cotización en curso conserva su reserva.
+              logger.info(`Detenido con ${activeTaskCount} tareas de fondo vivas — se cierra la sesión (${conversationId})`)
+              closeOwnSession(session, { keepReservation: true })
+            }
             continue
           }
           sendEvent(event)
