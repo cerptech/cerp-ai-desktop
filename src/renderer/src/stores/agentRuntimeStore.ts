@@ -1,7 +1,7 @@
 import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload, ModelChoice } from '../../../preload/index'
-import type { ChatMessage, ToolExecution, SubagentStep, AgentDelegation } from '../hooks/useAgent'
+import type { ChatMessage, ToolExecution, SubagentStep, AgentDelegation, BackgroundTask } from '../hooks/useAgent'
 import { GENERIC_RETRY_PROMPT } from '../utils/retryPrompt'
-import { interruptRunningSteps } from './stepLifecycle'
+import { interruptRunningSteps, interruptRunningTasks, taskStatusFromSdk } from './stepLifecycle'
 
 /**
  * agentRuntimeStore — estado de streaming POR conversación.
@@ -54,6 +54,12 @@ export interface ConversationRuntime {
   isSubmittingAnswers: boolean
   // Antes eran refs en useAgent — ahora campos del runtime inmutable.
   tools: ToolExecution[]
+  /**
+   * Tareas de fondo del SDK de TODA la sesión de la app en esta conversación (no solo
+   * del turno: a diferencia de `tools`, no se vacía al enviar). Las lee el panel de
+   * agentes; al cerrarse un turno, las que siguen abiertas quedan 'interrupted'.
+   */
+  backgroundTasks: BackgroundTask[]
   lastEvent: number
   currentDelegation: string | null
   needsNewAssistant: boolean
@@ -122,6 +128,7 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   pendingQuestions: null,
   isSubmittingAnswers: false,
   tools: [],
+  backgroundTasks: [],
   lastEvent: 0,
   currentDelegation: null,
   needsNewAssistant: false,
@@ -131,7 +138,7 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
 })
 
 function freshRuntime(): ConversationRuntime {
-  return { ...EMPTY_RUNTIME, messages: [], tools: [], promptSuggestions: [], textAccumulator: EMPTY_TEXT_ACCUMULATOR }
+  return { ...EMPTY_RUNTIME, messages: [], tools: [], backgroundTasks: [], promptSuggestions: [], textAccumulator: EMPTY_TEXT_ACCUMULATOR }
 }
 
 // ── Store internals ─────────────────────────────────────────────────────────
@@ -258,9 +265,20 @@ function persistNewMessages(conversationId: string, rt: ConversationRuntime): vo
  * contador de horas (RQM-166; el Bash de 921 min de Facundo en v1.0.40).
  */
 function interruptOpenSteps(rt: ConversationRuntime, now: number): ConversationRuntime {
+  // Las tareas de fondo también: el panel de agentes no puede dejar a nadie «trabajando»
+  // con el turno cerrado (el main retiene el `done` mientras quedan tareas vivas, así
+  // que si el turno cierra con una abierta, esa tarea ya no la sigue nadie).
+  const backgroundTasks = interruptRunningTasks(rt.backgroundTasks, now)
   const tools = interruptRunningSteps(rt.tools, now)
-  if (tools === rt.tools) return rt
-  return { ...rt, tools, messages: syncToolsToBubbles(rt.messages, tools) }
+  if (tools === rt.tools && backgroundTasks === rt.backgroundTasks) return rt
+  if (tools === rt.tools) return { ...rt, backgroundTasks }
+  return { ...rt, tools, backgroundTasks, messages: syncToolsToBubbles(rt.messages, tools) }
+}
+
+/** Aplica `fn` a la tarea `taskId` (sin cambios si no existe). */
+function updateTask(rt: ConversationRuntime, taskId: string, fn: (t: BackgroundTask) => BackgroundTask): ConversationRuntime {
+  if (!rt.backgroundTasks.some((t) => t.taskId === taskId)) return rt
+  return { ...rt, backgroundTasks: rt.backgroundTasks.map((t) => (t.taskId === taskId ? fn(t) : t)) }
 }
 
 function updateLastAssistant(
@@ -480,7 +498,14 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
     }
     case 'agent_delegation': {
       const d = event
-      const tools = r.tools.map((t) => (t.toolUseId === d.toolUseId ? { ...t, agentName: d.agentName } : t))
+      // La tarea viaja con la delegación para el panel de agentes. Sin nombre de
+      // especialista (agente genérico) solo se guarda la tarea: el resto, como antes.
+      const tools = r.tools.map((t) =>
+        t.toolUseId === d.toolUseId
+          ? { ...t, agentName: d.agentName || t.agentName, taskDescription: d.description, taskPrompt: d.task }
+          : t,
+      )
+      if (!d.agentName) return { ...r, tools, messages: syncToolsToBubbles(r.messages, tools) }
       return {
         ...r,
         currentDelegation: d.agentName,
@@ -488,6 +513,54 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         tools,
         messages: syncToolsToBubbles(r.messages, tools),
       }
+    }
+    // Tareas de fondo del SDK (panel de agentes). Se identifican por task_id: un
+    // task_started repetido no duplica la fila.
+    case 'task_started': {
+      const ev = event
+      if (r.backgroundTasks.some((t) => t.taskId === ev.taskId)) return r
+      const task: BackgroundTask = {
+        taskId: ev.taskId,
+        toolUseId: ev.toolUseId,
+        taskType: ev.taskType,
+        description: ev.description,
+        subagentType: ev.subagentType,
+        workflowName: ev.workflowName,
+        status: 'running',
+        startTime: now,
+      }
+      return { ...r, backgroundTasks: [...r.backgroundTasks, task] }
+    }
+    case 'task_progress': {
+      const ev = event
+      return updateTask(r, ev.taskId, (t) => ({
+        ...t,
+        description: ev.description || t.description,
+        lastToolName: ev.lastToolName ?? t.lastToolName,
+        summary: ev.summary ?? t.summary,
+        toolUses: ev.toolUses ?? t.toolUses,
+      }))
+    }
+    case 'task_notification': {
+      // El resultado real pisa también un 'interrupted' puesto al cerrar el turno: si la
+      // tarea terminó de verdad, el panel lo dice.
+      const ev = event
+      return updateTask(r, ev.taskId, (t) => ({
+        ...t,
+        status: taskStatusFromSdk(ev.status) ?? 'done',
+        endTime: ev.durationMs ? t.startTime + ev.durationMs : now,
+        summary: ev.summary || t.summary,
+        toolUses: ev.toolUses ?? t.toolUses,
+      }))
+    }
+    case 'task_updated': {
+      const ev = event
+      const status = taskStatusFromSdk(ev.status)
+      return updateTask(r, ev.taskId, (t) => ({
+        ...t,
+        description: ev.description || t.description,
+        ...(status && t.status === 'running' ? { status, endTime: now } : {}),
+      }))
     }
     case 'subagent_tool_start': {
       const ev = event

@@ -16,11 +16,13 @@ interface AppLayoutProps {
   sessionActive?: boolean
   /** Opens the onboarding guided tutorial on demand ("Cómo empezar"). */
   onShowOnboarding?: () => void
+  /** Acciones del chat visible en el encabezado (hoy: el botón del panel de agentes). */
+  headerActions?: ReactNode
 }
 
 const NO_DRAG = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 
-export function AppLayout({ children, userName, userEmail, onLogout, sessionActive = false, onShowOnboarding }: AppLayoutProps) {
+export function AppLayout({ children, userName, userEmail, onLogout, sessionActive = false, onShowOnboarding, headerActions }: AppLayoutProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [showApps, setShowApps] = useState(false)
   // Ventana única (Ola 2): sin barra de título nativa — este header ES la barra
@@ -45,6 +47,12 @@ export function AppLayout({ children, userName, userEmail, onLogout, sessionActi
         </div>
 
         <div className="flex-1" />
+
+        {headerActions && (
+          <div className="flex items-center gap-2 shrink-0 empty:hidden" style={NO_DRAG}>
+            {headerActions}
+          </div>
+        )}
 
         {userName && (
           <div className="flex items-center gap-2 shrink-0" style={NO_DRAG}>

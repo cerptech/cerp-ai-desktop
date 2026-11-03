@@ -1,4 +1,4 @@
-import type { StepStatus, SubagentStep, ToolExecution } from '../hooks/useAgent'
+import type { BackgroundTask, StepStatus, SubagentStep, ToolExecution } from '../hooks/useAgent'
 
 /**
  * stepLifecycle — ciclo de vida de los pasos del agente (tools y sub-pasos de
@@ -69,6 +69,28 @@ export function interruptRunningSteps(tools: ToolExecution[], now: number): Tool
     return t
   })
   return changed ? next : tools
+}
+
+/**
+ * Cierre del turno para las tareas de fondo del SDK: las que siguen 'running' pasan a
+ * 'interrupted', igual que los pasos. Si después llega su task_notification, el resultado
+ * real la pisa (ver applyEvent). Devuelve la misma referencia si no había nada abierto.
+ */
+export function interruptRunningTasks(tasks: BackgroundTask[], now: number): BackgroundTask[] {
+  if (!tasks.some((t) => t.status === 'running')) return tasks
+  return tasks.map((t) => (t.status === 'running' ? { ...t, status: 'interrupted' as const, endTime: now } : t))
+}
+
+/**
+ * Estado de una tarea según el SDK → estado de la UI. task_notification trae completed |
+ * failed | stopped; task_updated además pending | running | paused | killed. null = no es
+ * un estado final (la tarea sigue corriendo).
+ */
+export function taskStatusFromSdk(status: string | undefined): StepStatus | null {
+  if (status === 'completed') return 'done'
+  if (status === 'failed') return 'error'
+  if (status === 'stopped' || status === 'killed') return 'interrupted'
+  return null
 }
 
 /**

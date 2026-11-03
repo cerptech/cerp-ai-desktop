@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ChatContainer } from '@/components/chat/ChatContainer'
 import { ConversationPanel } from '@/components/conversations/ConversationPanel'
+import { AgentsPanel, AgentsPanelToggle } from '@/components/agents/AgentsPanel'
 import { CustomAgentModal } from '@/components/settings/CustomAgentModal'
 import { ContextModal } from '@/components/settings/ContextModal'
 import { AddCustomMenu } from '@/components/settings/AddCustomMenu'
@@ -9,10 +10,37 @@ import { useCustomAgents } from '@/hooks/useCustomAgents'
 import { useConversations } from '@/hooks/useConversations'
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { useToast } from '@/hooks/useToast'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
 import { getRuntime, restoreMessages as storeRestore, clearRuntime, setPersistHandler } from '@/stores/agentRuntimeStore'
 import { buildConversationMarkdown, sanitizeFileName } from '@/utils/exportConversation'
 import type { CustomAgent, CustomContext } from '../../../preload/index'
+
+/**
+ * Preferencia del panel de agentes: 'closed' = el usuario lo cerró y no se vuelve a abrir
+ * solo; sin valor = 'open'. Se guarda al abrirlo o cerrarlo con el botón.
+ */
+const AGENTS_PANEL_PREF_KEY = 'cerp-agents-panel'
+/** Por debajo de este ancho de ventana el panel de agentes se superpone al chat en vez de achicarlo. */
+const AGENTS_PANEL_OVERLAY_QUERY = '(max-width: 1099px)'
+
+type AgentsPanelPref = 'open' | 'closed'
+
+function readAgentsPanelPref(): AgentsPanelPref {
+  try {
+    return localStorage.getItem(AGENTS_PANEL_PREF_KEY) === 'closed' ? 'closed' : 'open'
+  } catch {
+    return 'open'
+  }
+}
+
+function writeAgentsPanelPref(pref: AgentsPanelPref): void {
+  try {
+    localStorage.setItem(AGENTS_PANEL_PREF_KEY, pref)
+  } catch {
+    // localStorage lleno o bloqueado — la preferencia vale para esta sesión.
+  }
+}
 
 interface ChatPageProps {
   userName?: string
@@ -52,6 +80,29 @@ export function ChatPage({ userName, userEmail, onLogout }: ChatPageProps) {
     clearActiveConversation,
     setActiveConversation,
   } = useConversations()
+
+  // Panel de agentes (derecha). Con la ventana ancha se ve siempre que la conversación
+  // tenga agentes y la preferencia no sea 'closed' (así se abre solo la primera vez que
+  // el orquestador delega). Con la ventana angosta se superpone al chat: se abre solo la
+  // primera vez que delega cada conversación, o con el botón; `overlayConversationId`
+  // dice para qué conversación está abierto.
+  const runtimeId = activeConversationId ?? '__default__'
+  const [agentsPanelPref, setAgentsPanelPref] = useState<AgentsPanelPref>(readAgentsPanelPref)
+  const [overlayConversationId, setOverlayConversationId] = useState<string | null>(null)
+  const agentsPanelOverlay = useMediaQuery(AGENTS_PANEL_OVERLAY_QUERY)
+  const agentsPanelOpen = agentsPanelOverlay ? overlayConversationId === runtimeId : agentsPanelPref === 'open'
+
+  const setAgentsPanelOpen = useCallback((open: boolean) => {
+    const pref: AgentsPanelPref = open ? 'open' : 'closed'
+    setAgentsPanelPref(pref)
+    writeAgentsPanelPref(pref)
+    setOverlayConversationId(open ? runtimeId : null)
+  }, [runtimeId])
+
+  const handleFirstDelegation = useCallback((conversationId: string) => {
+    if (agentsPanelPref === 'closed') return
+    setOverlayConversationId(conversationId)
+  }, [agentsPanelPref])
 
   // Ref for the sidebar search input — used by Ctrl/Cmd+K shortcut in ChatContainer
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -208,8 +259,15 @@ export function ChatPage({ userName, userEmail, onLogout }: ChatPageProps) {
       onLogout={onLogout}
       sessionActive={sessionActive}
       onShowOnboarding={() => setShowOnboarding(true)}
+      headerActions={
+        <AgentsPanelToggle
+          conversationId={runtimeId}
+          open={agentsPanelOpen}
+          onToggle={() => setAgentsPanelOpen(!agentsPanelOpen)}
+        />
+      }
     >
-      <div className="flex h-full">
+      <div className="relative flex h-full">
         <ConversationPanel
           conversations={conversations}
           activeConversationId={activeConversationId}
@@ -237,6 +295,14 @@ export function ChatPage({ userName, userEmail, onLogout }: ChatPageProps) {
           onCwdChange={setCurrentCwd}
           setCwdRef={setCwdRef}
           setInputRef={setInputRef}
+        />
+        <AgentsPanel
+          key={runtimeId}
+          conversationId={runtimeId}
+          open={agentsPanelOpen}
+          overlay={agentsPanelOverlay}
+          onClose={() => setAgentsPanelOpen(false)}
+          onFirstDelegation={handleFirstDelegation}
         />
       </div>
 

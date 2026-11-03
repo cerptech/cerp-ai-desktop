@@ -50,6 +50,35 @@ export interface ToolExecution {
   subagentText?: string
   /** Corre pero está parada esperando la respuesta del usuario a una pregunta o confirmación. */
   awaitingUser?: boolean
+  /** Delegaciones: descripción corta que el orquestador le dio al subagente (agent_delegation). */
+  taskDescription?: string
+  /** Delegaciones: inicio del prompt que recibió el subagente (agent_delegation). */
+  taskPrompt?: string
+}
+
+/**
+ * Tarea de fondo del SDK (system task_started → task_notification): un subagente, un
+ * comando en segundo plano o un Workflow. Vive solo en la sesión de la app (no se
+ * persiste); el panel de agentes la cruza con la delegación por `toolUseId`.
+ */
+export interface BackgroundTask {
+  taskId: string
+  /** tool_use que la lanzó (Agent, Bash en segundo plano, Workflow), si el SDK lo informa. */
+  toolUseId?: string
+  /** Discriminante crudo del SDK (p.ej. 'local_workflow'); ver taskKind en stores/agentsPanel.ts. */
+  taskType?: string
+  description: string
+  subagentType?: string
+  workflowName?: string
+  status: StepStatus
+  startTime: number
+  endTime?: number
+  /** Última tool que usó la tarea (task_progress). */
+  lastToolName?: string
+  /** Resumen de progreso o final que manda el SDK. */
+  summary?: string
+  /** Cantidad de tools que lleva usadas (usage.tool_uses). */
+  toolUses?: number
 }
 
 export interface ChatMessage {

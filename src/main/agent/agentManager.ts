@@ -882,6 +882,10 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
           sendEvent({ type: 'status', message: 'Reconectando con el servidor...' })
           logger.warn('API retry in progress')
         }
+        // Panel de agentes: cada tarea de fondo viaja al renderer con su id (inicio,
+        // progreso, fin). El conteo de arriba solo decide cuándo liberar el `done`.
+        const taskEvent = mapTaskMessage(msgObj)
+        if (taskEvent) sendEvent(taskEvent)
       }
 
       // Track turn state (the heartbeat interval handles keep-alive during silent gaps)
@@ -1035,6 +1039,69 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
       sendDone()
     }
     logger.info(`Stream loop ended (${conversationId})`)
+  }
+}
+
+/**
+ * system task_started / task_progress / task_notification / task_updated → evento del
+ * panel de agentes, con el task_id del SDK. Los textos se recortan: la descripción y el
+ * resumen son libres (hasta 1000 caracteres) y el panel solo muestra una línea.
+ */
+function mapTaskMessage(msgObj: Record<string, unknown>): AgentStreamEvent | null {
+  const m = msgObj as {
+    subtype?: string
+    task_id?: string
+    tool_use_id?: string
+    description?: string
+    task_type?: string
+    subagent_type?: string
+    workflow_name?: string
+    status?: string
+    summary?: string
+    last_tool_name?: string
+    usage?: { tool_uses?: number; duration_ms?: number }
+    patch?: { status?: string; description?: string }
+  }
+  if (!m.task_id) return null
+  const clip = (s: string | undefined, max: number): string | undefined => (s ? s.substring(0, max) : undefined)
+  switch (m.subtype) {
+    case 'task_started':
+      return {
+        type: 'task_started',
+        taskId: m.task_id,
+        toolUseId: m.tool_use_id,
+        description: clip(m.description, 300) ?? '',
+        taskType: m.task_type,
+        subagentType: m.subagent_type,
+        workflowName: m.workflow_name,
+      }
+    case 'task_progress':
+      return {
+        type: 'task_progress',
+        taskId: m.task_id,
+        toolUseId: m.tool_use_id,
+        description: clip(m.description, 300),
+        lastToolName: m.last_tool_name,
+        summary: clip(m.summary, 300),
+        toolUses: m.usage?.tool_uses,
+      }
+    case 'task_notification': {
+      const status = m.status === 'failed' || m.status === 'stopped' ? m.status : 'completed'
+      return {
+        type: 'task_notification',
+        taskId: m.task_id,
+        toolUseId: m.tool_use_id,
+        status,
+        summary: clip(m.summary, 300),
+        toolUses: m.usage?.tool_uses,
+        durationMs: m.usage?.duration_ms,
+      }
+    }
+    case 'task_updated':
+      if (!m.patch?.status && !m.patch?.description) return null
+      return { type: 'task_updated', taskId: m.task_id, status: m.patch.status, description: clip(m.patch.description, 300) }
+    default:
+      return null
   }
 }
 
@@ -1333,12 +1400,13 @@ function mapMessage(msg: Record<string, unknown>, activeDelegations: Map<string,
           // the subagent's inner events resolve the agent name, and emit agent_delegation.
           if (block.name === 'Agent' || block.name === 'Task') {
             const agentName = String(input?.agent_name || input?.name || input?.subagent_type || '').trim()
-            const task = String(input?.prompt || input?.description || '').substring(0, 150)
+            const task = String(input?.prompt || input?.description || '').substring(0, 500)
+            const description = String(input?.description || '').substring(0, 200) || undefined
             activeDelegations.set(toolUseId, agentName || 'agente')
             logger.debug(`Delegation registered: ${toolUseId} → ${agentName || 'agente'}`)
-            if (agentName) {
-              events.push({ type: 'agent_delegation', toolUseId, agentName, task })
-            }
+            // Sin nombre de especialista (agente genérico) también se emite: el panel de
+            // agentes necesita la tarea; el nombre vacío se muestra como «Agente».
+            events.push({ type: 'agent_delegation', toolUseId, agentName, task, description })
           }
         }
       }
