@@ -13,22 +13,31 @@ import {
 
 // ── Tipos compartidos (consumidos por el store y los componentes) ─────────────
 
+/**
+ * Estado de un paso (tool o sub-paso de subagente). 'running' solo mientras su turno
+ * sigue vivo; al cerrarse el turno por cualquier camino, lo que quedó abierto pasa a
+ * 'interrupted' (ver stores/stepLifecycle.ts). 'done' y 'error' los da su resultado.
+ */
+export type StepStatus = 'running' | 'done' | 'error' | 'interrupted'
+
 export interface SubagentStep {
   /** The subagent's own inner tool_use id — keys done→start (never by name). */
   toolUseId?: string
   name: string
   input?: string
   output?: string
-  status: 'running' | 'done' | 'error'
+  status: StepStatus
   startTime: number
   endTime?: number
+  /** Corre pero está parado esperando la respuesta del usuario (pregunta hecha desde el subagente). */
+  awaitingUser?: boolean
 }
 
 export interface ToolExecution {
   name: string
   input?: string
   output?: string
-  status: 'running' | 'done' | 'error'
+  status: StepStatus
   timestamp: number
   startTime: number
   endTime?: number
@@ -108,6 +117,7 @@ export function useAgent(conversationId: string = DEFAULT_CONV) {
     activeAgentDelegation: rt.activeAgentDelegation,
     promptSuggestions: rt.promptSuggestions,
     statusMessage: rt.statusMessage,
+    sdkIdleMs: rt.sdkIdleMs,
     sessionTokensIn: rt.sessionTokensIn,
     sessionTokensOut: rt.sessionTokensOut,
     pendingQuestions: rt.pendingQuestions as AskUserQuestionItem[] | null,

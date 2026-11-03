@@ -23,6 +23,7 @@ const TOOL_STATUS_LABEL: Record<string, string> = {
   done: 'ok',
   error: 'error',
   running: 'interrumpida',
+  interrupted: 'interrumpida',
 }
 
 /**

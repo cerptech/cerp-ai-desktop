@@ -75,7 +75,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // corriendo en el store. La persistencia la maneja el store (cubre las de fondo).
   const runtimeId = activeConversationId ?? '__default__'
   const firstName = firstNameOf(userName)
-  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, error, errorCode, retryPrompt, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(runtimeId)
+  const { messages, isStreaming, isPending, activeTool, promptSuggestions, statusMessage, sdkIdleMs, error, errorCode, retryPrompt, pendingQuestions, isSubmittingAnswers, abort, submitAnswers, cwd: runtimeCwd } = useAgent(runtimeId)
   const { addToast } = useToast()
   const { planMode, togglePlanMode } = usePlanMode()
   const { modelChoice, setModelChoice } = useModelChoice()
@@ -507,6 +507,8 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
                   onStop={isLastAssistant ? abort : undefined}
                   onRegenerate={canRegenerate ? handleRegenerate : undefined}
                   regenerateDisabled={isStreaming || isPending || !!pendingQuestions}
+                  turnActive={isStreaming || isPending}
+                  sdkIdleMs={isLastAssistant ? sdkIdleMs : undefined}
                 />
               )
             })}
@@ -517,7 +519,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
               const lastMsg = messages[messages.length - 1]
               const noAssistantYet = !lastMsg || lastMsg.role !== 'assistant'
               if (!noAssistantYet) return null
-              return <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} />
+              return <ThinkingLoader onToggleDetails={toggleShowThoughts} onStop={abort} sdkIdleMs={sdkIdleMs} />
             })()}
           </div>
         )}

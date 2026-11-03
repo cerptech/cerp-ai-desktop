@@ -187,7 +187,7 @@ export type AgentStreamEvent =
   // Latido del main cada 5 s mientras hay un turno o una tarea de fondo en curso: el
   // agente sigue vivo (si el SDK deja de responder, el watchdog del main corta el turno
   // con un `error`). No toca el acumulador de texto, a diferencia de stream_start.
-  | { type: 'heartbeat' }
+  | { type: 'heartbeat'; idleMs?: number }
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
@@ -288,7 +288,7 @@ export interface ConversationFull extends ConversationSummary {
         name: string
         input?: string
         output?: string
-        status: 'running' | 'done' | 'error'
+        status: 'running' | 'done' | 'error' | 'interrupted'
         startTime: number
         endTime?: number
       }>

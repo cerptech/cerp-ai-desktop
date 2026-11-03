@@ -75,7 +75,7 @@ export type AgentStreamEvent =
   | { type: 'status'; message: string }
   | { type: 'stream_start' }
   // Latido del main mientras hay un turno en curso (no toca el acumulador de texto).
-  | { type: 'heartbeat' }
+  | { type: 'heartbeat'; idleMs?: number }
   | { type: 'session_id'; sessionId: string }
   | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
@@ -169,7 +169,7 @@ export interface ConversationFull extends ConversationSummary {
         name: string
         input?: string
         output?: string
-        status: 'running' | 'done' | 'error'
+        status: 'running' | 'done' | 'error' | 'interrupted'
         startTime: number
         endTime?: number
       }>

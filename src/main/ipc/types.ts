@@ -75,7 +75,9 @@ export type AgentStreamEvent =
   // Latido del main cada 5 s mientras hay un turno o una tarea de fondo en curso: el
   // agente sigue vivo (si el SDK deja de responder, el watchdog del main corta el turno
   // con un `error`). No toca el acumulador de texto, a diferencia de stream_start.
-  | { type: 'heartbeat' }
+  // `idleMs`: cuánto hace que el SDK no manda ningún mensaje (0 mientras se espera al
+  // usuario); el loader lo muestra para que nadie espere a ciegas al watchdog.
+  | { type: 'heartbeat'; idleMs?: number }
   | { type: 'session_id'; sessionId: string }
   // toolUseId links the delegation to the specific Agent ToolExecution it created
   | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
@@ -247,7 +249,8 @@ export interface SubagentStep {
   name: string
   input?: string
   output?: string
-  status: 'running' | 'done' | 'error'
+  /** 'interrupted' = el turno se cerró sin que llegara su resultado (ver stepLifecycle del renderer). */
+  status: 'running' | 'done' | 'error' | 'interrupted'
   startTime: number
   endTime?: number
 }

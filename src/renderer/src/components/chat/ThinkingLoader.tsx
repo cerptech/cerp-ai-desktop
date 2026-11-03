@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { SDK_IDLE_NOTICE_MS, SLOW_STEP_NOTICE_MS } from '@/stores/stepLifecycle'
 
 const THINKING_VERBS = [
   'Pensando',
@@ -73,11 +74,33 @@ interface ThinkingLoaderProps {
   onStop?: () => void
   /** Name of the active delegated agent, if any */
   activeAgentName?: string
+  /**
+   * Inicio del paso corriendo más antiguo que no es una delegación (oldestRunningStepStart):
+   * pasados SLOW_STEP_NOTICE_MS el loader avisa que está tardando más de lo normal.
+   */
+  slowStepSince?: number | null
+  /** Hace cuánto el SDK no manda nada, según el heartbeat del main (0 = hay actividad). */
+  sdkIdleMs?: number
 }
 
-export function ThinkingLoader({ onToggleDetails, onStop, activeAgentName }: ThinkingLoaderProps) {
+/** «hace N min» redondeado hacia abajo, mínimo 1. */
+function minutesAgo(ms: number): number {
+  return Math.max(1, Math.floor(ms / 60_000))
+}
+
+export function ThinkingLoader({ onToggleDetails, onStop, activeAgentName, slowStepSince, sdkIdleMs = 0 }: ThinkingLoaderProps) {
   const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_VERBS.length))
   const [visible, setVisible] = useState(true)
+  // Reloj para el aviso de paso lento: solo corre si hay un paso que vigilar.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (slowStepSince == null) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 5_000)
+    return () => clearInterval(id)
+  }, [slowStepSince])
+  const slowStep = slowStepSince != null && now - slowStepSince >= SLOW_STEP_NOTICE_MS
+  const sdkIdle = sdkIdleMs >= SDK_IDLE_NOTICE_MS
 
   useEffect(() => {
     // Don't rotate verbs when showing a specific agent label
@@ -123,6 +146,15 @@ export function ThinkingLoader({ onToggleDetails, onStop, activeAgentName }: Thi
           {displayText}
         </span>
       </div>
+      {/* Avisos de espera larga: el usuario ve que algo no avanza y tiene el Detener a mano,
+          en vez de esperar a ciegas a que el main corte el turno (15 min sin actividad). */}
+      {(slowStep || sdkIdle) && (
+        <div className="mt-1 text-[10px] text-amber-600">
+          {slowStep && <span>Este paso está tardando más de lo normal</span>}
+          {slowStep && sdkIdle && <span> · </span>}
+          {sdkIdle && <span>Sin actividad hace {minutesAgo(sdkIdleMs)} min</span>}
+        </div>
+      )}
       <div className="flex items-center gap-3 mt-1.5">
         {onStop && (
           <button

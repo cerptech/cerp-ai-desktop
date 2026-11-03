@@ -2,19 +2,17 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ConversationSummary, ConversationFull, ApiErrorCode } from '../../../preload/index'
 import type { ChatMessage } from './useAgent'
 import { useToast } from './useToast'
+import { normalizePersistedStatus } from '../stores/stepLifecycle'
 
 /**
- * El backend guarda `status` como string libre. Al RESTAURAR una conversación de
- * la DB, 'running' nunca es un estado válido — no puede haber una tool corriendo en
- * un turno que ya terminó (persistió). Puede quedar así si el usuario abortó a mitad
- * de una tool call: el `abort()` del store no siempre alcanza a marcarla 'done'/'error'
- * antes de persistir. Mapeamos 'running' → 'done' acá para que no quede una tool
- * congelada en spinner infinito al reabrir la conversación; 'error' SÍ se preserva
- * (una tool que falló de verdad no debe mostrarse como exitosa).
+ * El backend guarda `status` como string libre. Al RESTAURAR una conversación de la DB
+ * no hay ningún turno vivo: lo que quedó guardado como 'running' (un paso sin resultado
+ * al cerrar el turno, en versiones anteriores a los loaders que siempre terminan) se
+ * muestra como 'interrupted' — ni spinner congelado ni check verde de algo que no
+ * terminó. 'error' se preserva; sin status (registros viejos) se toma como 'done'.
+ * Ver normalizePersistedStatus en stores/stepLifecycle.ts.
  */
-function normalizeToolStatus(status: unknown): 'running' | 'done' | 'error' {
-  return status === 'error' ? status : 'done'
-}
+const normalizeToolStatus = normalizePersistedStatus
 
 /** Tope defensivo de lienzos HTML persistidos por mensaje (ver appendMessage). */
 const MAX_HTML_CANVASES_PER_MESSAGE = 5

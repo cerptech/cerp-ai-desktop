@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { app, BrowserWindow } from 'electron'
+import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
 import { setAskUserWindow, cancelPendingQuestion, hasPendingQuestion } from './askUserBridge'
@@ -118,6 +119,16 @@ interface AgentSession {
   /** `done` retenido mientras quedaban tareas de fondo (ver processStreamLoop). */
   heldDone: AgentStreamEvent | null
   heldDoneTimer: ReturnType<typeof setTimeout> | null
+  /** Se incrementa en cada beginTurn: un timer armado para un turno no actúa sobre el siguiente. */
+  turnSeq: number
+  /**
+   * runAgent la cierra para reabrirla con otras opciones (carpeta, modelo, empresa…) y
+   * el renderer ya está en el turno NUEVO: el `done` final del stream viejo no se emite,
+   * porque llegaba después del envío y apagaba el loader del turno nuevo.
+   */
+  restarting: boolean
+  /** Proceso del CLI nativo (lo llena spawnClaudeCodeProcess) para matar su árbol al cerrar. */
+  cli: { child: ChildProcess | null }
 }
 
 const sessions = new Map<string, AgentSession>()
@@ -135,6 +146,61 @@ const TURN_INACTIVITY_TIMEOUT_MS = Number(process.env.CERP_TURN_TIMEOUT_MS) || 1
 const HELD_DONE_GRACE_MS = 30_000
 /** Un turno más largo que esto avisa por notificación del sistema al terminar (si la ventana no tiene foco). */
 const LONG_TURN_NOTIFY_MS = 2 * 60_000
+/**
+ * Detener: si en este plazo el SDK no cerró el turno (no llegó el `result` abortado), la
+ * sesión se cierra. `query.interrupt()` es un control_request que espera la respuesta
+ * del CLI, y un CLI esperando una tool que no vuelve (el subagente colgado de RQM-166)
+ * puede no contestarlo nunca; con el turno retenido por tareas de fondo tampoco llega un
+ * `result` nuevo. Sin esto, Detener dejaba la sesión colgada hasta el watchdog (15 min),
+ * que encima avisaba un TURN_TIMEOUT de un turno que el usuario ya había detenido.
+ */
+const INTERRUPT_GRACE_MS = 15_000
+/**
+ * Al cerrar una sesión, si el CLI sigue vivo pasado este plazo se mata su árbol de
+ * procesos (solo Windows; ver killCliTree).
+ */
+const CLI_TREE_KILL_DELAY_MS = 3_000
+
+/**
+ * Mata el árbol de procesos del CLI nativo (Windows). Caso de Facundo (v1.0.40): un
+ * `python -c …` lanzado por Bash quedó 921 min en «Ejecutando comando». Lo que se vio en
+ * pantalla fue sobre todo un Bash en cola detrás de un subagente colgado (lo cierra el
+ * watchdog y el renderer lo marca 'interrupted'), pero la reproducción mostró un riesgo
+ * real aparte: al cerrar la sesión el SDK hace `stdin.end()` y, a los ~7 s, `kill()`,
+ * que en Windows es un TerminateProcess SOLO de claude.exe; los Bash que el CLI había
+ * mandado a segundo plano (bash.exe → python.exe, lanzados con `detached`) quedaban
+ * huérfanos y vivos. `taskkill /T` recorre la cadena padre→hijo, por eso tiene que
+ * correr mientras claude.exe sigue vivo: con él ya muerto, sus nietos no se alcanzan.
+ * `sync` = salida de la app o logout, donde no hay después.
+ */
+function killCliTree(child: ChildProcess | null, reason: string, sync = false): void {
+  if (process.platform !== 'win32' || !child?.pid) return
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const args = ['/PID', String(child.pid), '/T', '/F']
+  logger.warn(`Matando el árbol del CLI (pid ${child.pid}): ${reason}`)
+  try {
+    if (sync) {
+      spawnSync('taskkill', args, { windowsHide: true, stdio: 'ignore', timeout: 5_000 })
+    } else {
+      const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' })
+      killer.on('error', (err) => logger.warn(`taskkill falló (pid ${child.pid}): ${err.message}`))
+    }
+  } catch (err) {
+    logger.warn(`taskkill falló (pid ${child.pid}): ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+/** Procesos del CLI nativo vivos (se sacan en su `exit`), incluidos los de sesiones ya cerradas. */
+const liveCliChildren = new Set<ChildProcess>()
+
+/**
+ * Salida de la app (`will-quit`): mata en el acto el árbol de cada CLI que siga vivo. Los
+ * timers de closeSession ya no corren a esta altura y sin esto sus Bash de fondo quedaban
+ * huérfanos (ver killCliTree).
+ */
+export function killAgentProcessTrees(): void {
+  for (const child of [...liveCliChildren]) killCliTree(child, 'salida de la app', true)
+}
 
 /** Todo evento al renderer va etiquetado con su conversación. */
 function emitToRenderer(conversationId: string, event: AgentStreamEvent): void {
@@ -154,6 +220,7 @@ function beginTurn(session: AgentSession): void {
   const now = Date.now()
   session.turnStartedAt = now
   session.lastActivityAt = now
+  session.turnSeq++
   session.turnFailed = false
   session.interruptRequested = false
   session.processingTurn = true
@@ -262,6 +329,16 @@ export async function interruptAgent(conversationId: string = DEFAULT_CONV): Pro
   if (!session) return
   // El `result` abortado que sigue NO es un fallo: lo pidió el usuario (o el cambio de empresa).
   session.interruptRequested = true
+  // El turno detenido tiene que terminar sí o sí (ver INTERRUPT_GRACE_MS). Solo actúa
+  // sobre ESTE turno de ESTA sesión: si llegó el `result`, finishTurn ya lo cerró; si el
+  // usuario mandó otro mensaje, turnSeq cambió.
+  const seq = session.turnSeq
+  setTimeout(() => {
+    if (sessions.get(conversationId) !== session || session.closing) return
+    if (session.turnSeq !== seq || !session.processingTurn) return
+    logger.warn(`Detener sin cierre del turno en ${INTERRUPT_GRACE_MS / 1000}s — se cierra la sesión (${conversationId})`)
+    closeSession(conversationId)
+  }, INTERRUPT_GRACE_MS)
   try {
     await session.query.interrupt()
     logger.info(`Agent interrupted (${conversationId})`)
@@ -276,10 +353,17 @@ export async function interruptAgent(conversationId: string = DEFAULT_CONV): Pro
  * `keepReservation`: la conversación sigue (reinicio por cambio de carpeta/modelo/Plan
  * Mode) — la reserva de una cotización en curso no se suelta.
  */
-export function closeSession(conversationId: string = DEFAULT_CONV, opts: { keepReservation?: boolean } = {}): void {
+export function closeSession(
+  conversationId: string = DEFAULT_CONV,
+  opts: { keepReservation?: boolean; restart?: boolean; killTreeNow?: boolean } = {},
+): void {
   const session = sessions.get(conversationId)
   if (!session) return
   session.closing = true
+  // Reinicio desde runAgent: el renderer solo deja enviar con el turno anterior ya
+  // cerrado en su lado (terminado, detenido o cortado por el stall timer) y ahora está en
+  // el turno NUEVO, así que el `done` del stream viejo no tiene a quién avisar.
+  session.restarting = !!opts.restart
   // Cancel any pending ask_user_question for THIS conversation so the MCP promise doesn't hang
   cancelPendingQuestion(conversationId)
   // Stop the credit reservation heartbeat — if a quote was mid-flight, the backend
@@ -287,6 +371,14 @@ export function closeSession(conversationId: string = DEFAULT_CONV, opts: { keep
   if (!opts.keepReservation) stopQuoteHeartbeat(conversationId)
   try { session.messageQueue.close() } catch { /* ignore */ }
   try { session.query.close() } catch { /* ignore */ }
+  // Windows: si el CLI no salió solo, se mata su árbol antes de que el SDK lo mate a él
+  // solo (~7 s) y deje huérfanos sus Bash de fondo (ver killCliTree).
+  const child = session.cli.child
+  if (opts.killTreeNow) {
+    killCliTree(child, `cierre inmediato (${conversationId})`, true)
+  } else {
+    setTimeout(() => killCliTree(child, `sigue vivo ${CLI_TREE_KILL_DELAY_MS / 1000}s después de cerrar la sesión (${conversationId})`), CLI_TREE_KILL_DELAY_MS).unref?.()
+  }
   if (session.heartbeat) clearInterval(session.heartbeat)
   if (session.heldDoneTimer) clearTimeout(session.heldDoneTimer)
   session.activeDelegations.clear()
@@ -296,7 +388,7 @@ export function closeSession(conversationId: string = DEFAULT_CONV, opts: { keep
 
 /** Close every active session (logout / global reset). */
 export function closeAllSessions(): void {
-  for (const id of [...sessions.keys()]) closeSession(id)
+  for (const id of [...sessions.keys()]) closeSession(id, { killTreeNow: true })
   stopAllQuoteHeartbeats()
   cachedContextPrompt = null
   setAskUserWindow(null)
@@ -372,7 +464,15 @@ export async function runAgent(
   // quedó vacía si el refetch falló, y startSession la vuelve a pedir).
   if (session && (cwd !== session.cwd || contextId !== session.contextId || model !== session.model || powerful !== session.powerful || getCompanyId() !== session.companyId)) {
     logger.info(`Session options changed, restarting session (${conversationId})`)
-    closeSession(conversationId, { keepReservation: true })
+    closeSession(conversationId, { keepReservation: true, restart: true })
+    session = undefined
+  }
+  // Un turno detenido que el SDK todavía no cerró (Detener hace menos de
+  // INTERRUPT_GRACE_MS): esa sesión puede estar colgada, así que el mensaje nuevo no se
+  // encola en ella — se reabre limpia con el historial que manda el renderer.
+  if (session && session.interruptRequested && session.processingTurn) {
+    logger.info(`Turno detenido sin cerrar, se reinicia la sesión (${conversationId})`)
+    closeSession(conversationId, { keepReservation: true, restart: true })
     session = undefined
   }
 
@@ -544,6 +644,9 @@ async function startSession(
   logger.info(`SDK native binary path: ${sdkCliPath} (exists: ${fsMod.existsSync(sdkCliPath)})`)
   logger.info(`Electron execPath: ${process.execPath}`)
 
+  // Proceso del CLI de esta sesión: closeSession mata su árbol si no sale solo (killCliTree).
+  const cli: { child: ChildProcess | null } = { child: null }
+
   const options: Record<string, unknown> = {
     model,
     systemPrompt: fullSystemPrompt,
@@ -551,7 +654,6 @@ async function startSession(
     pathToClaudeCodeExecutable: sdkCliPath,
     // SDK 0.3.x: spawn the NATIVE Claude Code binary directly (no Electron-as-node / cli.js).
     spawnClaudeCodeProcess: (spawnOpts: any) => {
-      const { spawn } = require('child_process')
       // Find git-bash — required by Claude Code on Windows
       let gitBashPath = process.env.CLAUDE_CODE_GIT_BASH_PATH || ''
       if (!gitBashPath && process.platform === 'win32') {
@@ -588,8 +690,11 @@ async function startSession(
         logger.error(`CLI stderr: ${data.toString().trim()}`)
       })
       child.on('exit', (code: number | null) => {
+        liveCliChildren.delete(child)
         if (code && code !== 0) logger.error(`CLI process exited with code ${code}`)
       })
+      cli.child = child
+      liveCliChildren.add(child)
       return child
     },
     env: {
@@ -671,6 +776,9 @@ async function startSession(
     closing: false,
     heldDone: null,
     heldDoneTimer: null,
+    turnSeq: 0,
+    restarting: false,
+    cli,
   }
   sessions.set(conversationId, session)
   beginTurn(session)
@@ -724,7 +832,7 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
       closeSession(conversationId)
       return
     }
-    sendEvent({ type: 'heartbeat' })
+    sendEvent({ type: 'heartbeat', idleMs: Date.now() - session.lastActivityAt })
   }, 5000)
 
   // Releases a `done` that was held for background tasks once the last one notified and
@@ -906,7 +1014,7 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
       logger.error(`Stream error (${conversationId}): ${message}`)
       failTurn(session, 'PROCESS_ERROR', message)
     }
-    sendDone()
+    if (!session.restarting) sendDone()
   } finally {
     // The stream ended in the middle of a turn without a `result` and nobody closed it
     // (e.g. the CLI process died): that turn has no outcome yet — give it one.
@@ -920,9 +1028,12 @@ async function processStreamLoop(session: AgentSession): Promise<void> {
     // stream errors — the session is truly over, so drop it from the registry (only if
     // it is still THIS session: a retry may already have opened the next one).
     if (sessions.get(conversationId) === session) sessions.delete(conversationId)
-    // Always ensure UI resets — covers budget exceeded, errors, etc.
-    sendEvent({ type: 'done' })
-    sendDone()
+    // Always ensure UI resets — covers budget exceeded, errors, etc. Salvo en un reinicio
+    // desde runAgent: el renderer ya está en el turno nuevo y este done lo apagaría.
+    if (!session.restarting) {
+      sendEvent({ type: 'done' })
+      sendDone()
+    }
     logger.info(`Stream loop ended (${conversationId})`)
   }
 }
