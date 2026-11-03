@@ -22,8 +22,7 @@ interface UpdateRequiredScreenProps {
 export function UpdateRequiredScreen({ snapshot, onCheck, onInstall }: UpdateRequiredScreenProps) {
   return (
     <div
-      role="alertdialog"
-      aria-modal="true"
+      role="region"
       aria-labelledby="update-required-title"
       aria-describedby="update-required-text"
       className="absolute inset-0 z-20 flex items-center justify-center bg-white/95 px-6 backdrop-blur-sm"

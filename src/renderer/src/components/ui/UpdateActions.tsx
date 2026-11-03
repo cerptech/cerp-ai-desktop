@@ -84,7 +84,7 @@ export function UpdateActions({ snapshot, onCheck, onInstall, required = false }
         <div className="flex flex-col items-start gap-3">
           <p className="text-sm text-slate-600">
             {state.reason === 'macos'
-              ? 'En macOS la actualización todavía es manual: descarga la última versión e instálala sobre la actual.'
+              ? 'En macOS la actualización es manual: descarga la última versión e instálala sobre la actual.'
               : 'Esta copia de desarrollo no se actualiza sola: la actualización es manual.'}
           </p>
           <DownloadLink primary />
