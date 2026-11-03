@@ -7,7 +7,7 @@ import { tokenStore } from '../auth/tokenStore'
 import { DesktopAccessDeniedError, DesktopUpdateRequiredError, fetchApiKey, getApiKey, clearApiKey, getCompanyId, getCompanySwitchSeq, getConfiguredModel, getConfiguredModels, getModelPolicy, invalidateCompanyConfig, isConfigStale, NoCreditsError, PaymentMethodRequiredError, setCompanySwitchObserver } from '../auth/apiKeyManager'
 import { createSessionGuard } from '../auth/sessionGuard'
 import { runAgent, interruptAgent, resetSession, setPlanMode, getPlanMode, stopSessionsNotInCompany } from '../agent/agentManager'
-import { checkForUpdatesNow, quitAndInstallUpdate } from '../updater'
+import { checkForUpdatesManual, getUpdaterSnapshot, notifyUpdateRequired, quitAndInstallUpdate } from '../updater'
 import { resolveAnswer } from '../agent/askUserBridge'
 import { registerCanvas, getCanvasHtml } from '../agent/htmlCanvasBridge'
 import { buildCanvasDocument, CANVAS_CSP } from '../agent/canvasProtocol'
@@ -17,7 +17,7 @@ import { COMPANY_CHANGED_SEND_MESSAGE, companyNameFromSessionUser, NO_ACTIVE_COM
 import { logger } from '../utils/logger'
 import { httpsUrlOrNull } from '../utils/httpsUrl'
 import { getPromptLibrary, type PromptLibraryResponse } from '../utils/promptLibrary'
-import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice, ConnectedIntegration, IntegrationActionResult, IntegrationCatalogItem, IntegrationsCatalogResponse, IntegrationsErrorCode, IntegrationsStatusResponse } from './types'
+import type { SendPromptPayload, AuthState, UserAnswerPayload, ModelChoice, AttachmentFile, DictationTranscribeResult, AiModelPolicy, CompanyChangedNotice, ConnectedIntegration, IntegrationActionResult, IntegrationCatalogItem, IntegrationsCatalogResponse, IntegrationsErrorCode, IntegrationsStatusResponse, UpdaterSnapshot } from './types'
 import type { CustomContext, CustomAgent } from '../store/types'
 
 /**
@@ -158,9 +158,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         // con SU mensaje; no se abre además el modal de sesión expirada.
         if (err instanceof NoActiveCompanyError || err instanceof SessionRevokedError) throw err
         // El token se renovó bien: lo que falta es actualizar la app (426). fetchApiKey
-        // ya borró la key y el próximo envío muestra el aviso; no es una sesión expirada.
+        // ya borró la key y el chat muestra la pantalla de actualización; no es una sesión expirada.
         if (err instanceof DesktopUpdateRequiredError) {
-          checkForUpdatesNow('el core exige una versión más nueva (renovación de sesión)')
+          notifyUpdateRequired('renovación de sesión')
           return
         }
         // Tampoco es una sesión expirada: a la empresa le falta el método de pago. La key
@@ -193,8 +193,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
         // Cuenta sin empresas (403 NO_ACTIVE_COMPANY): el guard de sesión ya cerró
         // la sesión y avisó al renderer; devolver "autenticado" la reabriría vacía.
         if (apiKeyErr instanceof NoActiveCompanyError) return { isAuthenticated: false }
-        // Versión mínima (F0.2 (b)): la sesión vale; el primer envío muestra el aviso.
-        if (apiKeyErr instanceof DesktopUpdateRequiredError) checkForUpdatesNow('el core exige una versión más nueva (login)')
+        // Versión mínima (F0.2 (b)): la sesión vale; el chat muestra la pantalla de actualización.
+        if (apiKeyErr instanceof DesktopUpdateRequiredError) notifyUpdateRequired('login')
         logger.warn('Could not fetch API key (will retry later):', apiKeyErr)
       }
 
@@ -264,9 +264,9 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
               return { started: false, error: err.message, code: err.code }
             }
             // El core exige una versión más nueva (F0.2 (b)): tampoco se sigue con la
-            // key cacheada; se pide el chequeo de actualización.
+            // key cacheada; el chat pasa a la pantalla de actualización.
             if (err instanceof DesktopUpdateRequiredError) {
-              checkForUpdatesNow('el core exige una versión más nueva')
+              notifyUpdateRequired('envío (config vencida)')
               return { started: false, error: err.message, code: err.code }
             }
             // La cuenta se quedó sin empresas: el guard ya cerró la sesión.
@@ -306,7 +306,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
             return { started: false, error: err.message, code: err.code }
           }
           if (err instanceof DesktopUpdateRequiredError) {
-            checkForUpdatesNow('el core exige una versión más nueva')
+            notifyUpdateRequired('envío')
             return { started: false, error: err.message, code: err.code }
           }
           if (err instanceof NoActiveCompanyError) {
@@ -357,6 +357,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
       try {
         await fetchApiKey(httpClient)
       } catch (err) {
+        // El renderer la pide al montar, al volver el foco y cada 5 min: es la primera
+        // en ver el 426 tras un arranque con la key persistida. Así el chat pasa a la
+        // pantalla de actualización sin esperar a que el usuario intente enviar.
+        if (err instanceof DesktopUpdateRequiredError) notifyUpdateRequired('política de modelo')
         logger.warn(`No se pudo refrescar la política de modelo: ${err}`)
       }
     }
@@ -808,6 +812,12 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const { app } = await import('electron')
     return app.getVersion()
   })
+
+  // Auto-update: foto del estado (el renderer la pide al montar; los cambios llegan por UPDATE_STATE)
+  ipcMain.handle(IPC_CHANNELS.UPDATE_GET_STATE, async (): Promise<UpdaterSnapshot> => getUpdaterSnapshot())
+
+  // Auto-update: «Buscar actualizaciones» / «Actualizar ahora» / «Reintentar»
+  ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, async (): Promise<UpdaterSnapshot> => checkForUpdatesManual())
 
   // Auto-update: user accepted the "restart to update" prompt
   ipcMain.handle(IPC_CHANNELS.UPDATE_QUIT_AND_INSTALL, async (): Promise<void> => {

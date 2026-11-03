@@ -22,6 +22,8 @@ import { buildConversationTitle } from '@/utils/conversationTitle'
 import { dataRetryPrompt, withAttachments } from '@/utils/retryPrompt'
 import { QuoteFirewallBanner } from '@/components/layout/QuoteFirewallBanner'
 import { dismissQuoteFirewall } from '@/hooks/useQuoteFirewall'
+import { useUpdater } from '@/hooks/useUpdater'
+import { UpdateRequiredScreen } from './UpdateRequiredScreen'
 
 export interface ChatStateSnapshot {
   isStreaming: boolean
@@ -29,9 +31,6 @@ export interface ChatStateSnapshot {
   messages: ChatMessage[]
   abort: () => Promise<void>
 }
-
-/** Aviso de versión mínima (código `DESKTOP_UPDATE_REQUIRED`), el mismo texto que arma el main. */
-const DESKTOP_UPDATE_REQUIRED_TEXT = 'Actualiza CERP IA Desktop a la última versión para seguir usándolo.'
 
 /** Aviso de empresa sin método de pago (código `PAYMENT_METHOD_REQUIRED`), el mismo texto que arma el main. */
 const PAYMENT_METHOD_REQUIRED_TEXT = 'Para usar CERP IA Desktop, tu empresa tiene que añadir un método de pago en app.cerp.es.'
@@ -83,6 +82,13 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // prompts de la biblioteca que realmente los necesitan (`requiresTools`).
   const toolsSetup = useToolsSetup()
   const promptLibrary = usePromptLibrary()
+  // Versión mínima (F0.2 (b)): el main marca `required` con el primer 426 (login,
+  // renovación de sesión, refresco de la config o envío) y vale para todas las
+  // conversaciones; el código del error cubre el envío que lo descubrió.
+  const updater = useUpdater()
+  const updateRequired = !!updater.snapshot?.required || errorCode === 'DESKTOP_UPDATE_REQUIRED'
+  const updateRequiredRef = useRef(updateRequired)
+  useEffect(() => { updateRequiredRef.current = updateRequired }, [updateRequired])
   const { attachments, addFiles, removeAttachment, clearAttachments } = useAttachments()
   const [input, setInput] = useState('')
   // La carpeta de trabajo REAL vive en el runtime de cada conversación (store) —
@@ -125,6 +131,9 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // Envío con "crear-antes-de-enviar": si no hay conversación activa, la creamos
   // para tener un id real (cada conversación necesita su propia sesión en el main).
   const doSend = useCallback(async (fullPrompt: string, options?: { skipUserEcho?: boolean }): Promise<void> => {
+    // Con la actualización obligatoria pendiente no sale nada (sugerencias, reintentos,
+    // respuestas o Enter con el foco en el composer): el core ya rechazó esta versión.
+    if (updateRequiredRef.current) return
     let id = activeConversationId
     let cwdToUse: string | null
     if (id) {
@@ -161,7 +170,8 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
   // de abajo queda para recordar que el mensaje no se envió.
   // Un turno cortado con Reintentar (RQM-166) tampoco: su caja de error persistente ya
   // lo dice con el botón, y el toast repetía el mismo texto largo.
-  // DESKTOP_UPDATE_REQUIRED y PAYMENT_METHOD_REQUIRED tampoco: tienen su aviso persistente abajo.
+  // DESKTOP_UPDATE_REQUIRED (pantalla de actualización) y PAYMENT_METHOD_REQUIRED tampoco:
+  // tienen su aviso persistente abajo.
   useEffect(() => {
     if (retryPrompt) return
     if (
@@ -253,7 +263,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
 
   const handleSubmit = () => {
     const trimmed = input.trim()
-    if ((!trimmed && attachments.length === 0) || isStreaming || pendingQuestions) return
+    if ((!trimmed && attachments.length === 0) || isStreaming || pendingQuestions || updateRequired) return
 
     // Bloque estable, una línea por archivo — el agente los lee del disco, igual que
     // antes con el PDF único (mismo formato `[Archivo adjunto: ...]`).
@@ -399,7 +409,7 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
       value={input}
       onChange={setInput}
       onSubmit={handleSubmit}
-      disabled={isStreaming || !!pendingQuestions}
+      disabled={isStreaming || !!pendingQuestions || updateRequired}
       placeholder={
         cwd
           ? `Pregunta sobre ${cwd.split(/[\\/]/).pop()}…`
@@ -538,15 +548,6 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
         </div>
       )}
 
-      {/* Versión mínima (F0.2 (b)): el core ya no entrega la config a esta versión. El
-          texto sale del código, no del servidor. Donde hay auto-update, el main ya pidió
-          el chequeo y el aviso "Reiniciar para actualizar" aparece al terminar la descarga. */}
-      {error && errorCode === 'DESKTOP_UPDATE_REQUIRED' && (
-        <div role="alert" className="mx-6 mb-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800">
-          {DESKTOP_UPDATE_REQUIRED_TEXT}
-        </div>
-      )}
-
       {/* Empresa sin método de pago (402 PAYMENT_METHOD_REQUIRED): el mismo corte que
           NO_CREDITS, con texto local por código. app.cerp.es lleva al paso de pago, o
           muestra su aviso a quien no puede añadirlo. */}
@@ -646,6 +647,14 @@ export function ChatContainer({ userName, activeContextId, activeConversationId,
           </div>
         </div>
       </div>
+
+      {/* Versión mínima (F0.2 (b)): el core ya no entrega la config a esta versión. La
+          pantalla tapa el chat (no se puede enviar) y lleva la actualización hasta
+          «Reiniciar e instalar». Un turno de esta conversación que ya estaba corriendo
+          (el 426 puede llegar en la renovación de sesión) termina antes de taparlo. */}
+      {updateRequired && !isStreaming && !isPending && (
+        <UpdateRequiredScreen snapshot={updater.snapshot} onCheck={updater.check} onInstall={updater.install} />
+      )}
     </div>
   )
 }

@@ -17,6 +17,7 @@ import { customAgentStore } from '../store/customAgentStore'
 import { HttpClient, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { COMPANY_CHANGED_SEND_MESSAGE, NO_ACTIVE_COMPANY_MESSAGE, shouldHoldSendForCompanyChange } from '../utils/sessionErrors'
 import { IPC_CHANNELS } from '../ipc/channels'
+import { notifyUpdateRequired } from '../updater'
 import { logger } from '../utils/logger'
 import type { SendPromptPayload, AgentStreamEvent } from '../ipc/types'
 
@@ -458,6 +459,7 @@ async function startSession(
       // Versión mínima (F0.2 (b)): sin config no se arranca con la key cacheada.
       if (err instanceof DesktopUpdateRequiredError) {
         logger.warn(`startSession aborted (${conversationId}): update required (min ${err.minVersion ?? '-'})`)
+        notifyUpdateRequired('arranque de sesión')
         emitStartAborted(mainWindow, conversationId, err.message, err.code)
         return
       }
