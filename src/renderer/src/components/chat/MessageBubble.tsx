@@ -5,6 +5,7 @@ import { MarkdownContent } from './MarkdownContent'
 import { ThinkingLoader } from './ThinkingLoader'
 import { HtmlCanvasCard } from './HtmlCanvasCard'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { oldestRunningStepStart } from '@/stores/stepLifecycle'
 
 interface MessageBubbleProps {
   message: ChatMessage
@@ -20,6 +21,10 @@ interface MessageBubbleProps {
   onRegenerate?: () => void
   /** True mientras hay un turno en vuelo (cualquier conversación en esta pestaña) */
   regenerateDisabled?: boolean
+  /** El turno de la conversación sigue vivo: "esperando resultado..." solo se muestra así. */
+  turnActive?: boolean
+  /** Hace cuánto el SDK no manda nada (heartbeat del main); solo en la burbuja que corre. */
+  sdkIdleMs?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +123,7 @@ function StreamingCursor() {
 // MessageBubble — main export
 // ---------------------------------------------------------------------------
 
-export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts, onStop, onRegenerate, regenerateDisabled }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, showThoughts, onToggleThoughts, onStop, onRegenerate, regenerateDisabled, turnActive, sdkIdleMs }: MessageBubbleProps) {
   const isUser = message.role === 'user'
 
   if (isUser) {
@@ -139,6 +144,9 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
 
   // Find active agent delegation for context in ThinkingLoader
   const activeAgent = message.tools?.find((t) => t.status === 'running' && t.name === 'Agent')
+
+  // Pasos cerrados sin resultado o con error: el resumen plegado no lleva el check verde.
+  const hasUnfinished = !!message.tools?.some((t) => t.status === 'interrupted' || t.status === 'error')
 
   // Show copy button only when there's actual text content and not streaming
   const showCopyButton = !!message.content && !isStreaming
@@ -163,6 +171,8 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
             onToggleDetails={onToggleThoughts}
             onStop={onStop}
             activeAgentName={activeAgent?.agentName}
+            slowStepSince={oldestRunningStepStart(message.tools)}
+            sdkIdleMs={sdkIdleMs}
           />
         )}
 
@@ -179,7 +189,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
               </button>
             )}
             {/* Fix #1/#5/#6: pass isStreaming so ToolExecutions knows if agent is still active */}
-            <ToolExecutions tools={message.tools!} isStreaming={isStreaming} />
+            <ToolExecutions tools={message.tools!} isStreaming={isStreaming} turnActive={turnActive} onStop={onStop} />
           </div>
         )}
 
@@ -197,7 +207,7 @@ export function MessageBubble({ message, isStreaming, showThoughts, onToggleThou
             onClick={onToggleThoughts}
             className="text-[10px] text-slate-400 hover:text-slate-500 transition-colors mb-2 flex items-center gap-1"
           >
-            <span className="text-success">&#10003;</span>
+            {hasUnfinished ? <span className="text-slate-400">&#8212;</span> : <span className="text-success">&#10003;</span>}
             {/* Fix #9: consistent label */}
             {message.tools!.length} paso{message.tools!.length > 1 ? 's' : ''} · Ver detalles
           </button>

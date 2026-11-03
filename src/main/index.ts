@@ -17,6 +17,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { initAutoUpdate } from './updater'
 import { logger } from './utils/logger'
 import { registerCanvasProtocolPrivileges, registerCanvasProtocolHandler } from './agent/canvasProtocol'
+import { killAgentProcessTrees } from './agent/agentManager'
 
 // Debe correr ANTES de que la app esté "ready" (requisito de Electron para
 // protocol.registerSchemesAsPrivileged) — por eso va acá, a nivel de módulo,
@@ -123,4 +124,10 @@ function createWindow(): void {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// Windows: el CLI de CERP IA y sus Bash de fondo (python, etc.) no mueren con la app;
+// sin esto quedaban procesos huérfanos (ver killCliTree en agentManager).
+app.on('will-quit', () => {
+  killAgentProcessTrees()
 })

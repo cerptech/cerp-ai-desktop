@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { AGENTS } from '@/components/agents/agentConfig'
-import type { ToolExecution, SubagentStep } from '@/hooks/useAgent'
+import type { ToolExecution } from '@/hooks/useAgent'
+import { SLOW_STEP_NOTICE_MS, isDelegationTool } from '@/stores/stepLifecycle'
+import { useElapsed, formatDuration } from '@/hooks/useElapsed'
+import { ElapsedTime, SlowStepNotice, StepStatusIcon, SubagentStepRow } from './StepParts'
 import {
   getToolHumanLabel,
   getVagueActivityLabel,
@@ -10,140 +13,33 @@ import {
 } from '@/utils/toolUtils'
 
 // ---------------------------------------------------------------------------
-// Elapsed time counter (only used while a tool is running)
-// ---------------------------------------------------------------------------
-
-function formatDuration(ms: number): string {
-  const secs = ms / 1000
-  if (secs < 1) return '<1s'
-  if (secs < 60) return `${secs.toFixed(1)}s`
-  const mins = Math.floor(secs / 60)
-  const remainSecs = Math.floor(secs % 60)
-  return `${mins}m ${remainSecs}s`
-}
-
-function ElapsedTime({ startTime }: { startTime: number }) {
-  const [elapsed, setElapsed] = useState(Date.now() - startTime)
-  useEffect(() => {
-    const id = setInterval(() => setElapsed(Date.now() - startTime), 1000)
-    return () => clearInterval(id)
-  }, [startTime])
-  return <span className="text-[10px] text-slate-400 ml-2">{formatDuration(elapsed)}</span>
-}
-
-// ---------------------------------------------------------------------------
-// Step status icons
-// ---------------------------------------------------------------------------
-
-function StepStatusIcon({ status }: { status: ToolExecution['status'] }) {
-  if (status === 'running') {
-    return <LoadingSpinner size="sm" />
-  }
-  if (status === 'error') {
-    return (
-      <svg
-        className="w-4 h-4 text-error shrink-0"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        aria-label="Error"
-      >
-        <path
-          fillRule="evenodd"
-          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
-          clipRule="evenodd"
-        />
-      </svg>
-    )
-  }
-  // done
-  return (
-    <svg
-      className="w-4 h-4 text-success shrink-0"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      aria-label="Completado"
-    >
-      <path
-        fillRule="evenodd"
-        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
-        clipRule="evenodd"
-      />
-    </svg>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Individual step row (used in expanded list)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// SubagentStepRow — a single inner tool call from a delegated subagent
-// ---------------------------------------------------------------------------
-
-function SubagentStepRow({ step }: { step: SubagentStep }) {
-  const [showOutput, setShowOutput] = useState(false)
-  const duration = step.endTime && step.startTime ? step.endTime - step.startTime : null
-  const label = getToolHumanLabel(step.name)
-  const inputFormatted = formatToolInput(step.name, step.input)
-  const outputSummary = step.status !== 'running' ? summarizeToolOutput(step.name, step.output) : null
-
-  return (
-    <div>
-      <button
-        onClick={() => step.output ? setShowOutput(!showOutput) : undefined}
-        className={`flex items-start gap-1.5 text-left w-full ${step.output ? 'hover:text-slate-700 cursor-pointer' : 'cursor-default'} transition-colors py-0.5`}
-        title={inputFormatted?.tooltip}
-      >
-        <span className="shrink-0 mt-0.5">
-          <StepStatusIcon status={step.status} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1 flex-wrap">
-            <span className={`text-[11px] font-medium ${step.status === 'error' ? 'text-error' : step.status === 'running' ? 'text-brand-orange' : 'text-slate-500'}`}>
-              {label}
-            </span>
-            {duration !== null && (
-              <span className="text-[10px] text-slate-400">{formatDuration(duration)}</span>
-            )}
-            {step.status === 'running' && <ElapsedTime startTime={step.startTime} />}
-          </div>
-          {inputFormatted && (
-            <span
-              className="block mt-0 font-mono text-[10px] text-slate-400 truncate max-w-[340px]"
-              title={inputFormatted.tooltip ?? inputFormatted.display}
-            >
-              {inputFormatted.display}
-            </span>
-          )}
-          {outputSummary && (
-            <span className="block text-[10px] text-slate-400 italic">{outputSummary}</span>
-          )}
-        </div>
-      </button>
-      {showOutput && step.output && (
-        <pre className="mt-1 ml-5 p-2 bg-slate-900 text-slate-300 rounded-md text-[10px] font-mono overflow-x-auto max-h-32 overflow-y-auto leading-relaxed">
-          {step.output}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // ToolStep — a single orchestrator-level tool, with optional nested subagent steps
 // ---------------------------------------------------------------------------
 
-function ToolStep({ tool }: { tool: ToolExecution }) {
+interface ToolStepProps {
+  tool: ToolExecution
+  /** El turno de la conversación sigue vivo (streaming o pendiente). */
+  turnActive?: boolean
+  /** Detener del turno (el abort existente); solo en la burbuja que está corriendo. */
+  onStop?: () => void
+}
+
+function ToolStep({ tool, turnActive, onStop }: ToolStepProps) {
   const [showOutput, setShowOutput] = useState(false)
   const [subStepsExpanded, setSubStepsExpanded] = useState(true)
   // Etiquetas de actividad en lenguaje de obra (Ola 2): mientras la tool corre
   // se muestra una frase vaga ("Consultando presupuestos…"), sin parámetros.
   // El detalle técnico (nombre real + input) queda un click de distancia.
   const [showTechnical, setShowTechnical] = useState(false)
-  const duration = tool.endTime && tool.startTime ? tool.endTime - tool.startTime : null
+  const running = tool.status === 'running'
+  const interrupted = tool.status === 'interrupted'
+  const elapsed = useElapsed(tool.startTime, running)
+  // Interrumpido: sin duración (contaría hasta el cierre del turno, no lo que tardó el paso).
+  const duration = !interrupted && tool.endTime && tool.startTime ? tool.endTime - tool.startTime : null
 
-  const isAgentTool = tool.name === 'Agent' || tool.name === 'Task'
+  const isAgentTool = isDelegationTool(tool.name)
   const isVagueRunning = !isAgentTool && tool.status === 'running' && !showTechnical
+  const slow = running && !isAgentTool && !tool.awaitingUser && elapsed >= SLOW_STEP_NOTICE_MS
 
   // Resolve agent name for Agent/Task delegation tools
   const resolvedAgentName = isAgentTool && tool.agentName
@@ -177,14 +73,16 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
 
   const inputFormatted = isAgentTool || isVagueRunning ? null : formatToolInput(tool.name, tool.input)
   const outputSummary =
-    tool.status !== 'running' && !isAgentTool ? summarizeToolOutput(tool.name, tool.output) : null
+    !running && !interrupted && !isAgentTool ? summarizeToolOutput(tool.name, tool.output) : null
 
   const labelColor =
     tool.status === 'error'
       ? 'text-error'
-      : tool.status === 'running'
+      : running
         ? 'text-brand-orange'
-        : 'text-slate-600'
+        : interrupted
+          ? 'text-slate-500'
+          : 'text-slate-600'
 
   return (
     <div>
@@ -219,8 +117,9 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
             {duration !== null && (
               <span className="text-[10px] text-slate-400">{formatDuration(duration)}</span>
             )}
-            {tool.status === 'running' && !hasSubSteps && !tool.awaitingUser && <ElapsedTime startTime={tool.startTime} />}
-            {tool.status === 'running' && hasSubSteps && subStepsRunning > 0 && (
+            {interrupted && <span className="text-[10px] text-slate-400">Interrumpido</span>}
+            {running && !hasSubSteps && !tool.awaitingUser && <ElapsedTime elapsed={elapsed} />}
+            {running && hasSubSteps && subStepsRunning > 0 && (
               <LoadingSpinner size="sm" />
             )}
           </div>
@@ -251,14 +150,17 @@ function ToolStep({ tool }: { tool: ToolExecution }) {
         </div>
       </button>
 
+      {slow && <SlowStepNotice onStop={onStop} />}
+
       {/* Nested subagent steps — indented, expandable */}
       {isAgentTool && hasSubSteps && subStepsExpanded && (
         <div className="ml-6 mt-1 border-l border-slate-200 pl-3 space-y-0.5">
           {subSteps.map((step, i) => (
-            <SubagentStepRow key={`${step.name}-${i}`} step={step} />
+            <SubagentStepRow key={`${step.name}-${i}`} step={step} onStop={onStop} />
           ))}
-          {/* Summary of finished sub-steps while still running */}
-          {tool.status === 'running' && subStepsDone > 0 && subStepsRunning === 0 && (
+          {/* Summary of finished sub-steps while still running: solo con la delegación Y el
+              turno vivos. Un turno cerrado ya no espera nada (su tarjeta quedó cerrada). */}
+          {running && turnActive && subStepsDone > 0 && subStepsRunning === 0 && (
             <span className="block text-[10px] text-slate-400 italic pt-0.5">
               {subStepsDone} paso{subStepsDone !== 1 ? 's' : ''} completado{subStepsDone !== 1 ? 's' : ''} · esperando resultado...
             </span>
@@ -284,23 +186,31 @@ interface ToolExecutionsProps {
   tools: ToolExecution[]
   /** True when the parent agent is still streaming (used for fix #6) */
   isStreaming?: boolean
+  /** El turno de la conversación sigue vivo (aunque esta no sea la última burbuja). */
+  turnActive?: boolean
+  /** Detener del turno: se ofrece en los pasos que tardan más de lo normal. */
+  onStop?: () => void
 }
 
-export function ToolExecutions({ tools, isStreaming }: ToolExecutionsProps) {
+export function ToolExecutions({ tools, isStreaming, turnActive, onStop }: ToolExecutionsProps) {
   const [expanded, setExpanded] = useState(false)
 
   if (!tools.length) return null
 
   const running = tools.filter((t) => t.status === 'running')
-  const finished = tools.filter((t) => t.status !== 'running') // done + error
+  const finished = tools.filter((t) => t.status !== 'running') // done + error + interrupted
   const errorCount = tools.filter((t) => t.status === 'error').length
+  const interruptedCount = tools.filter((t) => t.status === 'interrupted').length
+  const interruptedSuffix = interruptedCount > 0
+    ? `${interruptedCount} interrumpido${interruptedCount > 1 ? 's' : ''}`
+    : null
 
   return (
     <div className="mb-3 text-xs">
       {/* Active tools */}
       {running.map((tool, i) => (
         <div key={`r-${i}`} className="flex items-start gap-2 py-1.5">
-          <ToolStep tool={tool} />
+          <ToolStep tool={tool} turnActive={turnActive ?? isStreaming} onStop={onStop} />
         </div>
       ))}
 
@@ -330,7 +240,14 @@ export function ToolExecutions({ tools, isStreaming }: ToolExecutionsProps) {
                 <span className="text-error text-[10px]">&#10007;</span>
                 <span>
                   {finished.length} paso{finished.length > 1 ? 's' : ''} completado{finished.length > 1 ? 's' : ''}
-                  {' '}({errorCount} error{errorCount > 1 ? 'es' : ''})
+                  {' '}({errorCount} error{errorCount > 1 ? 'es' : ''}{interruptedSuffix ? `, ${interruptedSuffix}` : ''})
+                </span>
+              </>
+            ) : interruptedSuffix ? (
+              <>
+                <span className="text-slate-400 text-[10px]">&#8212;</span>
+                <span>
+                  {finished.length} paso{finished.length > 1 ? 's' : ''} ({interruptedSuffix})
                 </span>
               </>
             ) : (
@@ -346,7 +263,7 @@ export function ToolExecutions({ tools, isStreaming }: ToolExecutionsProps) {
           {expanded && (
             <div className="ml-4 mt-1 border-l border-slate-200 pl-3 space-y-1.5">
               {finished.map((tool, i) => (
-                <ToolStep key={i} tool={tool} />
+                <ToolStep key={i} tool={tool} turnActive={turnActive ?? isStreaming} onStop={onStop} />
               ))}
             </div>
           )}

@@ -1,6 +1,7 @@
 import type { AgentStreamEvent, AskUserQuestionItem, UserAnswerPayload, ModelChoice } from '../../../preload/index'
-import type { ChatMessage, ToolExecution, SubagentStep, AgentDelegation } from '../hooks/useAgent'
+import type { ChatMessage, ToolExecution, SubagentStep, AgentDelegation, BackgroundTask } from '../hooks/useAgent'
 import { GENERIC_RETRY_PROMPT } from '../utils/retryPrompt'
+import { interruptRunningSteps, interruptRunningTasks, taskStatusFromSdk } from './stepLifecycle'
 
 /**
  * agentRuntimeStore — estado de streaming POR conversación.
@@ -35,6 +36,17 @@ export interface ConversationRuntime {
   activeAgentDelegation: AgentDelegation | null
   promptSuggestions: string[]
   statusMessage: string | null
+  /**
+   * Cuánto hace que el SDK no manda ningún mensaje, según el último heartbeat del main
+   * (`Date.now() - lastActivityAt`). 0 = hay actividad. Lo muestra el loader («Sin
+   * actividad hace N min») para que nadie espere a ciegas los 15 min del watchdog.
+   */
+  sdkIdleMs: number
+  /**
+   * El usuario pulsó Detener y el main todavía no cerró el turno: los heartbeats que
+   * siguen llegando hasta el `result` abortado no vuelven a prender el loader.
+   */
+  stopRequested: boolean
   sessionCost: number
   sessionTokensIn: number
   sessionTokensOut: number
@@ -42,6 +54,12 @@ export interface ConversationRuntime {
   isSubmittingAnswers: boolean
   // Antes eran refs en useAgent — ahora campos del runtime inmutable.
   tools: ToolExecution[]
+  /**
+   * Tareas de fondo del SDK de TODA la sesión de la app en esta conversación (no solo
+   * del turno: a diferencia de `tools`, no se vacía al enviar). Las lee el panel de
+   * agentes; al cerrarse un turno, las que siguen abiertas quedan 'interrupted'.
+   */
+  backgroundTasks: BackgroundTask[]
   lastEvent: number
   currentDelegation: string | null
   needsNewAssistant: boolean
@@ -102,12 +120,15 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
   activeAgentDelegation: null,
   promptSuggestions: [],
   statusMessage: null,
+  sdkIdleMs: 0,
+  stopRequested: false,
   sessionCost: 0,
   sessionTokensIn: 0,
   sessionTokensOut: 0,
   pendingQuestions: null,
   isSubmittingAnswers: false,
   tools: [],
+  backgroundTasks: [],
   lastEvent: 0,
   currentDelegation: null,
   needsNewAssistant: false,
@@ -117,7 +138,7 @@ const EMPTY_RUNTIME: ConversationRuntime = Object.freeze({
 })
 
 function freshRuntime(): ConversationRuntime {
-  return { ...EMPTY_RUNTIME, messages: [], tools: [], promptSuggestions: [], textAccumulator: EMPTY_TEXT_ACCUMULATOR }
+  return { ...EMPTY_RUNTIME, messages: [], tools: [], backgroundTasks: [], promptSuggestions: [], textAccumulator: EMPTY_TEXT_ACCUMULATOR }
 }
 
 // ── Store internals ─────────────────────────────────────────────────────────
@@ -235,17 +256,29 @@ function persistNewMessages(conversationId: string, rt: ConversationRuntime): vo
 // ── Reducer (port fiel del switch de useAgent) ───────────────────────────────
 
 /**
- * Cierra lo que haya quedado "running" al terminar el turno — incluidos los pasos de
- * subagente: antes solo se cerraban las tools de nivel superior y un paso cuyo
- * resultado nunca llegó quedaba girando con un contador de días (captura de RQM-166).
+ * Cierra el turno en el runtime: lo que quedó "running" (tools y pasos de subagente,
+ * en TODAS las burbujas del turno) pasa a 'interrupted'. Es el único camino de cierre:
+ * lo usan done (evento y canal), error, Detener, el stall timer y el envío de un prompt
+ * nuevo. Antes cada camino cerraba distinto — 'done' (un paso sin resultado con check
+ * verde), 'error' (un Bash que ni llegó a ejecutarse, como error) o nada (Detener
+ * esperaba al main) — y un paso cuyo resultado nunca llegó podía quedar girando con un
+ * contador de horas (RQM-166; el Bash de 921 min de Facundo en v1.0.40).
  */
-function settleRunningTools(tools: ToolExecution[], status: 'done' | 'error', now: number): ToolExecution[] {
-  return tools.map((t) => {
-    const steps = t.subagentSteps?.some((s) => s.status === 'running')
-      ? t.subagentSteps.map((s) => (s.status === 'running' ? { ...s, status, endTime: now } : s))
-      : t.subagentSteps
-    return t.status === 'running' ? { ...t, status, endTime: now, subagentSteps: steps } : steps !== t.subagentSteps ? { ...t, subagentSteps: steps } : t
-  })
+function interruptOpenSteps(rt: ConversationRuntime, now: number): ConversationRuntime {
+  // Las tareas de fondo también: el panel de agentes no puede dejar a nadie «trabajando»
+  // con el turno cerrado (el main retiene el `done` mientras quedan tareas vivas, así
+  // que si el turno cierra con una abierta, esa tarea ya no la sigue nadie).
+  const backgroundTasks = interruptRunningTasks(rt.backgroundTasks, now)
+  const tools = interruptRunningSteps(rt.tools, now)
+  if (tools === rt.tools && backgroundTasks === rt.backgroundTasks) return rt
+  if (tools === rt.tools) return { ...rt, backgroundTasks }
+  return { ...rt, tools, backgroundTasks, messages: syncToolsToBubbles(rt.messages, tools) }
+}
+
+/** Aplica `fn` a la tarea `taskId` (sin cambios si no existe). */
+function updateTask(rt: ConversationRuntime, taskId: string, fn: (t: BackgroundTask) => BackgroundTask): ConversationRuntime {
+  if (!rt.backgroundTasks.some((t) => t.taskId === taskId)) return rt
+  return { ...rt, backgroundTasks: rt.backgroundTasks.map((t) => (t.taskId === taskId ? fn(t) : t)) }
 }
 
 function updateLastAssistant(
@@ -303,19 +336,27 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
   // También resetea el acumulador de texto por bloque: es el arranque de un turno
   // NUEVO (incluido el que sigue a un ask_user_question respondido), así que no debe
   // arrastrar el `committed`/`buffer` del turno anterior.
+  // Tras Detener, un stream_start tardío (el main lo emite en cada task_started) no
+  // vuelve a prender el loader: stopRequested se limpia recién con el próximo envío.
   if (event.type === 'stream_start') {
+    if (rt.stopRequested) return { ...rt, lastEvent: now }
     return { ...rt, isStreaming: true, isPending: false, lastEvent: now, textAccumulator: EMPTY_TEXT_ACCUMULATOR }
   }
 
   // Latido del main (cada 5 s con un turno en curso): el agente sigue vivo. Como
   // stream_start, no limpia el gate de waitingAfterAnswer (Bug #4); a diferencia de
   // stream_start, NO resetea el acumulador de texto: llega en medio de un bloque.
+  // Trae cuánto hace que el SDK no manda nada (`idleMs`). Tras Detener, los latidos que
+  // llegan hasta el `result` abortado no vuelven a prender el loader.
   if (event.type === 'heartbeat') {
-    return { ...rt, isStreaming: true, isPending: false, lastEvent: now }
+    const sdkIdleMs = event.idleMs ?? 0
+    if (rt.stopRequested) return { ...rt, lastEvent: now, sdkIdleMs }
+    return { ...rt, isStreaming: true, isPending: false, lastEvent: now, sdkIdleMs }
   }
 
   // Primer evento real: limpiar pending + el gate de waitingAfterAnswer (Bug #4, línea 173 del hook).
-  let r: ConversationRuntime = { ...rt, lastEvent: now, isPending: false, waitingAfterAnswer: false }
+  // Cualquier evento que no es latido viene de un mensaje del SDK: hay actividad.
+  let r: ConversationRuntime = { ...rt, lastEvent: now, isPending: false, waitingAfterAnswer: false, sdkIdleMs: 0 }
 
   switch (event.type) {
     // Delta de streaming (Ola 2) — bufferizado POR BLOQUE (ver TextAccumulator arriba).
@@ -431,6 +472,9 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
     case 'tool_done': {
       const doneTool = r.tools.find((t) => t.toolUseId === event.toolUseId)
       const isAgentTool = doneTool?.name === 'Agent' || doneTool?.name === 'Task'
+      // Un sub-paso sin resultado cuando su delegación ya volvió: si el subagente terminó
+      // bien, el paso terminó (su resultado no se reenvió); si falló, quedó interrumpido.
+      const orphanStepStatus: SubagentStep['status'] = event.isError ? 'interrupted' : 'done'
       const tools = r.tools.map((t) =>
         t.toolUseId === event.toolUseId && t.status === 'running'
           ? {
@@ -438,8 +482,9 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
               status: (event.isError ? 'error' : 'done') as ToolExecution['status'],
               output: event.output,
               endTime: now,
+              awaitingUser: undefined,
               ...(t.subagentSteps
-                ? { subagentSteps: t.subagentSteps.map((s) => (s.status === 'running' ? { ...s, status: 'done' as const, endTime: now } : s)) }
+                ? { subagentSteps: t.subagentSteps.map((s) => (s.status === 'running' ? { ...s, status: orphanStepStatus, endTime: now, awaitingUser: undefined } : s)) }
                 : {}),
             }
           : t,
@@ -456,7 +501,14 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
     }
     case 'agent_delegation': {
       const d = event
-      const tools = r.tools.map((t) => (t.toolUseId === d.toolUseId ? { ...t, agentName: d.agentName } : t))
+      // La tarea viaja con la delegación para el panel de agentes. Sin nombre de
+      // especialista (agente genérico) solo se guarda la tarea: el resto, como antes.
+      const tools = r.tools.map((t) =>
+        t.toolUseId === d.toolUseId
+          ? { ...t, agentName: d.agentName || t.agentName, taskDescription: d.description, taskPrompt: d.task }
+          : t,
+      )
+      if (!d.agentName) return { ...r, tools, messages: syncToolsToBubbles(r.messages, tools) }
       return {
         ...r,
         currentDelegation: d.agentName,
@@ -464,6 +516,54 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
         tools,
         messages: syncToolsToBubbles(r.messages, tools),
       }
+    }
+    // Tareas de fondo del SDK (panel de agentes). Se identifican por task_id: un
+    // task_started repetido no duplica la fila.
+    case 'task_started': {
+      const ev = event
+      if (r.backgroundTasks.some((t) => t.taskId === ev.taskId)) return r
+      const task: BackgroundTask = {
+        taskId: ev.taskId,
+        toolUseId: ev.toolUseId,
+        taskType: ev.taskType,
+        description: ev.description,
+        subagentType: ev.subagentType,
+        workflowName: ev.workflowName,
+        status: 'running',
+        startTime: now,
+      }
+      return { ...r, backgroundTasks: [...r.backgroundTasks, task] }
+    }
+    case 'task_progress': {
+      const ev = event
+      return updateTask(r, ev.taskId, (t) => ({
+        ...t,
+        description: ev.description || t.description,
+        lastToolName: ev.lastToolName ?? t.lastToolName,
+        summary: ev.summary ?? t.summary,
+        toolUses: ev.toolUses ?? t.toolUses,
+      }))
+    }
+    case 'task_notification': {
+      // El resultado real pisa también un 'interrupted' puesto al cerrar el turno: si la
+      // tarea terminó de verdad, el panel lo dice.
+      const ev = event
+      return updateTask(r, ev.taskId, (t) => ({
+        ...t,
+        status: taskStatusFromSdk(ev.status) ?? 'done',
+        endTime: ev.durationMs ? t.startTime + ev.durationMs : now,
+        summary: ev.summary || t.summary,
+        toolUses: ev.toolUses ?? t.toolUses,
+      }))
+    }
+    case 'task_updated': {
+      const ev = event
+      const status = taskStatusFromSdk(ev.status)
+      return updateTask(r, ev.taskId, (t) => ({
+        ...t,
+        description: ev.description || t.description,
+        ...(status && t.status === 'running' ? { status, endTime: now } : {}),
+      }))
     }
     case 'subagent_tool_start': {
       const ev = event
@@ -530,8 +630,15 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
     }
     case 'done': {
       const d = event
+      // El turno terminó: lo que sigue abierto ya no va a recibir resultado. Se cierra
+      // ACÁ y no solo en handleDone (canal DONE) porque el assistant se persiste con este
+      // evento: antes se guardaba con los pasos huérfanos en 'running'. Con la gate de
+      // Bug #4 abierta (respuesta recién enviada) no se toca: los pasos son del turno vivo.
+      const closed = rt.waitingAfterAnswer ? r : interruptOpenSteps(r, now)
       return {
-        ...r,
+        ...closed,
+        stopRequested: false,
+        sdkIdleMs: 0,
         sessionCost: r.sessionCost + (d.cost ?? 0),
         sessionTokensIn: r.sessionTokensIn + (d.tokensIn ?? 0),
         sessionTokensOut: r.sessionTokensOut + (d.tokensOut ?? 0),
@@ -544,19 +651,21 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
       }
     }
     case 'error': {
-      const tools = settleRunningTools(r.tools, 'error', now)
+      // El error ya explica por qué se cortó (watchdog, límite, proceso): los pasos que
+      // no recibieron resultado quedan interrumpidos, no «con error» — un Bash en cola
+      // que ni llegó a ejecutarse no falló.
       return {
-        ...r,
+        ...interruptOpenSteps(r, now),
         error: event.message,
         errorCode: event.code ?? null,
         retryPrompt: event.retryPrompt ?? null,
         isStreaming: false,
         isPending: false,
+        stopRequested: false,
+        sdkIdleMs: 0,
         activeTool: null,
         activeAgentDelegation: null,
         currentDelegation: null,
-        tools,
-        messages: syncToolsToBubbles(r.messages, tools),
       }
     }
     default:
@@ -571,9 +680,17 @@ function applyEvent(rt: ConversationRuntime, event: AgentStreamEvent): Conversat
  * no trabajando: la UI muestra «Esperando tu respuesta» en vez del contador.
  */
 function markAwaitingUser(rt: ConversationRuntime, awaiting: boolean): ConversationRuntime {
-  const tools = rt.tools.map((t) =>
-    t.status === 'running' && !!t.awaitingUser !== awaiting ? { ...t, awaitingUser: awaiting || undefined } : t,
-  )
+  // Los sub-pasos también: una pregunta hecha desde un subagente deja su paso esperando
+  // al usuario, y el aviso de paso lento no debe contarlo como «tardando».
+  const markSteps = (steps: SubagentStep[] | undefined): SubagentStep[] | undefined =>
+    steps?.some((s) => s.status === 'running' && !!s.awaitingUser !== awaiting)
+      ? steps.map((s) => (s.status === 'running' ? { ...s, awaitingUser: awaiting || undefined } : s))
+      : steps
+  const tools = rt.tools.map((t) => {
+    const steps = markSteps(t.subagentSteps)
+    if (t.status === 'running' && !!t.awaitingUser !== awaiting) return { ...t, awaitingUser: awaiting || undefined, subagentSteps: steps }
+    return steps !== t.subagentSteps ? { ...t, subagentSteps: steps } : t
+  })
   return { ...rt, tools, messages: syncToolsToBubbles(rt.messages, tools) }
 }
 
@@ -582,10 +699,16 @@ function handleDone(conversationId: string): void {
     // Bug #4: si el usuario acaba de responder ask_user_question y el agente aún
     // no emitió nada, un done viejo no debe resetear isStreaming/isPending.
     if (rt.waitingAfterAnswer) return rt
-    const now = Date.now()
-    const tools = settleRunningTools(rt.tools, 'done', now)
-    const messages = syncToolsToBubbles(rt.messages, tools)
-    return { ...rt, isStreaming: false, isPending: false, activeTool: null, activeAgentDelegation: null, currentDelegation: null, tools, messages }
+    return {
+      ...interruptOpenSteps(rt, Date.now()),
+      isStreaming: false,
+      isPending: false,
+      stopRequested: false,
+      sdkIdleMs: 0,
+      activeTool: null,
+      activeAgentDelegation: null,
+      currentDelegation: null,
+    }
   })
   persistNewMessages(conversationId, getRuntime(conversationId))
 }
@@ -617,11 +740,13 @@ function ensureIpcWired(): void {
   window.cerpAPI.onAgentError((err, conversationId) => {
     const id = conversationId || '__default__'
     update(id, (rt) => ({
-      ...rt,
+      ...interruptOpenSteps(rt, Date.now()),
       error: err.message,
       errorCode: err.code ?? null,
       isStreaming: false,
       isPending: false,
+      stopRequested: false,
+      sdkIdleMs: 0,
       activeTool: null,
       activeAgentDelegation: null,
       currentDelegation: null,
@@ -661,17 +786,15 @@ function ensureIpcWired(): void {
       const stalledMs = now - rt.lastEvent
       if (stalledMs <= (rt.isPending ? STALL_PENDING_MS : STALL_STREAMING_MS)) continue
       update(id, (r) => {
-        const tools = settleRunningTools(r.tools, 'error', now)
-        const messages = syncToolsToBubbles(r.messages, tools)
         return {
-          ...r,
+          ...interruptOpenSteps(r, now),
           isStreaming: false,
           isPending: false,
+          stopRequested: false,
+          sdkIdleMs: 0,
           activeTool: null,
           activeAgentDelegation: null,
           currentDelegation: null,
-          tools,
-          messages,
           error: 'CERP IA dejó de responder y la ejecución se detuvo. Es un problema del sistema, no de tus datos. Lo que ya se cargó en CERP quedó guardado: pulsa «Reintentar» para continuar donde quedó.',
           errorCode: 'STALLED',
           retryPrompt: GENERIC_RETRY_PROMPT,
@@ -712,27 +835,35 @@ export async function sendPrompt(
   const history = prevMessages.map((m) => ({ role: m.role, content: m.content }))
   const skipUserEcho = options?.skipUserEcho ?? false
 
-  update(conversationId, (rt) => ({
-    ...rt,
-    error: null,
-    errorCode: null,
-    retryPrompt: null,
-    isStreaming: true,
-    isPending: true,
-    lastEvent: Date.now(),
-    activeTool: null,
-    activeAgentDelegation: null,
-    promptSuggestions: [],
-    statusMessage: null,
-    currentDelegation: null,
-    waitingAfterAnswer: false,
-    tools: [],
-    textAccumulator: EMPTY_TEXT_ACCUMULATOR,
-    // Sincroniza la carpeta de la conversación cuando el caller la pasa explícita
-    // (ChatContainer ya la fija vía setConversationCwd; esto cubre otros callers).
-    cwd: cwd !== undefined ? cwd : rt.cwd,
-    messages: skipUserEcho ? rt.messages : [...rt.messages, { role: 'user', content: prompt, timestamp: Date.now() }],
-  }))
+  // Lo que haya quedado abierto del turno anterior se cierra antes de vaciar `tools`:
+  // si no, sus pasos quedaban 'running' en las burbujas viejas (p.ej. Detener y enviar
+  // otro mensaje antes de que el main cerrara el turno abortado).
+  update(conversationId, (prev) => {
+    const rt = interruptOpenSteps(prev, Date.now())
+    return {
+      ...rt,
+      error: null,
+      errorCode: null,
+      retryPrompt: null,
+      isStreaming: true,
+      isPending: true,
+      stopRequested: false,
+      sdkIdleMs: 0,
+      lastEvent: Date.now(),
+      activeTool: null,
+      activeAgentDelegation: null,
+      promptSuggestions: [],
+      statusMessage: null,
+      currentDelegation: null,
+      waitingAfterAnswer: false,
+      tools: [],
+      textAccumulator: EMPTY_TEXT_ACCUMULATOR,
+      // Sincroniza la carpeta de la conversación cuando el caller la pasa explícita
+      // (ChatContainer ya la fija vía setConversationCwd; esto cubre otros callers).
+      cwd: cwd !== undefined ? cwd : rt.cwd,
+      messages: skipUserEcho ? rt.messages : [...rt.messages, { role: 'user', content: prompt, timestamp: Date.now() }],
+    }
+  })
   // Persistir el mensaje del usuario inmediatamente (salvo regeneración: ya está persistido).
   if (!skipUserEcho) {
     persistNewMessages(conversationId, getRuntime(conversationId))
@@ -750,12 +881,19 @@ export async function sendPrompt(
   }
 }
 
+/**
+ * Detener. El turno se cierra en la UI EN EL ACTO (pasos abiertos → 'interrupted') y
+ * después se le pide al main que lo corte. Antes la UI esperaba la respuesta del main
+ * para apagar el loader, y los pasos solo se cerraban si llegaba el `result` abortado:
+ * con el SDK colgado, el Detener no hacía nada visible hasta el watchdog (15 min).
+ */
 export async function abort(conversationId: string): Promise<void> {
-  await window.cerpAPI.abortAgent(conversationId)
   update(conversationId, (rt) => ({
-    ...rt,
+    ...interruptOpenSteps(rt, Date.now()),
     isStreaming: false,
     isPending: false,
+    stopRequested: true,
+    sdkIdleMs: 0,
     activeTool: null,
     activeAgentDelegation: null,
     pendingQuestions: null,
@@ -764,6 +902,13 @@ export async function abort(conversationId: string): Promise<void> {
     waitingAfterAnswer: false,
     currentDelegation: null,
   }))
+  // El assistant detenido se guarda YA, con sus pasos en 'interrupted': si el usuario
+  // reenvía antes del `result` abortado, el main reinicia la sesión sin `done` viejo, y
+  // el turno nuevo pone isStreaming=true. Antes se guardaba recién al cerrar ese turno
+  // (el server hace $push, así que quedaba DESPUÉS del mensaje nuevo) o nunca, si la app
+  // se cerraba antes.
+  persistNewMessages(conversationId, getRuntime(conversationId))
+  await window.cerpAPI.abortAgent(conversationId)
 }
 
 /**

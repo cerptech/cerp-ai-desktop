@@ -75,9 +75,14 @@ export type AgentStreamEvent =
   | { type: 'status'; message: string }
   | { type: 'stream_start' }
   // Latido del main mientras hay un turno en curso (no toca el acumulador de texto).
-  | { type: 'heartbeat' }
+  | { type: 'heartbeat'; idleMs?: number }
   | { type: 'session_id'; sessionId: string }
-  | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
+  | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string; description?: string }
+  // Tareas de fondo del SDK, con su id (panel de agentes).
+  | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string; subagentType?: string; workflowName?: string }
+  | { type: 'task_progress'; taskId: string; toolUseId?: string; description?: string; lastToolName?: string; summary?: string; toolUses?: number }
+  | { type: 'task_notification'; taskId: string; toolUseId?: string; status: 'completed' | 'failed' | 'stopped'; summary?: string; toolUses?: number; durationMs?: number }
+  | { type: 'task_updated'; taskId: string; status?: string; description?: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
   | { type: 'ask_user_question'; questions: AskUserQuestionItem[] }
   // Subagent inner activity — tool calls made INSIDE a delegated subagent.
@@ -172,7 +177,7 @@ export interface ConversationFull extends ConversationSummary {
         name: string
         input?: string
         output?: string
-        status: 'running' | 'done' | 'error'
+        status: 'running' | 'done' | 'error' | 'interrupted'
         startTime: number
         endTime?: number
       }>

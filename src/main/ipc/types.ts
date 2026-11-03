@@ -75,10 +75,22 @@ export type AgentStreamEvent =
   // Latido del main cada 5 s mientras hay un turno o una tarea de fondo en curso: el
   // agente sigue vivo (si el SDK deja de responder, el watchdog del main corta el turno
   // con un `error`). No toca el acumulador de texto, a diferencia de stream_start.
-  | { type: 'heartbeat' }
+  // `idleMs`: cuánto hace que el SDK no manda ningún mensaje (0 mientras se espera al
+  // usuario); el loader lo muestra para que nadie espere a ciegas al watchdog.
+  | { type: 'heartbeat'; idleMs?: number }
   | { type: 'session_id'; sessionId: string }
-  // toolUseId links the delegation to the specific Agent ToolExecution it created
-  | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string }
+  // toolUseId links the delegation to the specific Agent ToolExecution it created.
+  // `task`: inicio del prompt (o la descripción); `description`: la descripción corta
+  // del input de Agent, la que muestra el panel de agentes.
+  | { type: 'agent_delegation'; toolUseId: string; agentName: string; task: string; description?: string }
+  // Tareas de fondo del SDK (system task_started / task_progress / task_notification /
+  // task_updated), reenviadas con su id para que el panel de agentes las siga una por
+  // una. `toolUseId` = el tool_use que la lanzó (Agent, Bash en segundo plano, Workflow).
+  // `taskType` es el discriminante crudo del SDK (p.ej. 'local_workflow').
+  | { type: 'task_started'; taskId: string; toolUseId?: string; description: string; taskType?: string; subagentType?: string; workflowName?: string }
+  | { type: 'task_progress'; taskId: string; toolUseId?: string; description?: string; lastToolName?: string; summary?: string; toolUses?: number }
+  | { type: 'task_notification'; taskId: string; toolUseId?: string; status: 'completed' | 'failed' | 'stopped'; summary?: string; toolUses?: number; durationMs?: number }
+  | { type: 'task_updated'; taskId: string; status?: string; description?: string }
   | { type: 'prompt_suggestions'; suggestions: string[] }
   | { type: 'ask_user_question'; questions: AskUserQuestionItem[] }
   // Subagent inner activity — tool calls made INSIDE a delegated subagent.
@@ -247,7 +259,8 @@ export interface SubagentStep {
   name: string
   input?: string
   output?: string
-  status: 'running' | 'done' | 'error'
+  /** 'interrupted' = el turno se cerró sin que llegara su resultado (ver stepLifecycle del renderer). */
+  status: 'running' | 'done' | 'error' | 'interrupted'
   startTime: number
   endTime?: number
 }
