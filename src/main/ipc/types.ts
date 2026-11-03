@@ -299,3 +299,43 @@ export interface ConversationFull extends ConversationSummary {
     totalTurns?: number
   }
 }
+
+// ── Auto-update (máquina de estados de src/main/updater.ts) ──
+
+/** Por qué esta copia no se actualiza sola: código fuente (dev) o macOS sin firma. */
+export type UpdateUnsupportedReason = 'dev' | 'macos'
+
+/** En qué paso falló: buscar la versión, bajarla o lanzar el instalador. */
+export type UpdateErrorPhase = 'check' | 'download' | 'install'
+
+/**
+ * Estado del updater. Lo decide SOLO el main (`updaterState.ts`) y se empuja al
+ * renderer por `UPDATE_STATE`; el renderer no deduce nada de eventos sueltos.
+ * `available` es el instante entre encontrar la versión y el primer progreso: con
+ * `autoDownload` la descarga ya arrancó.
+ */
+export type UpdateState =
+  | { status: 'unsupported'; reason: UpdateUnsupportedReason }
+  | { status: 'idle' }
+  | { status: 'checking' }
+  /** `checkedAt`: epoch ms del último chequeo que no encontró nada. */
+  | { status: 'not-available'; checkedAt: number }
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'downloaded'; version: string }
+  /** `message`: texto para el usuario (el error crudo queda en el log del main). */
+  | { status: 'error'; phase: UpdateErrorPhase; message: string }
+
+export interface UpdaterSnapshot {
+  state: UpdateState
+  /** `app.getVersion()` de la copia instalada. */
+  currentVersion: string
+  /**
+   * El core exigió una versión más nueva en esta ejecución (426
+   * `DESKTOP_UPDATE_REQUIRED`). Dura hasta reiniciar: la versión instalada no cambia
+   * sin reiniciar, y la próxima ya es la nueva.
+   */
+  required: boolean
+  /** Crece con cada cambio: el renderer descarta una foto más vieja que la que ya tiene. */
+  seq: number
+}

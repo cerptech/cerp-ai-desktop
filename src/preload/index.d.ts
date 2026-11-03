@@ -1,4 +1,4 @@
-import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse } from '../main/ipc/types'
+import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse, UpdaterSnapshot } from '../main/ipc/types'
 import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
 
 /** Elección de modelo del selector (Ola 1). 'auto' = el que devuelve /desktop/api-key. */
@@ -102,6 +102,9 @@ export interface HtmlCanvas {
 
 /** 409 COMPANY_CHANGED ya manejado por el main (plan DK-1.1 de multi-empresa). Tipo único en main/ipc/types. */
 export type { CompanyChangedNotice }
+
+/** Auto-update: estado único del main (main/updater.ts). Tipos únicos en main/ipc/types. */
+export type { UpdateErrorPhase, UpdateState, UpdateUnsupportedReason, UpdaterSnapshot } from '../main/ipc/types'
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -320,9 +323,12 @@ interface CerpAPI {
   reconcileIntegration(toolkit: string): Promise<IntegrationActionResult>
   /** Política de modelo de la empresa (ADR 016): null sin sesión o con un backend anterior. */
   getModelPolicy(): Promise<AiModelPolicy | null>
-  onUpdateAvailable(callback: (data: { version: string }) => void): () => void
-  onUpdateDownloadProgress(callback: (data: { percent: number }) => void): () => void
-  onUpdateDownloaded(callback: (data: { version: string }) => void): () => void
+  /** Foto del estado del auto-update (main/updater.ts). */
+  getUpdateState(): Promise<UpdaterSnapshot>
+  /** Busca a pedido; no duplica un chequeo o una descarga en curso. Devuelve la foto resultante. */
+  checkForUpdates(): Promise<UpdaterSnapshot>
+  /** Cada cambio del estado del auto-update. */
+  onUpdateState(callback: (snapshot: UpdaterSnapshot) => void): () => void
   quitAndInstallUpdate(): Promise<void>
   checkPython(): Promise<{ installed: boolean; version?: string; pipInstalled: boolean }>
   installPython(): Promise<boolean>

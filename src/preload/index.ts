@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse } from '../main/ipc/types'
+import type { CompanyChangedNotice, IntegrationActionResult, IntegrationsCatalogResponse, IntegrationsStatusResponse, UpdaterSnapshot } from '../main/ipc/types'
 
 // Tipos de la pantalla «Apps» (apps conectadas) para el renderer.
 export type {
@@ -11,6 +11,9 @@ export type {
   IntegrationsStatusResponse,
 } from '../main/ipc/types'
 import type { PromptLibraryResponse } from '../main/utils/promptLibrary'
+
+// Auto-update: estado único del main (main/updater.ts).
+export type { UpdateErrorPhase, UpdateState, UpdateUnsupportedReason, UpdaterSnapshot } from '../main/ipc/types'
 
 const IPC = {
   AUTH_LOGIN: 'auth:login',
@@ -64,9 +67,9 @@ const IPC = {
   INTEGRATIONS_DISCONNECT: 'integrations:disconnect',
   INTEGRATIONS_RECONCILE: 'integrations:reconcile',
   AGENT_GET_MODEL_POLICY: 'agent:get-model-policy',
-  UPDATE_AVAILABLE: 'update:available',
-  UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
-  UPDATE_DOWNLOADED: 'update:downloaded',
+  UPDATE_STATE: 'update:state',
+  UPDATE_GET_STATE: 'update:get-state',
+  UPDATE_CHECK: 'update:check',
   UPDATE_QUIT_AND_INSTALL: 'update:quit-and-install',
   PYTHON_CHECK: 'python:check',
   PYTHON_INSTALL: 'python:install',
@@ -514,21 +517,13 @@ const api = {
   // Política de modelo (ADR 016): null si el backend no la informa o no hay sesión.
   getModelPolicy: (): Promise<AiModelPolicy | null> => ipcRenderer.invoke(IPC.AGENT_GET_MODEL_POLICY),
 
-  // Auto-update
-  onUpdateAvailable: (callback: (data: { version: string }) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { version: string }): void => callback(data)
-    ipcRenderer.on(IPC.UPDATE_AVAILABLE, handler)
-    return () => ipcRenderer.removeListener(IPC.UPDATE_AVAILABLE, handler)
-  },
-  onUpdateDownloadProgress: (callback: (data: { percent: number }) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { percent: number }): void => callback(data)
-    ipcRenderer.on(IPC.UPDATE_DOWNLOAD_PROGRESS, handler)
-    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOAD_PROGRESS, handler)
-  },
-  onUpdateDownloaded: (callback: (data: { version: string }) => void): (() => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { version: string }): void => callback(data)
-    ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler)
-    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler)
+  // Auto-update: una sola foto del estado (main/updater.ts), pedida al montar y empujada en cada cambio
+  getUpdateState: (): Promise<UpdaterSnapshot> => ipcRenderer.invoke(IPC.UPDATE_GET_STATE),
+  checkForUpdates: (): Promise<UpdaterSnapshot> => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  onUpdateState: (callback: (snapshot: UpdaterSnapshot) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, snapshot: UpdaterSnapshot): void => callback(snapshot)
+    ipcRenderer.on(IPC.UPDATE_STATE, handler)
+    return () => ipcRenderer.removeListener(IPC.UPDATE_STATE, handler)
   },
   quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke(IPC.UPDATE_QUIT_AND_INSTALL),
 

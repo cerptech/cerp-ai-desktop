@@ -1,4 +1,6 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
+import { useUpdater } from '@/hooks/useUpdater'
+import { UpdateProgressBar } from './UpdateActions'
 
 /**
  * Aviso de auto-actualización.
@@ -8,43 +10,33 @@ import { useEffect, useState, type ReactElement } from 'react'
  * aviso discreto con el progreso; cuando termina, lo cambiamos por el botón
  * "Reiniciar para actualizar". Si el usuario lo ignora, la actualización se
  * aplica sola la próxima vez que cierre la app (autoInstallOnAppQuit).
+ *
+ * Lee el estado único del main (useUpdater). Solo aparece mientras baja o cuando ya
+ * está lista: un chequeo automático sin novedades o fallido no interrumpe (eso se ve
+ * en Configuración > Actualizaciones). Con la actualización obligatoria (426) no se
+ * muestra: la pantalla del chat ya lleva el progreso y el botón de reinicio.
  */
 export function UpdateBanner(): ReactElement | null {
-  const [version, setVersion] = useState<string | null>(null)
-  const [percent, setPercent] = useState<number | null>(null)
-  const [ready, setReady] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
-  const [restarting, setRestarting] = useState(false)
+  const { snapshot, install } = useUpdater()
+  // Cerrar el aviso vale para ESE paso de ESA versión: el de "descargando" vuelve
+  // como "lista" al terminar, y una versión nueva vuelve a avisar.
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+  // Como en UpdateActions: «Reiniciando…» solo para la foto en la que se tocó.
+  const [restartSeq, setRestartSeq] = useState<number | null>(null)
 
-  useEffect(() => {
-    const unsubAvailable = window.cerpAPI.onUpdateAvailable(({ version }) => {
-      setVersion(version)
-      setPercent(0)
-      setReady(false)
-      setDismissed(false)
-    })
-    const unsubProgress = window.cerpAPI.onUpdateDownloadProgress(({ percent }) => {
-      setPercent(percent)
-    })
-    const unsubDownloaded = window.cerpAPI.onUpdateDownloaded(({ version }) => {
-      setVersion(version)
-      setReady(true)
-      setPercent(100)
-    })
-    return () => {
-      unsubAvailable()
-      unsubProgress()
-      unsubDownloaded()
-    }
-  }, [])
+  const state = snapshot?.state
+  if (!snapshot || !state || snapshot.required) return null
+  if (state.status !== 'available' && state.status !== 'downloading' && state.status !== 'downloaded') return null
 
-  // Nada para mostrar, o el usuario cerró el aviso de "descargando".
-  if (!version) return null
-  if (!ready && dismissed) return null
+  const ready = state.status === 'downloaded'
+  const key = `${ready ? 'ready' : 'downloading'}:${state.version}`
+  if (dismissedKey === key) return null
+  const percent = state.status === 'downloading' ? state.percent : ready ? 100 : 0
+  const restarting = restartSeq === snapshot.seq
 
-  const handleRestart = async (): Promise<void> => {
-    setRestarting(true)
-    await window.cerpAPI.quitAndInstallUpdate()
+  const handleRestart = (): void => {
+    setRestartSeq(snapshot.seq)
+    install()
   }
 
   return (
@@ -61,7 +53,7 @@ export function UpdateBanner(): ReactElement | null {
             <>
               <p className="text-sm font-medium text-slate-800">Actualización lista</p>
               <p className="mt-0.5 text-xs text-slate-500">
-                La versión {version} se instalará al reiniciar CERP IA.
+                La versión {state.version} se instalará al reiniciar CERP IA.
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <button
@@ -71,8 +63,10 @@ export function UpdateBanner(): ReactElement | null {
                 >
                   {restarting ? 'Reiniciando…' : 'Reiniciar para actualizar'}
                 </button>
+                {/* Oculta el aviso de esta versión (antes no hacía nada: "lista" ignoraba
+                    el cierre). Se instala igual al cerrar la app, o desde Configuración. */}
                 <button
-                  onClick={() => setDismissed(true)}
+                  onClick={() => setDismissedKey(key)}
                   disabled={restarting}
                   className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100"
                 >
@@ -84,13 +78,10 @@ export function UpdateBanner(): ReactElement | null {
             <>
               <p className="text-sm font-medium text-slate-800">Descargando actualización</p>
               <p className="mt-0.5 text-xs text-slate-500">
-                Nueva versión {version} — se instalará sin interrumpir tu trabajo.
+                Nueva versión {state.version} — se instalará sin interrumpir tu trabajo.
               </p>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full rounded-full bg-brand-orange transition-all duration-300"
-                  style={{ width: `${percent ?? 0}%` }}
-                />
+              <div className="mt-2">
+                <UpdateProgressBar percent={percent} />
               </div>
             </>
           )}
@@ -98,7 +89,7 @@ export function UpdateBanner(): ReactElement | null {
 
         {!ready && (
           <button
-            onClick={() => setDismissed(true)}
+            onClick={() => setDismissedKey(key)}
             className="shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
             aria-label="Cerrar"
           >

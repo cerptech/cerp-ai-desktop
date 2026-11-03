@@ -6,6 +6,7 @@ import { CreditHistoryPanel } from './CreditHistoryPanel'
 import { SessionStatusBadge } from './SessionStatusBadge'
 import { AccountMenu } from './AccountMenu'
 import { ConnectedAppsPanel } from '../integrations/ConnectedAppsPanel'
+import { SettingsModal } from '../settings/SettingsModal'
 
 interface AppLayoutProps {
   children: ReactNode
@@ -23,6 +24,7 @@ const NO_DRAG = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
 export function AppLayout({ children, userName, userEmail, onLogout, sessionActive = false, onShowOnboarding }: AppLayoutProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [showApps, setShowApps] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   // Ventana única (Ola 2): sin barra de título nativa — este header ES la barra
   // de arrastre. `titleBarOverlay` (Windows/Linux) dibuja min/max/cerrar sobre
   // la esquina superior derecha; `hiddenInset` (macOS) deja el semáforo a la
@@ -69,7 +71,13 @@ export function AppLayout({ children, userName, userEmail, onLogout, sessionActi
                 <CircleHelp className="size-[15px]" strokeWidth={2} aria-hidden="true" />
               </button>
             )}
-            <AccountMenu userName={userName} userEmail={userEmail} onShowHistory={() => setShowHistory(true)} onLogout={onLogout} />
+            <AccountMenu
+              userName={userName}
+              userEmail={userEmail}
+              onShowHistory={() => setShowHistory(true)}
+              onShowSettings={() => setShowSettings(true)}
+              onLogout={onLogout}
+            />
           </div>
         )}
       </header>
@@ -79,6 +87,7 @@ export function AppLayout({ children, userName, userEmail, onLogout, sessionActi
 
       {showHistory && <CreditHistoryPanel onClose={() => setShowHistory(false)} />}
       {showApps && <ConnectedAppsPanel onClose={() => setShowApps(false)} />}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   )
 }

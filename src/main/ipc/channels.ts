@@ -99,10 +99,13 @@ export const IPC_CHANNELS = {
   // App
   APP_GET_VERSION: 'app:get-version',
 
-  // Auto-update (main → renderer events + renderer → main action)
-  UPDATE_AVAILABLE: 'update:available',
-  UPDATE_DOWNLOAD_PROGRESS: 'update:download-progress',
-  UPDATE_DOWNLOADED: 'update:downloaded',
+  // Auto-update. main → renderer: UPDATE_STATE con la foto completa (UpdaterSnapshot)
+  // en cada cambio; reemplaza a los eventos sueltos update:available /
+  // download-progress / downloaded. renderer → main: pedir la foto al montar, buscar
+  // a pedido (sin duplicar un chequeo o una descarga en curso) y reiniciar e instalar.
+  UPDATE_STATE: 'update:state',
+  UPDATE_GET_STATE: 'update:get-state',
+  UPDATE_CHECK: 'update:check',
   UPDATE_QUIT_AND_INSTALL: 'update:quit-and-install',
 
   // Setup (Python + Git)

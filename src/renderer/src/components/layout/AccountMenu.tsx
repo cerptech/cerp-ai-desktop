@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, History, LogOut } from 'lucide-react'
+import { ChevronDown, History, LogOut, Settings } from 'lucide-react'
 
 interface AccountMenuProps {
   userName: string
   userEmail?: string
   onShowHistory: () => void
+  /** Abre Configuración (hoy: Actualizaciones). */
+  onShowSettings?: () => void
   onLogout?: () => void
 }
 
@@ -20,10 +22,10 @@ function initialsOf(name: string): string {
 }
 
 /**
- * Avatar de la cabecera con su menú: la cuenta, el historial de créditos y
- * cerrar sesión (antes eran tres textos sueltos en la barra).
+ * Avatar de la cabecera con su menú: la cuenta, el historial de créditos,
+ * Configuración y cerrar sesión (antes eran tres textos sueltos en la barra).
  */
-export function AccountMenu({ userName, userEmail, onShowHistory, onLogout }: AccountMenuProps) {
+export function AccountMenu({ userName, userEmail, onShowHistory, onShowSettings, onLogout }: AccountMenuProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -75,6 +77,17 @@ export function AccountMenu({ userName, userEmail, onShowHistory, onLogout }: Ac
             <History className="size-[15px]" strokeWidth={2} aria-hidden="true" />
             Historial de créditos
           </button>
+          {onShowSettings && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setOpen(false); onShowSettings() }}
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-brand-black transition-colors hover:bg-black/5"
+            >
+              <Settings className="size-[15px]" strokeWidth={2} aria-hidden="true" />
+              Configuración
+            </button>
+          )}
           {onLogout && (
             <button
               type="button"
