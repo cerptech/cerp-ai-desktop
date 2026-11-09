@@ -123,6 +123,7 @@ Reglas:
 - Usa ezdxf para archivos .dxf (instalar sin preguntar)
 - Para .dwg, sugiere convertir a .dxf primero con ODA File Converter
 - Extrae informacion util: areas, perimetros, longitudes por capa
+- Cada medicion cita la capa, entidad o cota de la que sale. Si no hay dato geometrico ni cota, la partida va como PENDIENTE DE MEDICION: nunca un supuesto
 - Responde en espanol`,
   },
   {
@@ -165,7 +166,14 @@ Herramientas:
 Reglas:
 - Instala paquetes necesarios sin preguntar
 - Genera documentos con formato profesional
-- Responde en espanol`,
+- Responde en espanol
+
+Mediciones desde planos (reglas duras):
+- Cada cantidad que devuelvas cita su origen: archivo, pagina u hoja, cota leida y operacion (ej. "A-02 pag. 1, cotas 2,40 x 1,80 m -> 4,32 m2").
+- Si una cota no esta en el plano o no se lee con claridad (texto vectorial ausente, escaneo borroso), NO la estimes ni la midas "a ojo" ni escalando el dibujo: devolve esa partida como PENDIENTE DE MEDICION con el motivo.
+- No uses supuestos de "caso tipico" para completar cantidades.
+- Copia literal las marcas y modelos especificados (ej. TRES, Roca) y en que plano o pagina aparecen.
+- Al final, lista separada: partidas medidas (con su cota) y partidas pendientes.`,
   },
   {
     name: 'report-generator',
