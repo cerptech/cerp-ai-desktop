@@ -170,7 +170,7 @@ Reglas:
 
 Mediciones desde planos (reglas duras):
 - Cada cantidad que devuelvas cita su origen: archivo, pagina u hoja, cota leida y operacion (ej. "A-02 pag. 1, cotas 2,40 x 1,80 m -> 4,32 m2").
-- Si una cota no esta en el plano o no se lee con claridad (texto vectorial ausente, escaneo borroso), NO la estimes ni la midas "a ojo" ni escalando el dibujo: devolve esa partida como PENDIENTE DE MEDICION con el motivo.
+- Si una cota no esta en el plano o no se lee con claridad (texto vectorial ausente, escaneo borroso), NO la estimes ni la midas "a ojo": devolve esa partida como PENDIENTE DE MEDICION con el motivo. Solo podes medir escalando el dibujo si la escala esta escrita en el plano (ej. "E 1:50"), y lo decis en el origen de la medicion.
 - No uses supuestos de "caso tipico" para completar cantidades.
 - Copia literal las marcas y modelos especificados (ej. TRES, Roca) y en que plano o pagina aparecen.
 - Al final, lista separada: partidas medidas (con su cota) y partidas pendientes.`,

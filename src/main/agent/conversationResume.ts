@@ -11,9 +11,9 @@ import { existsSync } from 'node:fs'
  *
  * Ahora: (1) los adjuntos de toda la conversación se listan aparte, con su estado
  * en disco, y se exige volver a leerlos antes de usar cualquier dato que salga de
- * ellos; (2) los dos últimos mensajes del agente (donde suele estar la tabla del
- * presupuesto) no se cortan a 4000; (3) si falta algo, el agente lo dice en vez de
- * reconstruirlo.
+ * ellos; (2) el último mensaje del agente y el último con una tabla (el presupuesto)
+ * no se cortan a 4000; (3) el historial tiene un tope total; (4) si falta algo, el
+ * agente lo dice en vez de reconstruirlo.
  */
 
 export type HistoryMessage = { role: 'user' | 'assistant'; content: string }
@@ -21,8 +21,25 @@ export type HistoryMessage = { role: 'user' | 'assistant'; content: string }
 const ATTACHMENT_LINE = /^\[Archivo adjunto: (.+)\]$/gm
 const DEFAULT_CAP = 4000
 // Una tabla de presupuesto de ~80 partidas en markdown ronda los 15-20k caracteres.
-const RECENT_ASSISTANT_CAP = 30000
-const RECENT_ASSISTANT_COUNT = 2
+const KEPT_ASSISTANT_CAP = 30000
+// Tope del historial completo: se recortan primero los mensajes más antiguos.
+const TOTAL_HISTORY_CAP = 120000
+const TABLE_LINE = /^\s*\|.*\|\s*$/m
+
+/**
+ * Solo se mira en disco una ruta local absoluta (C:\… o /…). Nunca UNC (\\host\share):
+ * el texto sale del historial, y un stat sobre UNC dispara autenticación SMB y puede
+ * bloquear el proceso main con una unidad de red caída.
+ */
+export function isLocalAbsolutePath(p: string): boolean {
+  if (p.startsWith('\\\\') || p.startsWith('//')) return false
+  return /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('/')
+}
+
+function attachmentStatus(p: string, fileExists: (path: string) => boolean): string {
+  if (!isLocalAbsolutePath(p)) return 'ruta de red o no local: pedile al usuario que lo adjunte de nuevo si lo necesitás'
+  return fileExists(p) ? 'disponible' : 'NO ENCONTRADO en el equipo'
+}
 
 export function extractAttachmentPaths(history: HistoryMessage[]): string[] {
   const paths = new Set<string>()
@@ -43,10 +60,31 @@ export function buildHistoryBlock(
 ): string {
   if (history.length === 0) return ''
 
-  // Índices de los últimos mensajes del agente, que se conservan más largos.
-  const recentAssistant = new Set<number>()
-  for (let i = history.length - 1; i >= 0 && recentAssistant.size < RECENT_ASSISTANT_COUNT; i--) {
-    if (history[i].role === 'assistant') recentAssistant.add(i)
+  // Se conservan largos: el último mensaje del agente, y el último que tenga una tabla
+  // (el presupuesto suele estar ahí aunque después vinieran un par de «¿Confirmás?»).
+  const kept = new Set<number>()
+  const lastAssistant = history.map((m) => m.role).lastIndexOf('assistant')
+  if (lastAssistant >= 0) kept.add(lastAssistant)
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'assistant' && TABLE_LINE.test(history[i].content)) {
+      kept.add(i)
+      break
+    }
+  }
+
+  const rendered = history.map((msg, i) => {
+    const speaker = msg.role === 'user' ? '**Usuario**' : '**Agente (vos)**'
+    const cap = kept.has(i) ? KEPT_ASSISTANT_CAP : DEFAULT_CAP
+    return `\n${speaker}:\n${truncate(msg.content, cap)}\n\n---\n`
+  })
+  // Tope total: se descartan los mensajes más antiguos (nunca los conservados).
+  let size = rendered.reduce((s, r) => s + r.length, 0)
+  let omitted = 0
+  for (let i = 0; i < rendered.length && size > TOTAL_HISTORY_CAP; i++) {
+    if (kept.has(i)) continue
+    size -= rendered[i].length
+    rendered[i] = ''
+    omitted++
   }
 
   let block = `
@@ -56,11 +94,8 @@ export function buildHistoryBlock(
 Esta sesion del SDK acaba de iniciarse pero la conversacion con el usuario ya tiene contexto previo. Estos son los mensajes anteriores entre el usuario y vos (el agente). Usalos como contexto para continuar coherente:
 
 `
-  history.forEach((msg, i) => {
-    const speaker = msg.role === 'user' ? '**Usuario**' : '**Agente (vos)**'
-    const cap = recentAssistant.has(i) ? RECENT_ASSISTANT_CAP : DEFAULT_CAP
-    block += `\n${speaker}:\n${truncate(msg.content, cap)}\n\n---\n`
-  })
+  if (omitted > 0) block += `\n[${omitted} mensajes antiguos omitidos por longitud]\n`
+  block += rendered.join('')
 
   const attachments = extractAttachmentPaths(history)
   if (attachments.length > 0) {
@@ -70,7 +105,7 @@ Esta sesion del SDK acaba de iniciarse pero la conversacion con el usuario ya ti
 
 En esta sesion NO tenes el contenido de estos archivos: solo sus rutas. Lo que leiste de ellos en sesiones anteriores (cotas, mediciones, marcas, precios) NO esta en tu contexto.
 
-${attachments.map((p) => `- ${p} — ${fileExists(p) ? 'disponible' : 'NO ENCONTRADO en el equipo'}`).join('\n')}
+${attachments.map((p) => `- ${p} — ${attachmentStatus(p, fileExists)}`).join('\n')}
 
 Reglas:
 - Antes de usar cualquier dato que salga de un adjunto (mediciones, cotas, partidas, productos especificados), volve a leerlo con Read o delegalo al subagente que corresponda. No lo reconstruyas a partir de lo que dice el historial.

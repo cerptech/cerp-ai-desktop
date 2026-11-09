@@ -1510,7 +1510,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/quotes',
   },
-  // Al final del objeto: el orden de tools es parte del prefijo cacheable (ADR 009).
+  // Al final de toolSchemas (no de la lista completa del servidor, donde cerpApiTools va en medio).
   get_budget_version_diff: {
     description:
       'Compara una version de presupuesto de CERP con la version anterior (la que se creo con "nueva version"): partidas añadidas, quitadas y modificadas, con su importe, y la diferencia de totales. ' +

@@ -21,21 +21,43 @@ export function setPlanModeState(enabled: boolean): void {
 }
 
 /**
- * Escrituras que SÍ pueden correr en Modo plan:
+ * Tools no-readOnly que SÍ pueden correr en Modo plan:
  * - `ask_user_question`: es como el agente pregunta mientras planifica.
- * - `quote_*`: cortafuegos de créditos (reserva/commit/refund/registro); no tocan datos
- *   del negocio y el flujo de cotización las llama al inicio, antes de cualquier plan.
+ * - `quote_reserve` / `quote_refund` / `quote_register_files` / `quote_mark_synced`:
+ *   cortafuegos de créditos; no tocan datos del negocio y la cotización reserva al
+ *   inicio, antes del plan. `quote_commit` y `quote_consume_*` quedan bloqueadas: sin
+ *   presupuesto escrito no hay nada que confirmar.
+ * - `run_app_tool` e `import_budget_rows`: deciden ellas mismas (lectura de una app sin
+ *   confirmación y vista previa con dryRun sí; envío o import real no). Ver
+ *   `blockIfPlanMode` en sus handlers.
  */
-const ALLOWED_WRITES_IN_PLAN_MODE = new Set(['ask_user_question'])
+const ALLOWED_IN_PLAN_MODE = new Set([
+  'ask_user_question',
+  'quote_reserve',
+  'quote_refund',
+  'quote_register_files',
+  'quote_mark_synced',
+  'run_app_tool',
+  'import_budget_rows',
+])
 
 export function isBlockedInPlanMode(name: string, readOnly: boolean | undefined): boolean {
   if (readOnly === true) return false
-  if (name.startsWith('quote_')) return false
-  return !ALLOWED_WRITES_IN_PLAN_MODE.has(name)
+  return !ALLOWED_IN_PLAN_MODE.has(name)
+}
+
+/** Para las tools que deciden por argumento: el resultado de error, o null si puede seguir. */
+export function blockIfPlanMode(toolName: string, isWrite: boolean) {
+  if (!isWrite || !getPlanModeState()) return null
+  logger.warn(`Modo plan: bloqueada la escritura de ${toolName}`)
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify({ error: PLAN_MODE_BLOCKED_MESSAGE, planMode: true }) }],
+    isError: true,
+  }
 }
 
 export const PLAN_MODE_BLOCKED_MESSAGE =
-  'Modo plan activado: esta herramienta modifica datos en CERP y no se ejecutó. ' +
+  'Modo plan activado: esta acción escribe datos (en CERP o hacia una app conectada) y no se ejecutó. ' +
   'No vuelvas a intentarlo ni digas que lo hiciste. Terminá el turno ahora: mostrá el plan ' +
   'completo y pedile al usuario que desactive el Modo plan (el interruptor junto al botón Enviar) ' +
   'y te responda para ejecutarlo.'

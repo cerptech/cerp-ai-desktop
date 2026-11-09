@@ -18,14 +18,23 @@ import { logger } from '../utils/logger'
  * El presupuesto ya guardado en CERP se recalcula en el core (`recalculate_budget`).
  */
 
-const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100
+/**
+ * Misma implementación que `toCents` del core (cerp-server, budgetPricing/salePricing.ts):
+ * half-up simétrico, con `toPrecision(15)` para absorber el ruido binario.
+ */
+export function round2(x: number): number {
+  if (typeof x !== 'number' || !Number.isFinite(x)) return 0
+  const cents = Math.round(Number((Math.abs(x) * 100).toPrecision(15)))
+  if (cents === 0) return 0
+  return (x < 0 ? -cents : cents) / 100
+}
 
 const ItemSchema = z.object({
   code: z.string().optional().describe('Codigo de la partida (si tiene). Se usa para emparejarla con la version anterior.'),
   chapter: z.string().optional().describe('Capitulo al que pertenece (nombre o numero)'),
   description: z.string().describe('Descripcion de la partida'),
   unit: z.string().optional(),
-  quantity: z.number().describe('Medicion (cantidad). Si la medicion esta pendiente, 0 y status "pendiente".'),
+  quantity: z.number().min(0).describe('Medicion (cantidad). Si la medicion esta pendiente, 0 y status "pendiente" (cuenta 0 en el total).'),
   unitPrice: z.number().describe('Precio unitario sin impuestos'),
   status: z.enum(['medida', 'pendiente']).optional().describe('"pendiente" si la cantidad no sale de una cota del plano'),
 })
@@ -43,10 +52,34 @@ const ComputeBudgetTotalsSchema = z.object({
 
 type Item = z.infer<typeof ItemSchema>
 
-function itemKey(it: Item): string {
-  const code = it.code?.trim().toLowerCase()
-  if (code) return `c:${code}`
-  return `d:${it.description.trim().toLowerCase().replace(/\s+/g, ' ')}`
+const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+/**
+ * Empareja partidas entre versiones, uno a uno, en tres pasadas: mismo código (si las
+ * dos lo tienen), mismo capítulo + descripción, y misma descripción. Cada partida se
+ * empareja como mucho una vez, así dos «Puerta de paso» no se pisan, y una partida que
+ * gana o pierde el código o el capítulo no aparece como quitada y añadida a la vez.
+ * Devuelve, para cada índice de `next`, el índice emparejado de `prev` (o -1).
+ */
+function matchItems(prev: Item[], next: Item[]): number[] {
+  const used = new Set<number>()
+  const match = next.map(() => -1)
+  const passes: Array<(a: Item, b: Item) => boolean> = [
+    (a, b) => !!norm(a.code) && norm(a.code) === norm(b.code),
+    (a, b) => norm(a.chapter) === norm(b.chapter) && norm(a.description) === norm(b.description),
+    (a, b) => norm(a.description) === norm(b.description),
+  ]
+  for (const same of passes) {
+    next.forEach((n, i) => {
+      if (match[i] !== -1) return
+      const j = prev.findIndex((p, k) => !used.has(k) && same(p, n))
+      if (j !== -1) {
+        match[i] = j
+        used.add(j)
+      }
+    })
+  }
+  return match
 }
 
 function amountOf(it: Item): number {
@@ -76,24 +109,25 @@ export function computeBudgetTotals(input: z.infer<typeof ComputeBudgetTotalsSch
 
   let changes: Record<string, unknown> | undefined
   if (input.previousItems) {
-    const prev = new Map(input.previousItems.map((it) => [itemKey(it), { ...it, amount: amountOf(it) }]))
-    const next = new Map(items.map((it) => [itemKey(it), it]))
-    const added = items.filter((it) => !prev.has(itemKey(it))).map((it) => ({ code: it.code, description: it.description, amount: it.amount }))
-    const removed = [...prev.entries()]
-      .filter(([k]) => !next.has(k))
-      .map(([, it]) => ({ code: it.code, description: it.description, amount: it.amount }))
+    const prevItems = input.previousItems.map((it) => ({ ...it, amount: amountOf(it) }))
+    const match = matchItems(prevItems, items)
+    const matchedPrev = new Set(match.filter((j) => j !== -1))
+    const brief = (it: Item & { amount: number }) => ({ code: it.code, chapter: it.chapter, description: it.description, amount: it.amount })
+    const added = items.filter((_, i) => match[i] === -1).map(brief)
+    const removed = prevItems.filter((_, j) => !matchedPrev.has(j)).map(brief)
     const modified = items
-      .filter((it) => prev.has(itemKey(it)))
-      .map((it) => ({ it, before: prev.get(itemKey(it))! }))
+      .map((it, i) => ({ it, before: match[i] === -1 ? undefined : prevItems[match[i]] }))
+      .filter((x): x is { it: (typeof items)[number]; before: (typeof prevItems)[number] } => x.before !== undefined)
       .filter(({ it, before }) => it.quantity !== before.quantity || round2(it.unitPrice) !== round2(before.unitPrice))
       .map(({ it, before }) => ({
         code: it.code,
+        chapter: it.chapter,
         description: it.description,
         quantity: { before: before.quantity, after: it.quantity },
         unitPrice: { before: round2(before.unitPrice), after: round2(it.unitPrice) },
         amount: { before: before.amount, after: it.amount, delta: round2(it.amount - before.amount) },
       }))
-    const previousPem = round2([...prev.values()].reduce((s, it) => s + it.amount, 0))
+    const previousPem = round2(prevItems.reduce((s, it) => s + it.amount, 0))
     changes = {
       added,
       removed,
@@ -117,8 +151,9 @@ export function computeBudgetTotals(input: z.infer<typeof ComputeBudgetTotalsSch
 export function createBudgetMathTools() {
   const computeBudgetTotalsTool = tool(
     'compute_budget_totals',
-    'Calcula por codigo los importes de un presupuesto propuesto: importe de cada partida, subtotales por capitulo, PEM, GG, BI, PEC, IVA y total. ' +
-      'OBLIGATORIA antes de mostrar cualquier tabla de presupuesto, total o diferencia entre versiones: NUNCA sumes ni calcules porcentajes de cabeza. ' +
+    'Calcula por codigo los importes de un presupuesto PROPUESTO (todavia no guardado en CERP): importe de cada partida, subtotales por capitulo, PEM, GG y BI sobre el PEM, PEC, un IVA y total. ' +
+      'Usala antes de mostrar la tabla del plan o una diferencia entre versiones: NUNCA sumes ni calcules porcentajes de cabeza. ' +
+      'Solo modela GG+BI sobre PEM y un unico impuesto: si el presupuesto tiene otro K, varios impuestos o retenciones, las cifras validas son las de CERP (get_budget_details o la vista previa de una tool de import). ' +
       'Si estas reformulando, pasale tambien previousItems y te devuelve las partidas añadidas, quitadas y modificadas. ' +
       'No escribe nada en CERP (funciona en Modo plan). Para un presupuesto ya guardado en CERP usa recalculate_budget.',
     ComputeBudgetTotalsSchema as any,
