@@ -64,10 +64,13 @@ const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase().replace(/
 function matchItems(prev: Item[], next: Item[]): number[] {
   const used = new Set<number>()
   const match = next.map(() => -1)
+  // Dos partidas con código distinto nunca son la misma: un ítem cambiado por otro con
+  // el mismo texto tiene que salir como quitado + añadido.
+  const codesDiffer = (a: Item, b: Item) => !!norm(a.code) && !!norm(b.code) && norm(a.code) !== norm(b.code)
   const passes: Array<(a: Item, b: Item) => boolean> = [
     (a, b) => !!norm(a.code) && norm(a.code) === norm(b.code),
-    (a, b) => norm(a.chapter) === norm(b.chapter) && norm(a.description) === norm(b.description),
-    (a, b) => norm(a.description) === norm(b.description),
+    (a, b) => !codesDiffer(a, b) && norm(a.chapter) === norm(b.chapter) && norm(a.description) === norm(b.description),
+    (a, b) => !codesDiffer(a, b) && norm(a.description) === norm(b.description),
   ]
   for (const same of passes) {
     next.forEach((n, i) => {

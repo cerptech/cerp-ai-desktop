@@ -37,7 +37,7 @@ export function isLocalAbsolutePath(p: string): boolean {
 }
 
 function attachmentStatus(p: string, fileExists: (path: string) => boolean): string {
-  if (!isLocalAbsolutePath(p)) return 'ruta de red o no local: pedile al usuario que lo adjunte de nuevo si lo necesitás'
+  if (!isLocalAbsolutePath(p)) return 'ruta de red o no local: si hace falta, pedir al usuario que lo adjunte de nuevo'
   return fileExists(p) ? 'disponible' : 'NO ENCONTRADO en el equipo'
 }
 
