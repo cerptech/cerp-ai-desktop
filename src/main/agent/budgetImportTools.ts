@@ -5,6 +5,7 @@ import { basename, extname, isAbsolute } from 'path'
 import { CompanyChangedError, HttpClient, HttpError, NoActiveCompanyError, SessionRevokedError } from '../utils/httpClient'
 import { logger } from '../utils/logger'
 import { waitForAnswer } from './askUserBridge'
+import { blockIfPlanMode } from './planModeGuard'
 import type { AskUserQuestionItem } from '../ipc/types'
 
 /**
@@ -471,6 +472,9 @@ export function createBudgetImportTools(httpClient: HttpClient, conversationId: 
         const parsed = ImportBudgetRowsSchema.safeParse(args)
         if (!parsed.success) return errorResult(describeIssues(parsed.error))
         const input = parsed.data
+        // Modo plan: la vista previa (dryRun, por defecto) sí; el import real, no.
+        const planBlocked = blockIfPlanMode('import_budget_rows', input.dryRun === false)
+        if (planBlocked) return planBlocked
 
         const read = readRowsFile(input.rowsFile)
         if ('error' in read) return errorResult(read.error)

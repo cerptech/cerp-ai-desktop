@@ -5,6 +5,7 @@ import { CompanyChangedError, HttpClient, HttpError, NoActiveCompanyError, Sessi
 import { logger } from '../utils/logger'
 import { httpsUrlOrNull } from '../utils/httpsUrl'
 import { waitForAnswer } from './askUserBridge'
+import { blockIfPlanMode } from './planModeGuard'
 import { describeAppAction, toolkitDisplayName } from './appActionCard'
 import type { AskUserQuestionItem } from '../ipc/types'
 
@@ -274,6 +275,9 @@ function createRunAppTool(httpClient: HttpClient, conversationId: string) {
         return errorResult(message)
       }
       if ('notFound' in info) return errorResult(info.notFound)
+      // Modo plan: leer de una app (sin confirmación) sí; enviar o modificar, no.
+      const planBlocked = blockIfPlanMode('run_app_tool', info.needsConfirmation)
+      if (planBlocked) return planBlocked
 
       const ask = () => confirmWithUser(conversationId, confirmQuestion(slug, input, info.toolkit), logTag)
 

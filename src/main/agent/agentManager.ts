@@ -3,6 +3,8 @@ import { app, BrowserWindow } from 'electron'
 import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import { join } from 'path'
 import { createCerpMcpServer } from './mcpServer'
+import { setPlanModeState } from './planModeGuard'
+import { buildHistoryBlock } from './conversationResume'
 import { setAskUserWindow, cancelPendingQuestion, hasPendingQuestion } from './askUserBridge'
 import { getActiveQuoteId, getActiveReservationId, stopAllQuoteHeartbeats, stopQuoteHeartbeat } from './quoteHeartbeat'
 import { emitQuoteFirewallEvent, setQuoteEventWindow } from './quoteEventsBridge'
@@ -295,6 +297,8 @@ const DEFAULT_CONV = '__default__'
 
 // Plan Mode — global (es un toggle de UI, no por-conversación). When true the
 // agent cannot execute write operations; the user reviews the plan and resumes.
+// El estado vive en planModeGuard.ts: el servidor MCP lo lee en cada llamada y
+// bloquea las escrituras (no basta con la directiva del prompt).
 let planModeEnabled = false
 
 export function getPlanMode(): boolean {
@@ -309,6 +313,7 @@ export function getPlanMode(): boolean {
 export function setPlanMode(enabled: boolean): void {
   if (planModeEnabled === enabled) return
   planModeEnabled = enabled
+  setPlanModeState(enabled)
   logger.info(`Plan Mode ${enabled ? 'enabled' : 'disabled'}`)
   // La conversación sigue (el próximo mensaje reabre la sesión): una cotización
   // en curso conserva su reserva.
@@ -1167,26 +1172,9 @@ function buildFullSystemPrompt(
   // — Plan Mode toggle closes the session, restored conversations also reset
   // it). Re-injecting the prior messages keeps the model coherent across
   // session boundaries.
+  // Adjuntos y último presupuesto: ver conversationResume.ts (caso Cresata 26-10).
   if (conversationHistory && conversationHistory.length > 0) {
-    fullSystemPrompt += `
-
-## HISTORIAL DE LA CONVERSACION ACTUAL
-
-Esta sesion del SDK acaba de iniciarse pero la conversacion con el usuario ya tiene contexto previo. Estos son los mensajes anteriores entre el usuario y vos (el agente). Usalos como contexto para continuar coherente:
-
-`
-    for (const msg of conversationHistory) {
-      const speaker = msg.role === 'user' ? '**Usuario**' : '**Agente (vos)**'
-      // Cap each message to keep the prompt bounded — long pasted budget
-      // tables don't help, we just need the gist.
-      const content = msg.content.length > 4000
-        ? msg.content.slice(0, 4000) + '\n\n[...mensaje truncado...]'
-        : msg.content
-      fullSystemPrompt += `\n${speaker}:\n${content}\n\n---\n`
-    }
-    fullSystemPrompt += `
-Continua la conversacion respondiendo al ULTIMO mensaje del usuario teniendo en cuenta TODO lo que paso antes. Si el usuario dice algo como "confirmo" o "si" o "dale", interpretalo en el contexto del plan / pregunta inmediatamente anterior — NO le digas "no tengo contexto".
-`
+    fullSystemPrompt += buildHistoryBlock(conversationHistory)
   }
 
 
@@ -1200,7 +1188,7 @@ Continua la conversacion respondiendo al ULTIMO mensaje del usuario teniendo en 
 
 El usuario ha activado **Plan Mode** desde la UI. En este turno y los proximos hasta que el usuario lo desactive, debes cumplir ESTRICTAMENTE estas reglas:
 
-1. **NO ejecutes ninguna tool de escritura en CERP**. Eso incluye: \`create_project\`, \`create_budget\`, \`add_budget_chapter\`, \`add_budget_item\`, \`add_budget_items_batch\`, \`update_cost_items\`, \`update_budget_taxes\`, \`approve_budget\`, \`create_material\`, \`create_item\`, \`update_catalog_item\`, \`create_resource\`, \`update_resource\`, \`create_contact\`, \`update_contact\`, \`save_project_document\`, \`attach_budget_pdf\`, y cualquier otra que cree/modifique/borre datos en CERP. Tampoco \`run_app_tool\` (salvo para LEER de una app conectada, p.ej. traer emails) ni \`connect_app\`. Si el usuario te pide ejecutar, respondele que tiene que **desactivar Plan Mode** primero desde el toggle de la UI (esta al lado del boton Enviar).
+1. **NO ejecutes ninguna tool de escritura en CERP**. Eso incluye: \`create_project\`, \`create_budget\`, \`add_budget_chapter\`, \`add_budget_item\`, \`add_budget_items_batch\`, \`update_cost_items\`, \`update_budget_taxes\`, \`approve_budget\`, \`create_material\`, \`create_item\`, \`update_catalog_item\`, \`create_resource\`, \`update_resource\`, \`create_contact\`, \`update_contact\`, \`save_project_document\`, \`attach_budget_pdf\`, y cualquier otra que cree/modifique/borre datos en CERP. Tampoco \`run_app_tool\` (salvo para LEER de una app conectada, p.ej. traer emails) ni \`connect_app\`. Si el usuario te pide ejecutar, respondele que tiene que **desactivar Plan Mode** primero desde el toggle de la UI (esta al lado del boton Enviar). Estas tools estan BLOQUEADAS por el sistema: si llamas a una, devuelve un error de Modo plan y no se ejecuta. Siguen funcionando las lecturas de apps conectadas con \`run_app_tool\` y la vista previa de \`import_budget_rows\` (dryRun true); el envio o el import real se bloquean. No anuncies que vas a añadir, crear o cargar nada: en cuanto el plan necesite escribir, cortá el turno, mostrá el plan y pedí que desactive el Modo plan.
 
 2. **NO uses \`ExitPlanMode\`**. Esa tool del SDK no existe para nosotros. El control de aprobar/rechazar el plan lo hace el usuario manualmente con el toggle de Plan Mode en la UI. Si crees que terminaste de planificar, simplemente: (a) invoca \`ask_user_question\` para confirmar lo que falte aclarar (paso 1b del prompt), (b) DESPUES de recibir respuestas, muestra el plan completo formateado (paso 1c), (c) termina el mensaje con "¿Confirmas la carga? Desactiva Plan Mode y respondeme para que arranque."
 

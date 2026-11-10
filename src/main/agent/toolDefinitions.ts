@@ -1510,4 +1510,16 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/quotes',
   },
+  // Al final de toolSchemas (no de la lista completa del servidor, donde cerpApiTools va en medio).
+  get_budget_version_diff: {
+    description:
+      'Compara una version de presupuesto de CERP con la version anterior (la que se creo con "nueva version"): partidas añadidas, quitadas y modificadas, con su importe, y la diferencia de totales. ' +
+      'Usala cuando el usuario reformula o revisa un presupuesto que ya tiene versiones en CERP, para mostrarle exactamente que cambio. ' +
+      'Si responde NO_PREVIOUS_VERSION, es la primera version: no hay contra que comparar.',
+    schema: z.object({
+      budgetId: z.string().describe('ID de la version NUEVA del presupuesto'),
+    }),
+    method: 'GET',
+    endpoint: '/budgets/:budgetId/version-diff',
+  },
 }

@@ -19,6 +19,8 @@ import { emitQuoteFirewallEvent } from './quoteEventsBridge'
 import { getLoadContext, rememberLoadContext } from './loadContext'
 import { notifyUser } from './desktopNotifier'
 import { emitHtmlCanvasEvent } from './htmlCanvasBridge'
+import { guardWritesInPlanMode } from './planModeGuard'
+import { createBudgetMathTools } from './budgetMathTools'
 
 // ── create_tasks_batch: chunking + claves idempotentes ───────────────────────
 
@@ -562,7 +564,8 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
   return createSdkMcpServer({
     name: 'cerp',
     version: '2.0.0',
-    tools: [
+    // Modo plan: toda escritura devuelve error en vez de ejecutarse (planModeGuard.ts).
+    tools: guardWritesInPlanMode([
       askUserTool,
       attachBudgetPdfTool,
       downloadBudgetAttachmentTool,
@@ -587,7 +590,9 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       // Importar un presupuesto tal cual (RQM-150): POST /budgets/:id/import-rows con las
       // filas del archivo; vista previa por defecto.
       ...createBudgetImportTools(httpClient, conversationId),
-    ],
+      // Totales y diferencias por código (caso Cresata): local, sin escritura. AL FINAL (ADR 009).
+      ...createBudgetMathTools(),
+    ]),
   })
 }
 
