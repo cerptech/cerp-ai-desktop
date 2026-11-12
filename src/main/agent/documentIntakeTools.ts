@@ -228,11 +228,16 @@ const CreateSupplierInvoiceSchema = z.object({
   projectId: objectId('projectId').optional().describe('ID del proyecto al que se imputa la factura. Omitir si es un gasto general sin obra'),
   constructionSiteId: objectId('constructionSiteId').optional().describe('ID de la obra. Omitir si es un gasto general sin obra'),
   constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra de TODA la factura, si el usuario la indicó: va a las líneas que no traen la suya'),
+  // Capítulo por línea (cerp-server, noviembre 2026): una línea SIN orden va a
+  // su capítulo (tarea del proyecto) y, sin él, al de la factura. Con orden
+  // manda el capítulo de la orden y el core ignora el de la línea.
+  taskId: objectId('taskId').optional().describe('ID del capítulo (tarea del proyecto) por defecto de las líneas sin orden, si el usuario lo indicó'),
   itemResolutions: z.array(z.object({
     description: z.string().describe('Descripción de la línea, igual que en extractedData.items'),
     // OC por línea (cerp-server, noviembre 2026): el coste de la factura se
     // reparte entre las órdenes de sus líneas; sin orden, va al proyecto.
     constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra de ESTA línea, si el usuario dijo que las líneas van a órdenes distintas'),
+    taskId: objectId('taskId').optional().describe('ID del capítulo (tarea del proyecto) de ESTA línea si no tiene orden, cuando el usuario reparte la factura entre capítulos'),
     itemId: objectId('itemId').optional().describe('Ítem existente que el usuario eligió reutilizar (de check_invoice_items_catalog)'),
     nature: z.enum(['material', 'item']).optional().describe('Si no hay itemId: "material" o "item" (ítem subcontratado 100%), según lo que eligió el usuario'),
   })).describe('Una entrada por cada línea, con lo que decidió el usuario. No lo decidas vos'),
@@ -449,13 +454,14 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
       'Si esa factura del mismo proveedor ya estaba cargada, no crea otra (duplicate:true). ' +
       'Sin projectId ni constructionSiteId queda como gasto general, sin imputar a ninguna obra (software, IT, oficina). ' +
       'Cada línea puede ir a su propia orden de obra (itemResolutions[].constructionOrderId): el coste se reparte entre las órdenes de sus líneas. ' +
+      'Una línea sin orden puede ir a su propio capítulo del proyecto (itemResolutions[].taskId; sin él, el de la factura, taskId). ' +
       'Solo llamar tras la confirmación explícita del usuario.',
     CreateSupplierInvoiceSchema as any,
     async (args: Record<string, unknown>) => {
       let parsed: z.infer<typeof CreateSupplierInvoiceSchema> | undefined
       try {
         parsed = CreateSupplierInvoiceSchema.parse(args)
-        const { filePath, supplierId, projectId, constructionSiteId, constructionOrderId, itemResolutions, overrides } = parsed
+        const { filePath, supplierId, projectId, constructionSiteId, constructionOrderId, taskId, itemResolutions, overrides } = parsed
         const data = { ...parsed.extractedData, ...(overrides ?? {}) }
 
         const pdfProblem = checkPdf(filePath, MAX_SUPPLIER_INVOICE_PDF_BYTES)
@@ -512,7 +518,7 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
         const itemIdCache = new Map<string, string>()
         const createdItems: string[] = []
         const failedLines: Array<{ description: string; error: string }> = []
-        const invoiceItems: Array<{ itemId: string; quantity: number; unit: string; unitCost: number; totalCost: number; taxRate: number; constructionOrderId?: string }> = []
+        const invoiceItems: Array<{ itemId: string; quantity: number; unit: string; unitCost: number; totalCost: number; taxRate: number; constructionOrderId?: string; taskId?: string }> = []
 
         for (const line of data.items) {
           const rawName = line.description.trim()
@@ -583,6 +589,8 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
             taxRate: line.taxRate ?? 0,
             // Sin la suya, el core le pone la de la factura (`constructionOrderId`).
             ...(resolution?.constructionOrderId ? { constructionOrderId: resolution.constructionOrderId } : {}),
+            // Capítulo propio de una línea sin orden; el core valida que sea del proyecto.
+            ...(!resolution?.constructionOrderId && resolution?.taskId ? { taskId: resolution.taskId } : {}),
           })
         }
 
@@ -614,6 +622,7 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
             ...(projectId ? { projectId } : {}),
             ...(constructionSiteId ? { constructionSiteId } : {}),
             ...(constructionOrderId ? { constructionOrderId } : {}),
+            ...(taskId ? { taskId } : {}),
             supplierInvoiceNumber: data.invoiceNumber || undefined,
             issueDate: issueDate.toISOString(),
             dueDate: dueDate!.toISOString(),
