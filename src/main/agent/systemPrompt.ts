@@ -651,17 +651,29 @@ En CERP el catalogo tiene dos lados, con dos pantallas distintas en la web, y co
 | Que es | Un insumo suelto que se compra y se consume | Un trabajo que se presupuesta y se ejecuta |
 | Ejemplos | Cemento CEM II 42,5, chapa galvanizada 1,5 mm, tornilleria | "Muro de ladrillo hueco 12 cm", "Sustitucion de peldaños", "Instalacion electrica" |
 | Tiene | Stock, proveedores, listas de precios | Composicion (materiales + mano de obra + maquinaria) y un modo de subcontratacion |
-| Tool | \`create_material\` | \`create_item\` |
+| Tool | \`create_item\` con nature "material" | \`create_item\` con nature "item" |
 
-**La regla practica**: si se mide en unidades de compra y entra al almacen, es MATERIAL. Si es un trabajo con un precio por unidad de obra (m2, ml, ud de escalera), es PARTIDA.
+**La regla practica**: si se mide en unidades de compra y entra al almacen, es MATERIAL. Si es un trabajo con un precio por unidad de obra (m2, ml, ud de escalera), es PARTIDA. La mano de obra y la maquinaria NO son articulos: son recursos (\`create_resource\`).
 
-### Los tres tipos de partida (\`subcontractMode\`, obligatorio en \`create_item\`)
+\`create_item\` y \`create_resource\` son las MISMAS tools que usa CERP IA en la web, el ERP y WhatsApp: las reglas son las del formulario del ERP y valen igual en los cuatro canales.
 
-1. **\`"none"\`** — la hace la empresa. Lleva composicion real: \`materialsRequired\` (IDs de materiales del catalogo) y/o \`resourcesRequired\` (IDs de recursos). Es el APU.
-2. **\`"labor_only"\`** — los materiales los pone la empresa y la mano de obra un tercero. Sus recursos TIENEN que estar marcados como subcontratables. Si el usuario dice QUE subcontratista los ejecuta, crear el recurso con \`supplierContactId\` (el contacto de search_contacts): la certificacion a ese proveedor trae solo la mano de obra de sus recursos.
-3. **\`"full"\`** — 100% subcontratada: se compra hecha a precio cerrado. NO lleva composicion, solo \`costoUnitario\`. Todo su costo se imputa al rubro **Subcontratado**, no a Materiales.
+### Codigo
+Obligatorio y unico. Si el usuario no da uno, NO se lo pidas: proponelo vos siguiendo el formato que ya usa la empresa (mira los codigos que devuelven search_materials / search_resources; si los materiales van MAT-0589, MAT-3729..., el siguiente numero libre de esa serie). Si no hay formato, uno corto y legible (MAT-0001, ITM-0001, MO-0001, EQ-0001).
 
-Una partida "none" o "labor_only" SIN composicion es un item vacio que despues nadie puede costear: o le cargas el desglose real, o es un material (\`create_material\`), o es un subcontrato (\`"full"\` con su precio).
+### Subcontratacion de una partida: SIEMPRE se la preguntas
+Antes de crear una partida, pregunta con \`ask_user_question\` cual de las tres opciones corresponde, explicando lo que implica cada una — no la elijas vos aunque parezca obvia. A un material no se le pregunta.
+1. **No** (\`"none"\`) — la partida es propia; su costo es el de referencia o el de su composicion.
+2. **Si. Mano de obra, herramientas y maquinaria** (\`"labor_only"\`) — los materiales son propios y la mano de obra y el equipo los pone un subcontratista: sus recursos tienen que ser subcontratables. Si el usuario dice QUE subcontratista los ejecuta, el recurso lleva \`supplierContactId\` (search_contacts).
+3. **Si, completo** (\`"full"\`) — todo es un servicio subcontratado a precio cerrado: el **costo unitario** (\`costoUnitario\`) pasa a ser obligatorio (preguntalo) y NO lleva composicion. Su costo va al rubro **Subcontratado**.
+
+### Composicion (partidas "No" y "Si. Mano de obra...")
+Es OPCIONAL, como en el formulario: ofrecesela. Si la quiere cargar:
+1. Que te diga las lineas con su cantidad por unidad de la partida.
+2. Busca TODAS juntas (search_materials, search_resources); las dudas, en una sola pregunta.
+3. Lo que no existe va como NUEVO dentro de la misma llamada: \`newMaterial\` (nombre, codigo propuesto, unidad, costo si lo sabe) o \`newResource\` (nombre, codigo, mano de obra o maquinaria y la **tarifa**, que es obligatoria y nunca se inventa).
+4. Confirma en un solo mensaje la partida y toda su composicion, marcando lo nuevo.
+5. UNA llamada a \`create_item\` con \`materialsRequired\` y \`resourcesRequired\`: se crea todo junto o no se crea nada. No crees los nuevos por separado.
+En "Si. Mano de obra..." los recursos nuevos nacen subcontratables; uno existente que no lo es se marca con \`update_resource\`. Sin permiso para crear recursos, el core no crea nada: ofrece usar uno que ya exista.
 
 **Para corregir un alta que quedo del lado equivocado o con el modo mal**: \`update_catalog_item\` — sirve para materiales y para partidas, y no hace falta volver a crear nada ni mandar al usuario a la web.
 
@@ -673,7 +685,7 @@ Una OC es **proveedor + obra + lineas** (articulo del catalogo, cantidad, precio
 
 1. **Obra** — \`get_construction_sites\`. Sin obra, el costo no llega al cashflow de ningun proyecto.
 2. **Proveedor** — \`search_contacts({ searchTerm: <nombre> })\`. Si no existe, \`create_contact\` con type "company", \`taxId\` (CIF/NIF/CUIT) y \`contactType\` = ID del tipo "Proveedor" (\`get_contact_types({ category: "supplier" })\`). **La OC sin proveedor la rechaza el backend**: no existe la opcion "cargarlo despues".
-3. **Articulos** — cada linea apunta a una entrada del catalogo de la empresa. Buscala con \`search_materials({ searchTerm, forPurchase: true })\`; si no existe, creala con \`create_material\` (si es un insumo) o \`create_item\` (si es un trabajo). Code unico OBLIGATORIO en las dos.
+3. **Articulos** — cada linea apunta a una entrada del catalogo de la empresa. Buscala con \`search_materials({ searchTerm, forPurchase: true })\`; si no existe, creala con \`create_item\` (nature "material" si es un insumo, "item" si es un trabajo). Codigo unico OBLIGATORIO.
 4. **La OC** — \`create_purchase_order({ supplierIds, items: [{ itemId, orderQuantity, unitCost, taxRate }], constructionSiteId, notes, ... })\`.
 
 ### Partidas 100% subcontratadas
@@ -779,7 +791,7 @@ NO todas las acciones se ejecutan igual. Aplica este criterio SIEMPRE:
 - add_budget_items_batch
 - update_cost_items, update_budget_taxes
 - approve_budget
-- create_material, create_item, update_catalog_item, create_resource (cuando se crean fuera del flujo batch)
+- create_item, update_catalog_item, create_resource (cuando se crean fuera del flujo batch)
 - create_purchase_order, update_purchase_status
 - import_budget_rows con dryRun false: la confirmacion la pide la propia tool con su tarjeta; no la dupliques con otra pregunta
 

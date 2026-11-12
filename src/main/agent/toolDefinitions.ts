@@ -335,7 +335,7 @@ export const toolSchemas: Record<string, ToolDef> = {
   create_purchase_order: {
     description:
       'Crea una orden de compra a uno o varios proveedores. Antes de llamarla hay que resolver los IDs: la obra con get_construction_sites, ' +
-      'el proveedor con search_contacts (o create_contact si no existe) y CADA articulo con search_materials (o create_material si no existe). Nunca inventar un ID. ' +
+      'el proveedor con search_contacts (o create_contact si no existe) y CADA articulo con search_materials (o create_item con nature "material" si no existe). Nunca inventar un ID. ' +
       'IMPUESTOS: si una linea no trae taxRate el backend le aplica 21% de IVA. Para una orden a base imponible (sin impuesto) hay que mandar taxRate: 0 en TODAS las lineas. ' +
       'ESTADO: sin el permiso de aprobar compras la orden nace en "draft" aunque se pida otro estado — es correcto (pedir una compra no es autorizarla); hay que contarle al usuario en que estado quedo. ' +
       'ALMACEN: warehouseId solo hace falta para aprobar u ordenar material fisico; una orden 100% subcontratada (articulos con subcontractMode "full") no lo necesita.',
@@ -344,7 +344,7 @@ export const toolSchemas: Record<string, ToolDef> = {
         'IDs de los proveedores (contactos). Normalmente uno. Con varios la orden queda como comparativa y hay que elegir el adjudicado al aprobarla. OBLIGATORIO: el backend rechaza una orden sin proveedor.',
       ),
       items: z.array(z.object({
-        itemId: z.string().describe('ID del articulo del catalogo de la empresa (search_materials / create_material)'),
+        itemId: z.string().describe('ID del articulo del catalogo de la empresa (search_materials / create_item)'),
         orderQuantity: z.number().positive().describe('Cantidad pedida'),
         unitCost: z.number().min(0).describe('Precio unitario SIN impuestos'),
         taxRate: z.number().int().min(0).max(100).optional().describe('IVA/IGIC de la linea en porcentaje entero (ej: 21). SI SE OMITE EL BACKEND APLICA 21. Para base imponible mandar 0.'),
@@ -531,7 +531,7 @@ export const toolSchemas: Record<string, ToolDef> = {
     endpoint: '/budgets/:budgetId/items/reorder',
   },
   replace_budget_item_product: {
-    description: 'Reemplaza el producto/APU de un item de presupuesto existente por uno NUEVO con composicion completa (materiales + recursos). Usar cuando hay que corregir o completar el desglose (BOM) de un item ya cargado — por ejemplo agregar materiales que faltaron — ya que update_budget_item NO permite editar la composicion. Crea un producto nuevo en el catalogo (el code debe ser unico), lo vincula al item y recalcula costos y totales. Los materiales y recursos referenciados deben existir en el catalogo (usar search_materials / search_resources / create_material antes).',
+    description: 'Reemplaza el producto/APU de un item de presupuesto existente por uno NUEVO con composicion completa (materiales + recursos). Usar cuando hay que corregir o completar el desglose (BOM) de un item ya cargado — por ejemplo agregar materiales que faltaron — ya que update_budget_item NO permite editar la composicion. Crea un producto nuevo en el catalogo (el code debe ser unico), lo vincula al item y recalcula costos y totales. Los materiales y recursos referenciados deben existir en el catalogo (usar search_materials / search_resources / create_item antes).',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
       itemId: z.string().describe('ID del item de presupuesto cuyo producto se reemplaza (debe ser un item hoja con producto vinculado, no un capitulo)'),
@@ -560,10 +560,10 @@ export const toolSchemas: Record<string, ToolDef> = {
     fieldMap: { materialsRequired: 'materials_required', resourcesRequired: 'resources_required' },
   },
   add_budget_item: {
-    description: 'Agrega un item/partida al presupuesto. REQUIERE un productId del catalogo de materiales de la empresa. Primero busca el producto con search_materials, y si no existe, crealo con create_material.',
+    description: 'Agrega un item/partida al presupuesto. REQUIERE un productId del catalogo de materiales de la empresa. Primero busca el producto con search_materials, y si no existe, crealo con create_item.',
     schema: z.object({
       budgetId: z.string().describe('ID del presupuesto'),
-      productId: z.string().describe('ID del producto/material del catalogo (OBLIGATORIO). Usar search_materials para encontrarlo o create_material para crearlo'),
+      productId: z.string().describe('ID del producto/material del catalogo (OBLIGATORIO). Usar search_materials para encontrarlo o create_item para crearlo'),
       quantity: z.number().describe('Cantidad'),
       parentItemId: z.string().optional().describe('ID del capitulo padre donde insertar el item'),
       overheadOverride: z.number().optional().describe('Override del porcentaje de gastos generales'),
@@ -926,39 +926,6 @@ export const toolSchemas: Record<string, ToolDef> = {
     method: 'GET',
     endpoint: '/resources',
   },
-  create_material: {
-    description:
-      'Crea un MATERIAL en el catalogo de la empresa: un insumo suelto que se compra y se consume (cemento, chapa, tornillos, arena). ' +
-      'Tiene stock, proveedores y precio; NO tiene composicion. ' +
-      'NO es lo mismo que una PARTIDA (un trabajo: "muro de ladrillo hueco", "sustitucion de peldaños", cualquier cosa subcontratada): para eso esta create_item. ' +
-      'Ante la duda: si se mide en unidades de compra y entra al almacen, es material; si es un trabajo que se presupuesta y se ejecuta, es una partida. ' +
-      'code es OBLIGATORIO y unico por empresa (el backend rechaza el alta sin codigo) — buscar antes con search_materials para no duplicar.',
-    schema: z.object({
-      name: z.string().describe('Nombre del material'),
-      code: z.string().min(1).describe('Codigo unico en la empresa (ej: "CEM-PORT-50"). OBLIGATORIO.'),
-      unit: z.string().optional().describe('Unidad (kg, m, m2, m3, ml, ud, gl, etc.)'),
-      description: z.string().optional().describe('Descripcion detallada (se hereda al presupuesto cuando se usa el material)'),
-      classification: z.string().optional().describe('ID de la clasificacion (get_classifications). Para materiales, la de tipo "material_type".'),
-      defaultCost: z.number().optional().describe('Costo unitario de referencia'),
-      category: z.string().optional().describe('ID de una categoria del catalogo (ObjectId). NO es texto libre: mandar un nombre hace fallar el alta.'),
-      unitValue: z.object({
-        value: z.number().describe('Cuanto trae el formato de compra (ej: 50 para una bolsa de 50 kg)'),
-        unit: z.string().describe('Unidad de ese contenido (kg, l, m...)'),
-      }).optional().describe('Contenido del formato de compra, cuando el material se compra por bulto/bolsa/rollo.'),
-      suppliers: z.array(z.object({
-        supplierId: z.string().describe('ID del contacto proveedor (search_contacts)'),
-        providerCode: z.string().optional().describe('Codigo con el que el proveedor identifica este material'),
-      })).optional().describe('Proveedores habituales del material.'),
-      minimumStock: z.number().optional().describe('Bajo este nivel el material figura como stock bajo'),
-    }),
-    method: 'POST',
-    endpoint: '/items',
-    // `nature` fijo. Si no viaja explicito el backend lo DERIVA (itemNatureCategory.ts:
-    // con una classification de tipo product_type el alta termina del lado de las
-    // PARTIDAS, no de los materiales) — y de que lado del catalogo queda una entrada
-    // no puede depender de que campos se acordo de mandar el modelo.
-    transformArgs: (args) => ({ ...args, nature: 'material' }),
-  },
   get_classifications: {
     description: 'Obtiene las clasificaciones de productos de la empresa. Buscar la que tenga type "product_type" — su ID es OBLIGATORIO al crear materiales para que aparezcan en presupuestos.',
     schema: z.object({
@@ -1025,30 +992,6 @@ export const toolSchemas: Record<string, ToolDef> = {
       limit: limitParam(50),
     }),
     method: 'GET',
-    endpoint: '/resources',
-  },
-  create_resource: {
-    description:
-      'Crea un recurso productivo: mano de obra (oficial, peon, especialista) o maquinaria/herramienta. ' +
-      'code, costRate y costRateType son OBLIGATORIOS — el modelo los exige y sin ellos el alta falla. ' +
-      'Buscar antes con search_resources para no duplicar.',
-    schema: z.object({
-      name: z.string().describe('Nombre del recurso (ej: "Oficial albañil", "Retroexcavadora CAT 320")'),
-      code: z.string().min(1).describe('Codigo unico en la empresa (ej: "MO-OF-001"). OBLIGATORIO.'),
-      type: z.enum(['labor', 'tools_machinery']).describe('"labor" para personas, "tools_machinery" para maquinaria y herramientas'),
-      costRate: z.number().min(0).describe('Tarifa del recurso en la unidad de costRateType. OBLIGATORIO: preguntarsela al usuario, NUNCA inventarla.'),
-      costRateType: z.enum(['hourly', 'daily', 'fixed', 'unit', 'm2', 'm3']).describe('Unidad de la tarifa: por hora, por dia, fija, por unidad producida, por m2 o por m3.'),
-      hoursPerDay: z.number().min(0.5).max(24).optional().describe('Horas que representa un dia. Solo para costRateType "daily" (default 8).'),
-      canBeSubcontracted: z.boolean().optional().describe('true si el recurso lo puede aportar un subcontratista. OBLIGATORIO en true para usarlo en una partida con subcontractMode "labor_only".'),
-      supplierContactId: z.string().optional().describe(
-        'Proveedor o contratista que ejecuta el recurso (ID de search_contacts). Opcional y solo con canBeSubcontracted en true. ' +
-        'La certificacion a ese proveedor trae solo la mano de obra reportada de sus recursos; sin proveedor se le certifica al de la orden.'
-      ),
-      status: z.enum(['available', 'occupied', 'maintenance', 'retired']).optional().describe('Estado (default "available")'),
-      description: z.string().optional(),
-      currency: z.string().optional().describe('Moneda de la tarifa (default EUR)'),
-    }),
-    method: 'POST',
     endpoint: '/resources',
   },
   assign_resource: {
