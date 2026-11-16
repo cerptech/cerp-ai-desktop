@@ -218,6 +218,50 @@ const CreateContactSchema = z.object({
   address: z.string().optional().describe('Dirección en una línea'),
 })
 
+// Reparto por importe o porcentaje (cerp-server, noviembre 2026, Wave Park):
+// una parte va a UNA orden de obra o a UN capítulo, con su porcentaje o su
+// importe sin impuestos. El core guarda porcentajes: los importes se pasan acá.
+const CostSplitPartSchema = z.object({
+  constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra de esta parte (una orden O un capítulo, nunca los dos)'),
+  taskId: objectId('taskId').optional().describe('ID del capítulo (tarea del proyecto) de esta parte'),
+  percentage: z.number().positive().optional().describe('Porcentaje de esta parte. Indicá percentage O amount'),
+  amount: z.number().positive().optional().describe('Importe sin impuestos de esta parte, si el usuario lo dio en importe'),
+})
+
+type CostSplitPart = z.infer<typeof CostSplitPartSchema>
+
+/**
+ * El reparto en porcentajes sobre `base` (el neto de la línea o de la factura),
+ * o el motivo por el que no se puede guardar: cada parte a una orden o a un
+ * capítulo, con porcentaje o importe, y entre todas el 100 %.
+ */
+export function costSplitToPercentages(
+  parts: CostSplitPart[],
+  base: number,
+  label: string,
+): { ok: true; split: Array<{ constructionOrderId?: string; taskId?: string; percentage: number }> } | { ok: false; error: string } {
+  for (const part of parts) {
+    if (Boolean(part.constructionOrderId) === Boolean(part.taskId)) {
+      return { ok: false, error: `${label}: cada parte va a una orden de obra o a un capítulo, nunca a los dos ni a ninguno` }
+    }
+    if ((part.percentage === undefined) === (part.amount === undefined)) {
+      return { ok: false, error: `${label}: cada parte lleva percentage o amount (uno de los dos)` }
+    }
+  }
+  if (parts.some((part) => part.amount !== undefined) && !(base > 0)) {
+    return { ok: false, error: `${label}: no se puede repartir por importe un neto de 0; usá porcentajes` }
+  }
+  const split = parts.map((part) => ({
+    ...(part.constructionOrderId ? { constructionOrderId: part.constructionOrderId } : { taskId: part.taskId }),
+    percentage: part.percentage !== undefined ? part.percentage : ((part.amount as number) / base) * 100,
+  }))
+  const sum = split.reduce((total, part) => total + part.percentage, 0)
+  if (Math.abs(sum - 100) > 0.0001) {
+    return { ok: false, error: `${label}: el reparto suma ${Math.round(sum * 100) / 100} % y tiene que sumar el 100 %` }
+  }
+  return { ok: true, split }
+}
+
 const CreateSupplierInvoiceSchema = z.object({
   filePath: z.string().describe('Ruta local del PDF de la factura, exactamente como vino en [Archivo adjunto: ...]'),
   extractedData: ExtractedInvoiceSchema.describe('Datos que leíste del PDF, sin corregir. Las correcciones del usuario van en overrides'),
@@ -232,12 +276,14 @@ const CreateSupplierInvoiceSchema = z.object({
   // su capítulo (tarea del proyecto) y, sin él, al de la factura. Con orden
   // manda el capítulo de la orden y el core ignora el de la línea.
   taskId: objectId('taskId').optional().describe('ID del capítulo (tarea del proyecto) por defecto de las líneas sin orden, si el usuario lo indicó'),
+  costSplit: z.array(CostSplitPartSchema).optional().describe('Reparto del TOTAL de la factura entre órdenes o capítulos, si el usuario reparte la factura entera. Con él, las líneas no llevan orden ni capítulo'),
   itemResolutions: z.array(z.object({
     description: z.string().describe('Descripción de la línea, igual que en extractedData.items'),
     // OC por línea (cerp-server, noviembre 2026): el coste de la factura se
     // reparte entre las órdenes de sus líneas; sin orden, va al proyecto.
     constructionOrderId: objectId('constructionOrderId').optional().describe('ID de la orden de obra de ESTA línea, si el usuario dijo que las líneas van a órdenes distintas'),
     taskId: objectId('taskId').optional().describe('ID del capítulo (tarea del proyecto) de ESTA línea si no tiene orden, cuando el usuario reparte la factura entre capítulos'),
+    costSplit: z.array(CostSplitPartSchema).optional().describe('Reparto de ESTA línea entre varias órdenes o capítulos, si el usuario lo pidió. Con él, la línea no lleva orden ni capítulo propios'),
     itemId: objectId('itemId').optional().describe('Ítem existente que el usuario eligió reutilizar (de check_invoice_items_catalog)'),
     nature: z.enum(['material', 'item']).optional().describe('Si no hay itemId: "material" o "item" (ítem subcontratado 100%), según lo que eligió el usuario'),
   })).describe('Una entrada por cada línea, con lo que decidió el usuario. No lo decidas vos'),
@@ -455,13 +501,15 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
       'Sin projectId ni constructionSiteId queda como gasto general, sin imputar a ninguna obra (software, IT, oficina). ' +
       'Cada línea puede ir a su propia orden de obra (itemResolutions[].constructionOrderId): el coste se reparte entre las órdenes de sus líneas. ' +
       'Una línea sin orden puede ir a su propio capítulo del proyecto (itemResolutions[].taskId; sin él, el de la factura, taskId). ' +
+      'Si el usuario reparte una línea entre varios capítulos u órdenes, usá itemResolutions[].costSplit; si reparte el TOTAL, costSplit (y las líneas sin orden ni capítulo). ' +
+      'Cada parte con su porcentaje o su importe sin impuestos; entre todas, el 100 %. Si no suma, preguntá: no completes el reparto vos. ' +
       'Solo llamar tras la confirmación explícita del usuario.',
     CreateSupplierInvoiceSchema as any,
     async (args: Record<string, unknown>) => {
       let parsed: z.infer<typeof CreateSupplierInvoiceSchema> | undefined
       try {
         parsed = CreateSupplierInvoiceSchema.parse(args)
-        const { filePath, supplierId, projectId, constructionSiteId, constructionOrderId, taskId, itemResolutions, overrides } = parsed
+        const { filePath, supplierId, projectId, constructionSiteId, constructionOrderId, taskId, costSplit, itemResolutions, overrides } = parsed
         const data = { ...parsed.extractedData, ...(overrides ?? {}) }
 
         const pdfProblem = checkPdf(filePath, MAX_SUPPLIER_INVOICE_PDF_BYTES)
@@ -518,7 +566,18 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
         const itemIdCache = new Map<string, string>()
         const createdItems: string[] = []
         const failedLines: Array<{ description: string; error: string }> = []
-        const invoiceItems: Array<{ itemId: string; quantity: number; unit: string; unitCost: number; totalCost: number; taxRate: number; constructionOrderId?: string; taskId?: string }> = []
+        const invoiceItems: Array<{
+          itemId: string
+          quantity: number
+          unit: string
+          unitCost: number
+          totalCost: number
+          taxRate: number
+          constructionOrderId?: string
+          taskId?: string
+          costSplit?: Array<{ constructionOrderId?: string; taskId?: string; percentage: number }>
+        }> = []
+        const splitErrors: string[] = []
 
         for (const line of data.items) {
           const rawName = line.description.trim()
@@ -580,17 +639,31 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
           }
 
           itemIdCache.set(cacheKey, itemId)
+          const totalCost = round2(unitCost * quantity)
+          // Reparto de la línea (sin reparto del total): manda sobre su orden y su capítulo.
+          let lineSplit: Array<{ constructionOrderId?: string; taskId?: string; percentage: number }> | undefined
+          if (!costSplit?.length && resolution?.costSplit?.length) {
+            const converted = costSplitToPercentages(resolution.costSplit, totalCost, `Línea "${name}"`)
+            if (converted.ok) lineSplit = converted.split
+            else splitErrors.push(converted.error)
+          }
           invoiceItems.push({
             itemId,
             quantity,
             unit,
             unitCost,
-            totalCost: round2(unitCost * quantity),
+            totalCost,
             taxRate: line.taxRate ?? 0,
-            // Sin la suya, el core le pone la de la factura (`constructionOrderId`).
-            ...(resolution?.constructionOrderId ? { constructionOrderId: resolution.constructionOrderId } : {}),
-            // Capítulo propio de una línea sin orden; el core valida que sea del proyecto.
-            ...(!resolution?.constructionOrderId && resolution?.taskId ? { taskId: resolution.taskId } : {}),
+            ...(lineSplit
+              ? { costSplit: lineSplit }
+              : costSplit?.length
+                ? {}
+                : {
+                    // Sin la suya, el core le pone la de la factura (`constructionOrderId`).
+                    ...(resolution?.constructionOrderId ? { constructionOrderId: resolution.constructionOrderId } : {}),
+                    // Capítulo propio de una línea sin orden; el core valida que sea del proyecto.
+                    ...(!resolution?.constructionOrderId && resolution?.taskId ? { taskId: resolution.taskId } : {}),
+                  }),
           })
         }
 
@@ -603,6 +676,18 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
               (createdItems.length > 0 ? `. Ya quedaron creados en el catálogo: ${createdItems.join(', ')}.` : '') +
               ` Mostrale al usuario todos los datos extraídos para que la cargue a mano (guía: ${DOCS_SUPPLIER_INVOICE_MANUAL_URL}).`,
           )
+        }
+
+        // Reparto: si no suma el 100 %, no se crea nada (ni se adjunta el PDF).
+        let totalSplit: Array<{ constructionOrderId?: string; taskId?: string; percentage: number }> | undefined
+        if (costSplit?.length) {
+          const base = invoiceItems.reduce((sum, item) => sum + item.totalCost, 0)
+          const converted = costSplitToPercentages(costSplit, base, 'Reparto del total')
+          if (converted.ok) totalSplit = converted.split
+          else splitErrors.push(converted.error)
+        }
+        if (splitErrors.length > 0) {
+          return errorResult(`No se creó la factura: ${splitErrors.join('; ')}. Preguntale al usuario cómo reparte.`)
         }
 
         // 3) Fechas: sin vencimiento (o con uno anterior a la emisión, que el core
@@ -621,8 +706,10 @@ export function createDocumentIntakeTools(httpClient: HttpClient) {
             supplierId,
             ...(projectId ? { projectId } : {}),
             ...(constructionSiteId ? { constructionSiteId } : {}),
-            ...(constructionOrderId ? { constructionOrderId } : {}),
-            ...(taskId ? { taskId } : {}),
+            // Con el total repartido, la factura no lleva orden ni capítulo propios.
+            ...(constructionOrderId && !totalSplit ? { constructionOrderId } : {}),
+            ...(taskId && !totalSplit ? { taskId } : {}),
+            ...(totalSplit ? { costSplit: totalSplit } : {}),
             supplierInvoiceNumber: data.invoiceNumber || undefined,
             issueDate: issueDate.toISOString(),
             dueDate: dueDate!.toISOString(),
