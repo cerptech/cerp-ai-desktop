@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { toolSchemas, clampLimitArgs } from './toolDefinitions'
 import { createItemBankTools } from './itemBankTools'
 import { createCatalogTools } from './catalogTools'
+import { createCatalogCreateTools } from './catalogCreateTools'
 import { createCreditsTools } from './creditsTools'
 import { createDocumentIntakeTools } from './documentIntakeTools'
 import { createScheduleTools } from './scheduleTools'
@@ -570,6 +571,8 @@ export function createCerpMcpServer(httpClient: HttpClient, companyId: string | 
       attachBudgetPdfTool,
       downloadBudgetAttachmentTool,
       showHtmlTool,
+      // Altas del catálogo: las MISMAS de web, ERP y WhatsApp, por POST /ai-tools/:name (core).
+      ...createCatalogCreateTools(httpClient),
       ...createCatalogTools(httpClient),
       ...createItemBankTools(httpClient),
       ...createCreditsTools(httpClient),
