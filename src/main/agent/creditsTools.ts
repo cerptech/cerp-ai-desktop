@@ -12,10 +12,12 @@ import { logger } from '../utils/logger'
  * modelo le alcanza con la respuesta cruda del backend. Esta no, por dos motivos:
  *
  * 1. **La unidad de negocio no es la unidad del backend.** El ledger guarda el
- *    saldo en CENTÉSIMAS de crédito (ADR 008 — 1 crédito = $0,20 de coste real)
- *    para no perder precisión en la contabilidad interna. Devolverle esa unidad
- *    al modelo tal cual es un desastre esperando a pasar: hay que dividir por
- *    100 antes de que el modelo se la repita al usuario.
+ *    saldo en UNIDADES enteras (los campos `*Hundredths`, ADR 008) para no
+ *    perder precisión en la contabilidad interna. Devolverle esa unidad al
+ *    modelo tal cual es un desastre esperando a pasar: hay que dividir por
+ *    `unitsPerCredit` (lo manda el core en la misma respuesta: 100 hoy, 10 con
+ *    la escala ×10 de créditos; ausente = 100) antes de que el modelo se la
+ *    repita al usuario. El Desktop nunca decide ese divisor.
  * 2. **Dos casos del shape crudo son ambiguos sin contexto:**
  *    - `mode: 'off'` no significa "0 créditos". Significa que el modelo de
  *      créditos no está activo en esta cuenta (`CREDITS_MODE=off`): no hay
@@ -44,9 +46,8 @@ import { logger } from '../utils/logger'
 
 /**
  * Shape de la respuesta del endpoint. Coincide con `CreditsBalance` en
- * src/preload/index.ts (líneas 244-254), con el agregado de `scope`: al momento
- * de escribir esto ese campo NO está en el tipo del preload, así que se deja
- * opcional acá para no romper el parseo si el backend no lo manda.
+ * src/preload/index.ts. `scope` y `unitsPerCredit` son opcionales para no
+ * romper el parseo si el backend no los manda.
  */
 interface CreditBalanceResponse {
   mode: 'off' | 'shadow' | 'enforce'
@@ -61,6 +62,15 @@ interface CreditBalanceResponse {
   // Math.round(null)/100 daria 0 y el agente reportaria "0 creditos mensuales".
   monthlyCreditHundredths: number | null
   scope?: 'user' | 'company' | string
+  /** Unidades por crédito para esta empresa. Ausente (core anterior) o inválido = 100. */
+  unitsPerCredit?: number
+}
+
+const DEFAULT_UNITS_PER_CREDIT = 100
+
+/** Divisor que manda el core; si no es un número finito > 0, el de siempre (100). */
+function resolveUnitsPerCredit(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : DEFAULT_UNITS_PER_CREDIT
 }
 
 function textResult(payload: unknown) {
@@ -71,9 +81,9 @@ function errorResult(message: string) {
   return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true }
 }
 
-/** Centesimas de credito -> creditos (2 decimales, evita ruido de punto flotante). */
-function hundredthsToCredits(hundredths: number): number {
-  return Math.round(hundredths) / 100
+/** Unidades del ledger -> creditos con el divisor del core (con 100: 2 decimales, sin ruido de punto flotante). */
+function unitsToCredits(units: number, unitsPerCredit: number): number {
+  return Math.round(units) / unitsPerCredit
 }
 
 const GetCreditBalanceSchema = z.object({})
@@ -112,17 +122,22 @@ export function createCreditsTools(httpClient: HttpClient) {
           })
         }
 
-        logger.info(`get_credit_balance OK: plan ${res.plan}, disponibles=${hundredthsToCredits(res.availableHundredths)}`)
+        const unitsPerCredit = resolveUnitsPerCredit(res.unitsPerCredit)
+        const toCredits = (units: number) => unitsToCredits(units, unitsPerCredit)
+        logger.info(
+          `get_credit_balance OK: plan ${res.plan}, disponibles=${toCredits(res.availableHundredths)}` +
+            (unitsPerCredit === DEFAULT_UNITS_PER_CREDIT ? '' : ` (unitsPerCredit=${unitsPerCredit})`),
+        )
         return textResult({
           plan: res.plan,
           ilimitado: false,
           alcance: res.scope === 'user' ? 'usuario' : 'empresa',
-          creditosDisponibles: hundredthsToCredits(res.availableHundredths),
-          creditosPlan: hundredthsToCredits(res.planBalanceHundredths),
-          creditosRecarga: hundredthsToCredits(res.topupBalanceHundredths),
-          creditosReservados: hundredthsToCredits(res.reservedHundredths),
+          creditosDisponibles: toCredits(res.availableHundredths),
+          creditosPlan: toCredits(res.planBalanceHundredths),
+          creditosRecarga: toCredits(res.topupBalanceHundredths),
+          creditosReservados: toCredits(res.reservedHundredths),
           creditosMensualesDelPlan:
-            res.monthlyCreditHundredths === null ? null : hundredthsToCredits(res.monthlyCreditHundredths),
+            res.monthlyCreditHundredths === null ? null : toCredits(res.monthlyCreditHundredths),
           nota:
             'Los creditos del plan se resetean cada mes sin acumular; los de recarga no vencen. ' +
             'Para recargar o cambiar de plan: app.cerp.es -> Configuracion -> Suscripcion.',

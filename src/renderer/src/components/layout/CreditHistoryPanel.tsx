@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { DEFAULT_UNITS_PER_CREDIT, resolveUnitsPerCredit, unitsToCredits } from '../../utils/creditUnits'
 
 /**
  * Historial de créditos (Modelo CERP) / cotizaciones (Idea 2, legacy).
@@ -74,9 +75,12 @@ function ledgerLabel(entry: CreditLedgerEntry): string {
   return entry.type === 'debit_usage' && entry.kind ? `${base} (${entry.kind})` : base
 }
 
-/** Céntimas → créditos con signo y 1 decimal (ej. -320 → "-3.2", 5000 → "+50.0"). */
-function formatLedgerAmount(hundredths: number): string {
-  const value = hundredths / 100
+/**
+ * Unidades → créditos con signo y 1 decimal, con el divisor que manda el core
+ * (ej. con 100: -320 → "-3.2", 5000 → "+50.0").
+ */
+function formatLedgerAmount(units: number, unitsPerCredit: number): string {
+  const value = unitsToCredits(units, unitsPerCredit)
   const sign = value > 0 ? '+' : ''
   return `${sign}${value.toFixed(1)}`
 }
@@ -112,15 +116,19 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
   // null = todavía no se determinó; 'off' cubre también "no se pudo consultar el balance".
   const [creditsMode, setCreditsMode] = useState<'off' | 'shadow' | 'enforce' | null>(null)
   const [error, setError] = useState(false)
+  // Divisor unidades → créditos: lo manda el core (ledger o, si no, balance); 100 si no viene.
+  const [unitsPerCredit, setUnitsPerCredit] = useState(DEFAULT_UNITS_PER_CREDIT)
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       let mode: 'off' | 'shadow' | 'enforce' = 'off'
+      let balanceUnitsPerCredit: number | undefined
       try {
         const balance = await window.cerpAPI.getCreditsBalance()
         mode = balance?.mode ?? 'off'
+        balanceUnitsPerCredit = balance?.unitsPerCredit
       } catch {
         mode = 'off'
       }
@@ -134,6 +142,7 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
             // 'auth' ya dispara el modal global de sesión expirada — no marcar
             // error acá también (evita un mensaje redundante debajo del modal).
             if (ledger?.error && ledger.error !== 'auth') setError(true)
+            setUnitsPerCredit(resolveUnitsPerCredit(ledger?.unitsPerCredit, balanceUnitsPerCredit))
             setLedgerEntries(ledger?.entries ?? [])
           }
         } catch {
@@ -212,7 +221,7 @@ export function CreditHistoryPanel({ onClose }: { onClose: () => void }) {
                 </p>
               </div>
               <span className={`shrink-0 text-xs font-semibold ${entry.amountHundredths > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-                {formatLedgerAmount(entry.amountHundredths)}
+                {formatLedgerAmount(entry.amountHundredths, unitsPerCredit)}
               </span>
             </div>
           ))}
