@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { QuoteStatusBadge } from './QuoteStatusBadge'
 import { CreditsPill, SUBSCRIPTION_URL } from './CreditsPill'
+import { resolveUnitsPerCredit, unitsToCredits } from '../../utils/creditUnits'
 
 /**
  * Balance de créditos de IA de la empresa (Modelo CERP).
@@ -19,14 +20,18 @@ interface CreditsBalance {
   reservedHundredths: number
   availableHundredths: number
   monthlyCreditHundredths: number
+  /** Unidades por crédito para esta empresa (lo decide el core; ausente = 100). */
+  unitsPerCredit?: number
+  /** Aviso de saldo bajo calculado en el core (misma regla en todas las superficies). */
+  lowBalance?: { isLow: boolean }
 }
 
 const REFRESH_INTERVAL_MS = 60_000
 const LOW_BALANCE_RATIO = 0.2
 
-/** Céntimas de crédito → créditos con 1 decimal (ej. 4750 → "47.5"). */
-function formatCredits(hundredths: number): string {
-  return (hundredths / 100).toFixed(1)
+/** Unidades → créditos con 1 decimal (ej. 4750 con divisor 100 → "47.5"). */
+function formatCredits(units: number, unitsPerCredit: number): string {
+  return unitsToCredits(units, unitsPerCredit).toFixed(1)
 }
 
 export function CreditBalanceBadge() {
@@ -81,11 +86,17 @@ export function CreditBalanceBadge() {
     )
   }
 
-  const isLow = monthly > 0 && available / monthly < LOW_BALANCE_RATIO
+  // El aviso es un cociente entre unidades: no depende del divisor. Si el core
+  // ya lo manda (`lowBalance`), manda el core; con un core sin ese campo, la
+  // regla local de siempre (el mismo 20 %).
+  const isLow = balance.lowBalance
+    ? balance.lowBalance.isLow
+    : monthly > 0 && available / monthly < LOW_BALANCE_RATIO
+  const unitsPerCredit = resolveUnitsPerCredit(balance.unitsPerCredit)
 
   return (
     <CreditsPill
-      label={`${formatCredits(available)} créditos`}
+      label={`${formatCredits(available, unitsPerCredit)} créditos`}
       tone={isLow ? 'warning' : 'neutral'}
       title={isLow ? 'Te quedan pocos créditos de IA este mes' : 'Créditos de IA disponibles'}
     />

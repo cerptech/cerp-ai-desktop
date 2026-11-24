@@ -225,6 +225,18 @@ export interface CreditsBalance {
   reservedHundredths: number
   availableHundredths: number
   monthlyCreditHundredths: number
+  /**
+   * Unidades del ledger por crédito para ESTA empresa (los campos *Hundredths
+   * son unidades, no siempre centésimas). Lo decide el core: 100 hoy, 10 con la
+   * escala ×10. Ausente (core anterior) = 100. El cliente nunca lo hardcodea.
+   */
+  unitsPerCredit?: number
+  /** Unidades de un pack de recarga (5000). Informativo. */
+  creditPackUnits?: number
+  /** 'user' = bolsa del que mira; 'company' = bolsa de la empresa. */
+  scope?: 'user' | 'company'
+  /** Aviso de saldo bajo calculado en el core (misma regla en todas las superficies). */
+  lowBalance?: { percent: number; thresholdHundredths: number | null; isLow: boolean; isEmpty: boolean }
 }
 
 export type CreditLedgerEntryType =
@@ -250,6 +262,8 @@ export interface CreditLedgerEntry {
 
 export interface CreditsLedgerResponse {
   entries: CreditLedgerEntry[]
+  /** Divisor unidades → créditos que manda el core con el ledger. Ausente = usar el del balance o 100. */
+  unitsPerCredit?: number
   error?: ApiErrorCode
 }
 
