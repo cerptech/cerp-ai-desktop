@@ -1351,7 +1351,7 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
  * `en` (tarjeta «Idioma de CERP IA», 25-11): la persona eligió inglés en su
  * perfil y CERP IA le habla en inglés, aunque los prompts estén en español.
  *
- * Mismo texto que `renderSpanishVariant` en cerp-ai-service
+ * Texto equivalente (encabezado propio y «informes» de más) al de `renderSpanishVariant` en cerp-ai-service
  * (lib/agents/context.ts): si cambia uno, cambiar el otro.
  */
 function spanishVariantBlock(): string {
