@@ -15,7 +15,8 @@ import { logger } from '../utils/logger'
  *
  * - **material** (`nature: 'material'`) — un insumo suelto: cemento, chapa,
  *   tornillos. Tiene stock, proveedores y listas de precios; NO tiene
- *   composición. Se crea con `create_material` (declarativa).
+ *   composición. Se crea con `create_item` (nature 'material'), que vive en el core:
+ *   `catalogCreateTools.ts`.
  * - **ítem / producto** (`nature: 'item'`) — una partida. Tiene un modo de
  *   subcontratación OBLIGATORIO (`subcontractMode`) y, salvo que sea 100%
  *   subcontratada, una composición: materiales + recursos (el APU). Se crea
@@ -206,155 +207,6 @@ function computeResourceCost(
 }
 
 export function createCatalogTools(httpClient: HttpClient) {
-  // ── create_item ───────────────────────────────────────────────────────────
-  const createItemTool = tool(
-    'create_item',
-    'Crea una PARTIDA (item/producto) en el catalogo de la empresa. Una partida es lo que se presupuesta y se ejecuta: "muro de ladrillo hueco", "sustitucion de peldaños", "instalacion electrica". ' +
-      'NO es lo mismo que un material: un material es un insumo suelto (cemento, chapa, tornillos) y se crea con create_material. ' +
-      'subcontractMode es OBLIGATORIO y define el tipo de partida: "none" (la hace la empresa, lleva composicion), "labor_only" (la mano de obra la pone un tercero) o ' +
-      '"full" (100% subcontratada: se compra hecha, no lleva composicion y su costo va entero al rubro Subcontratado). ' +
-      'Para los modos "none" y "labor_only" hay que mandar la composicion real (materialsRequired / resourcesRequired) con IDs del catalogo: una partida sin composicion es un item vacio que despues nadie puede costear. ' +
-      'El desglose de costos lo calcula el backend a partir de la composicion; no se manda a mano.',
-    CreateItemSchema as any,
-    async (args: Record<string, unknown>) => {
-      try {
-        const parsed = CreateItemSchema.parse(args)
-        const materials = parsed.materialsRequired ?? []
-        const resources = parsed.resourcesRequired ?? []
-        const hasBom = materials.length > 0 || resources.length > 0
-
-        if (parsed.subcontractMode === 'full') {
-          if (!isNonNegativeNumber(parsed.costoUnitario)) {
-            throw new Error(
-              'Una partida 100% subcontratada necesita costoUnitario (el precio cerrado del subcontrato por unidad).',
-            )
-          }
-          if (hasBom) {
-            throw new Error(
-              'Una partida 100% subcontratada no lleva composicion: su costo ES el precio cerrado del subcontrato. ' +
-                'Sacá materialsRequired/resourcesRequired, o usá subcontractMode "labor_only" si solo la mano de obra es de un tercero.',
-            )
-          }
-        } else if (!hasBom) {
-          throw new Error(
-            `Una partida con subcontractMode "${parsed.subcontractMode}" necesita su composicion (materialsRequired y/o resourcesRequired). ` +
-              'Si lo que queres dar de alta es un insumo suelto, la tool es create_material; si es un trabajo que hace un tercero a precio cerrado, usá subcontractMode "full" con costoUnitario.',
-          )
-        }
-
-        // Composición resuelta contra el catálogo: el backend guarda el snapshot
-        // de precios, no las referencias, y una línea sin precio aporta 0.
-        const materialsResolved: Array<Record<string, unknown>> = []
-        const detalleMateriales: Array<Record<string, unknown>> = []
-        for (const line of materials) {
-          const material = (await httpClient.get(`/items/${line.materialId}`).catch(() => null)) as StoredItem | null
-          if (!material) {
-            throw new Error(`No se encontro el material ${line.materialId} en el catalogo. Buscalo con search_materials antes de usarlo.`)
-          }
-          const catalogCost = isNonNegativeNumber(material.defaultCost) ? material.defaultCost : 0
-          const unitCost = isNonNegativeNumber(line.unitCost) ? line.unitCost : catalogCost
-          materialsResolved.push({
-            material_id: line.materialId,
-            quantity_needed: line.quantityNeeded,
-            unitCost,
-            // `customized` marca que el precio de esta receta NO sigue al catalogo:
-            // ItemPriceSyncService solo re-sincroniza las lineas con customized=false.
-            customized: isNonNegativeNumber(line.unitCost) && line.unitCost !== catalogCost,
-          })
-          detalleMateriales.push({
-            material: material.name,
-            cantidad: line.quantityNeeded,
-            costoUnitario: unitCost,
-            importe: Math.round((unitCost * line.quantityNeeded + Number.EPSILON) * 100) / 100,
-          })
-        }
-
-        const resourcesResolved: Array<Record<string, unknown>> = []
-        const detalleRecursos: Array<Record<string, unknown>> = []
-        for (const line of resources) {
-          const payload = (await httpClient.get(`/resources/${line.resourceId}`).catch(() => null)) as
-            | { data?: StoredResource }
-            | null
-          const resource = payload?.data
-          if (!resource) {
-            throw new Error(`No se encontro el recurso ${line.resourceId} en el catalogo. Buscalo con search_resources antes de usarlo.`)
-          }
-          if (parsed.subcontractMode === 'labor_only' && resource.canBeSubcontracted !== true) {
-            throw new Error(
-              `El recurso "${resource.name ?? line.resourceId}" no esta marcado como subcontratable, y una partida con mano de obra subcontratada solo puede usar recursos que si lo esten. ` +
-                'Marcalo desde la ficha del recurso en la web, o usá otro recurso.',
-            )
-          }
-          const estimatedCost = computeResourceCost(line, resource)
-          const isFixed = resource.costRateType === 'fixed'
-          resourcesResolved.push({
-            resourceId: line.resourceId,
-            resourceName: resource.name ?? '',
-            quantity: isFixed ? 1 : line.quantity ?? 1,
-            ...(line.hoursPerUnit !== undefined && !isFixed ? { hoursPerUnit: line.hoursPerUnit } : {}),
-            ...(isNonNegativeNumber(resource.costRate) ? { costRate: resource.costRate } : {}),
-            ...(resource.costRateType ? { costRateType: resource.costRateType } : {}),
-            ...(resource.costRateType === 'daily' ? { hoursPerDay: resource.hoursPerDay ?? 8 } : {}),
-            ...(isFixed && parsed.unit ? { unitLabel: parsed.unit } : {}),
-            estimatedCost,
-            customized: isNonNegativeNumber(line.estimatedCost),
-          })
-          detalleRecursos.push({
-            recurso: resource.name,
-            tarifa: resource.costRate,
-            tipoTarifa: resource.costRateType,
-            importe: estimatedCost,
-          })
-        }
-
-        const body: Record<string, unknown> = {
-          name: parsed.name,
-          code: parsed.code,
-          unit: parsed.unit,
-          description: parsed.description,
-          classification: parsed.classification,
-          category: parsed.category,
-          // Fijo: una partida es una partida. Sin esto el backend lo deriva de la
-          // composicion y de la classification, y el alta podia terminar del lado
-          // de los materiales sin que nadie se enterara.
-          nature: 'item',
-          subcontractMode: parsed.subcontractMode,
-          materials_required: materialsResolved,
-          resources_required: resourcesResolved,
-          ...(parsed.subcontractMode === 'full' ? { costoUnitario: parsed.costoUnitario } : {}),
-        }
-
-        const created = (await httpClient.post('/items', body)) as StoredItem
-
-        const resultado = {
-          id: String(created?._id ?? ''),
-          name: created?.name,
-          code: created?.code,
-          unit: created?.unit,
-          nature: created?.nature,
-          subcontractMode: created?.subcontractMode,
-          subcontratado: created?.subcontratado,
-          defaultCost: created?.defaultCost,
-          costBreakdown: created?.costBreakdown,
-          composicion: {
-            materiales: detalleMateriales,
-            recursos: detalleRecursos,
-          },
-        }
-
-        const text = JSON.stringify(resultado, null, 2)
-        logger.info(`create_item OK: ${parsed.code} → ${text.substring(0, 200)}`)
-        return { content: [{ type: 'text' as const, text }] }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        logger.error(`create_item FAILED: ${message}`)
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }], isError: true }
-      }
-    },
-    { annotations: { readOnlyHint: false, destructiveHint: false } },
-  )
-
-  // ── update_catalog_item ───────────────────────────────────────────────────
   const updateCatalogItemTool = tool(
     'update_catalog_item',
     'Modifica un MATERIAL o una PARTIDA ya creados del catalogo: nombre, codigo, unidad, descripcion, clasificacion, costo o modo de subcontratacion. ' +
@@ -434,5 +286,6 @@ export function createCatalogTools(httpClient: HttpClient) {
     { annotations: { readOnlyHint: false, destructiveHint: false } },
   )
 
-  return [createItemTool, updateCatalogItemTool]
+  // create_item vive en el core (catalogCreateTools.ts): la misma de web, ERP y WhatsApp.
+  return [updateCatalogItemTool]
 }
