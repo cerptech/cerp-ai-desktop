@@ -13,7 +13,7 @@ import { getLoadContext } from './loadContext'
 import { buildRetryPrompt, classifyResult, describeTurnFailure, resultErrorDetail, type TurnFailureCode } from './turnOutcome'
 import { setHtmlCanvasWindow, clearCanvases } from './htmlCanvasBridge'
 import { initUsageReporter, reportExecutionUsage } from './usageReporter'
-import { DesktopAccessDeniedError, DesktopUpdateRequiredError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, getSpanishVariant, NoCreditsError, PaymentMethodRequiredError } from '../auth/apiKeyManager'
+import { DesktopAccessDeniedError, DesktopUpdateRequiredError, getCompanyId, getUserId, fetchApiKey, getCompanySwitchSeq, getMaxBudgetUsd, getMaxBudgetUsdTurbo, getAiLanguage, NoCreditsError, PaymentMethodRequiredError } from '../auth/apiKeyManager'
 import { SYSTEM_PROMPT } from './systemPrompt'
 import { CONSTRUCTION_AGENTS } from './agents'
 import { customAgentStore } from '../store/customAgentStore'
@@ -1266,13 +1266,13 @@ let cachedContextPrompt: string | null = null
 // por defecto cambió, el cacheado no se reusa aunque nadie lo haya tirado, y uno
 // armado mientras la empresa cambiaba no queda como válido para la nueva.
 let cachedContextCompanyId: string | null = null
-let cachedContextVariant: ReturnType<typeof getSpanishVariant> = undefined
+let cachedContextVariant: ReturnType<typeof getAiLanguage> = undefined
 
 async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
   const companyId = getCompanyId()
   // La variante también es parte de la clave: si el primer armado fue sin config
   // (o la persona cambió de idioma), no queda pegado el contexto sin la línea.
-  if (cachedContextPrompt && cachedContextCompanyId === companyId && cachedContextVariant === getSpanishVariant()) {
+  if (cachedContextPrompt && cachedContextCompanyId === companyId && cachedContextVariant === getAiLanguage()) {
     return cachedContextPrompt
   }
 
@@ -1337,7 +1337,7 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
 
   cachedContextPrompt = context
   cachedContextCompanyId = companyId
-  cachedContextVariant = getSpanishVariant()
+  cachedContextVariant = getAiLanguage()
   return context
 }
 
@@ -1348,11 +1348,25 @@ async function buildContextPrompt(httpClient: HttpClient): Promise<string> {
  * rioplatense. Va al prompt principal y al de cada subagente (report-generator
  * redacta lo que ve el cliente).
  *
- * Mismo texto que `renderSpanishVariant` en cerp-ai-service
+ * `en` (tarjeta «Idioma de CERP IA», 25-11): la persona eligió inglés en su
+ * perfil y CERP IA le habla en inglés, aunque los prompts estén en español.
+ *
+ * Texto equivalente (encabezado propio y «informes» de más) al de `renderSpanishVariant` en cerp-ai-service
  * (lib/agents/context.ts): si cambia uno, cambiar el otro.
  */
 function spanishVariantBlock(): string {
-  if (getSpanishVariant() !== 'es') return ''
+  const language = getAiLanguage()
+  if (language === 'en') {
+    return (
+      '\n\n### Idioma\n' +
+      '- Idioma de esta cuenta: inglés. La persona eligió inglés en su perfil: responde SIEMPRE en inglés ' +
+      '(Always reply in English), aunque estas instrucciones estén en español y digan que hablas en español. ' +
+      'Vale también para lo que redactes en su nombre (emails, mensajes, descripciones, informes), salvo que la persona ' +
+      'pida otro idioma para ese texto. No traduzcas los datos del ERP (nombres de obras, proyectos, partidas, ' +
+      'contactos) ni los nombres propios de CERP (CERP IA).\n'
+    )
+  }
+  if (language !== 'es') return ''
   return (
     '\n\n### Idioma\n' +
     '- Responde siempre en español de España: trata a la persona de tú (tú, tienes, dime; vosotros en plural) ' +

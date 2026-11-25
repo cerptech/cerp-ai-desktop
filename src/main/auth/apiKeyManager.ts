@@ -179,6 +179,7 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
       maxBudgetUsd?: number
       maxBudgetUsdTurbo?: number
       spanishVariant?: unknown
+      aiLanguage?: unknown
     }>('POST', '/desktop/api-key', undefined, opts?.skipAuthRetry === true)
 
     logger.info(`API key response: hasKey=${!!response.apiKey}, companyId=${response.companyId}, userId=${response.userId}, model=${response.model}, tier=${response.modelPolicy?.tier ?? '-'}`)
@@ -206,6 +207,11 @@ export async function fetchApiKey(httpClient: HttpClient, opts?: { skipAuthRetry
       // Allowlist cerrada: un valor raro (o un backend viejo) queda sin variante.
       spanishVariant:
         response.spanishVariant === 'es' || response.spanishVariant === 'es-419' ? response.spanishVariant : undefined,
+      // Idioma de CERP IA (25-11). Misma allowlist cerrada; un backend viejo no lo manda.
+      aiLanguage:
+        response.aiLanguage === 'es' || response.aiLanguage === 'es-419' || response.aiLanguage === 'en'
+          ? response.aiLanguage
+          : undefined,
     }
     cachedConfigAt = Date.now()
 
@@ -303,6 +309,14 @@ export function getModelPolicy(): AiModelPolicy | null {
 /** En qué español habla CERP IA (RQM-188), si el backend lo informó. */
 export function getSpanishVariant(): DesktopConfig['spanishVariant'] {
   return cachedConfig?.spanishVariant
+}
+
+/**
+ * En qué idioma habla CERP IA (25-11): `aiLanguage` del backend (incluye `en`)
+ * o, con un backend viejo, la variante de español de RQM-188.
+ */
+export function getAiLanguage(): DesktopConfig['aiLanguage'] {
+  return cachedConfig?.aiLanguage ?? cachedConfig?.spanishVariant
 }
 
 /** true si no hay config o pasó el TTL: hay que volver a pedirla al backend. */
