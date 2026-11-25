@@ -178,6 +178,8 @@ export interface DesktopConfig {
    * Latinoamérica (voseo). Lo resuelve el core; ausente en un backend anterior.
    */
   spanishVariant?: 'es' | 'es-419'
+  /** Idioma de CERP IA (25-11): `en` si la persona eligió inglés en su perfil; manda sobre `spanishVariant`. */
+  aiLanguage?: 'es' | 'es-419' | 'en'
 }
 
 // ── ask_user_question tool types ──
